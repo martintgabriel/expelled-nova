@@ -1,0 +1,23 @@
+[project]
+name = "expelled-nova"
+version = "0.1.0"
+description = "Live 2D multiplayer social-deduction game on the Nova SBE campus"
+requires-python = "==3.12.*"
+dependencies = [
+    "fastapi==0.163.0",
+    "uvicorn==0.54.0",
+    "websockets==17.4",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.2.0",
+]

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expelled!</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="game"></div>
+
+  <div id="join-screen" class="overlay">
+    <form id="join-form" class="card" novalidate>
+      <h1>Expelled!</h1>
+      <p class="subtitle">Live campus test: walk around with WASD or the arrow keys.</p>
+      <label for="nickname">Nickname</label>
+      <input id="nickname" name="nickname" type="text" maxlength="16" autocomplete="off"
+             placeholder="1–16 letters, digits, spaces" autofocus>
+      <button id="join-button" type="submit">Join</button>
+      <p id="join-error" class="error" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="hud" hidden>
+    <span id="player-count"></span>
+    <span class="hint">WASD / arrow keys to move</span>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <div id="disconnected" class="overlay" hidden>
+    <div class="card">
+      <h2>Connection lost</h2>
+      <p>The server closed the connection.</p>
+      <button type="button" onclick="location.reload()">Reload and rejoin</button>
+    </div>
+  </div>
+
+  <script src="vendor/phaser.min.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
