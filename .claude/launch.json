@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "expelled",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "uvicorn", "server.main:app", "--reload", "--ws-ping-interval", "10", "--ws-ping-timeout", "10"],
+      "port": 8000
+    }
+  ]
+}
