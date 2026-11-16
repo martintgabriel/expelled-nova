@@ -136,6 +136,49 @@ button:disabled { opacity: 0.6; cursor: wait; }
 .role-card h2 { font-size: 24px; color: var(--accent); }
 #role-screen[data-role="examiner"] .role-card h2 { color: var(--error); }
 
+/* --- Expel, ghosts and end screen (spec 003) --- */
+
+#expel-button {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 6;
+  background: var(--error);
+}
+#expel-button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.banner {
+  position: fixed;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: rgba(20, 22, 26, 0.85);
+  color: var(--muted);
+  text-align: center;
+  z-index: 6;
+}
+.banner[hidden] { display: none; }
+.banner strong { display: block; color: var(--error); font-size: 18px; }
+
+.end-card { text-align: center; }
+.end-card h2 { font-size: 26px; color: var(--accent); }
+#end-screen[data-winner="examiners"] .end-card h2 { color: var(--error); }
+#end-roles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+.tag.examiner { background: var(--error); color: #1d1f24; font-weight: 700; }
+.tag.student { background: #9fd3ff; color: #1d1f24; font-weight: 700; }
+
 /* Phones: put the panel under the HUD instead of next to it. */
 @media (max-width: 600px) {
   .panel { top: 52px; left: 12px; right: 12px; width: auto; }

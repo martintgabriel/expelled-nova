@@ -14,6 +14,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from server.game import (
+    EXPEL_RANGE,
     PLAYER_HALF,
     SPEED,
     TICK_RATE,
@@ -91,11 +92,16 @@ async def websocket_endpoint(ws: WebSocket):
                             "speed": SPEED,
                             "tick_rate": TICK_RATE,
                             "player_half": PLAYER_HALF,
+                            "expel_range": EXPEL_RANGE,
                         }
                     )
                     connections[player_id] = ws
                 elif message["type"] == "start":
                     game.start(player_id)
+                elif message["type"] == "expel":
+                    game.expel(player_id, message.get("target"))
+                elif message["type"] == "restart":
+                    game.restart(player_id)
                 else:
                     game.set_input(player_id, message)
             except GameError as error:

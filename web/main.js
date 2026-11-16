@@ -28,14 +28,24 @@ const ui = {
   roleTitle: document.getElementById("role-title"),
   roleDetail: document.getElementById("role-detail"),
   roleBadge: document.getElementById("role-badge"),
+  expelButton: document.getElementById("expel-button"),
+  ghostBanner: document.getElementById("ghost-banner"),
+  endScreen: document.getElementById("end-screen"),
+  endTitle: document.getElementById("end-title"),
+  endRoles: document.getElementById("end-roles"),
+  restartButton: document.getElementById("restart-button"),
+  restartHint: document.getElementById("restart-hint"),
 };
 
 let socket = null;
-let welcome = null; // {id, map, speed, tick_rate, player_half} once joined
-let snapshots = []; // recent server states: {time, players: Map(id -> {name,x,y})}
+let welcome = null; // {id, map, speed, tick_rate, player_half, expel_range} once joined
+// Recent server states: {time, players: Map(id -> {name,x,y}), ghosts: Set(id)}
+let snapshots = [];
+let latestState = null; // the newest state message as the server sent it
 let toastTimer = null;
-let lastPhase = null; // "lobby" or "playing", from the latest state
+let lastPhase = null; // "lobby", "playing" or "ended", from the latest state
 let lobbyKey = ""; // what the lobby list currently shows, to redraw only on changes
+let endKey = ""; // the same for the end screen
 let roleTimer = null;
 
 // --- Connection -----------------------------------------------------------------
@@ -72,7 +82,10 @@ function handleMessage(message) {
     else showJoinError(message.reason);
   } else if (message.type === "state" && welcome) {
     const players = new Map(message.players.map((p) => [p.id, p]));
-    snapshots.push({ time: performance.now(), players });
+    // Only a ghost (or everyone after the end) receives the ghost list; the living
+    // do not even receive the ghosts' positions.
+    snapshots.push({ time: performance.now(), players, ghosts: new Set(message.ghosts || []) });
+    latestState = message;
     // Keep about one second of history.
     while (snapshots.length > welcome.tick_rate) snapshots.shift();
     ui.playerCount.textContent = `Players: ${players.size}/10`;
@@ -88,9 +101,18 @@ function updatePhase(state) {
   const justStarted = state.phase === "playing" && lastPhase !== "playing";
   lastPhase = state.phase;
   ui.lobby.hidden = state.phase !== "lobby";
+  ui.endScreen.hidden = state.phase !== "ended";
+  ui.ghostBanner.hidden = !(state.phase === "playing" && !state.alive);
+  updateExpelButton(state);
   if (state.phase === "lobby") {
     ui.roleBadge.hidden = true;
     renderLobby(state);
+    return;
+  }
+  if (state.phase === "ended") {
+    ui.roleBadge.hidden = true;
+    ui.roleScreen.hidden = true;
+    renderEnd(state);
     return;
   }
   const role = describeRole(state);
@@ -168,6 +190,96 @@ ui.startButton.addEventListener("click", () => {
   ui.startButton.blur(); // keys go back to walking
 });
 
+// --- Expel, ghosts and the end screen (spec 003) ------------------------------------
+// The button is only a convenience: the server checks range and cooldown again.
+
+function isLivingExaminer(state) {
+  return state.phase === "playing" && state.role === "examiner" && state.alive;
+}
+
+// Nearest living student within range, from the latest server positions. A living
+// examiner does not receive ghosts, and fellow examiners are known, so every other
+// player in the list is a living student.
+function expelTarget(state) {
+  if (!isLivingExaminer(state)) return null;
+  const me = state.players.find((p) => p.id === welcome.id);
+  if (!me) return null;
+  const fellows = new Set(state.fellow_examiners || []);
+  let best = null;
+  let bestDistance = welcome.expel_range;
+  for (const p of state.players) {
+    if (p.id === welcome.id || fellows.has(p.id)) continue;
+    const distance = Math.hypot(p.x - me.x, p.y - me.y);
+    if (distance <= bestDistance) {
+      best = p;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function updateExpelButton(state) {
+  ui.expelButton.hidden = !isLivingExaminer(state);
+  if (ui.expelButton.hidden) return;
+  const cooldown = state.expel_cooldown;
+  const target = expelTarget(state);
+  ui.expelButton.disabled = cooldown > 0 || !target;
+  let label = "Expel (E) · nobody in range";
+  if (cooldown > 0) label = `Expel (E) · ready in ${cooldown} s`;
+  else if (target) label = `Expel ${target.name} (E)`; // textContent: never read as HTML
+  setText(ui.expelButton, label);
+}
+
+function tryExpel() {
+  if (!latestState || !isLivingExaminer(latestState)) return;
+  if (latestState.expel_cooldown > 0) {
+    showToast(`Cooldown: ${latestState.expel_cooldown} s left`);
+    return;
+  }
+  const target = expelTarget(latestState);
+  if (!target) {
+    showToast("No student in range");
+    return;
+  }
+  send({ type: "expel", target: target.id });
+}
+
+function renderEnd(state) {
+  // Redraw only when something on the end screen changes.
+  const key = JSON.stringify([state.winner, state.roles, state.ghosts, state.players.map((p) => [p.id, p.name])]);
+  if (key !== endKey) {
+    endKey = key;
+    ui.endTitle.textContent = state.winner === "students" ? "Students win!" : "Examiners win!";
+    ui.endScreen.dataset.winner = state.winner;
+    const ghosts = new Set(state.ghosts || []);
+    ui.endRoles.replaceChildren(
+      ...state.players.map((p) => {
+        const role = state.roles[p.id];
+        const item = document.createElement("li");
+        item.textContent = p.name;
+        item.append(tag(role === "examiner" ? "Examiner" : "Student", role));
+        if (ghosts.has(p.id)) item.append(tag("expelled", "expelled"));
+        if (p.id === welcome.id) item.append(tag("you", "you"));
+        return item;
+      }),
+    );
+  }
+  const isHost = state.host === welcome.id;
+  ui.restartButton.hidden = !isHost;
+  setText(ui.restartHint, isHost ? "" : "Waiting for the host to start a new round");
+}
+
+ui.expelButton.addEventListener("click", () => {
+  tryExpel();
+  ui.expelButton.blur();
+});
+
+ui.restartButton.addEventListener("click", () => {
+  // The server checks host and phase; a rejection comes back as a toast.
+  send({ type: "restart" });
+  ui.restartButton.blur();
+});
+
 // --- Join form ------------------------------------------------------------------
 
 ui.joinForm.addEventListener("submit", async (event) => {
@@ -236,6 +348,7 @@ class CampusScene extends Phaser.Scene {
   constructor() {
     super("campus");
     this.sprites = new Map(); // id -> container (circle + name)
+    this.exams = new Map(); // failed exam id -> container (sheet + "6/20")
     this.lastSent = { dx: 0, dy: 0 };
     this.predicted = null; // own position as predicted by this browser
   }
@@ -273,7 +386,9 @@ class CampusScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, width, height);
     this.cameras.main.setBackgroundColor("#1d1f24");
 
-    this.keys = this.input.keyboard.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT");
+    this.keys = this.input.keyboard.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,E");
+    // On the key event itself, so even a very short tap counts (tryExpel checks the role).
+    this.keys.E.on("down", () => tryExpel());
 
     // When the tab loses focus, stop walking (otherwise the server keeps moving us).
     const stop = () => this.sendDirection(0, 0);
@@ -297,13 +412,49 @@ class CampusScene extends Phaser.Scene {
 
   update(time, deltaMs) {
     if (snapshots.length === 0) return;
-    const { dx, dy } = this.readKeys();
-    this.sendDirection(dx, dy);
+    let dx = 0;
+    let dy = 0;
+    if (lastPhase === "ended") {
+      // The server rejects movement now and has already stopped everyone.
+      this.lastSent = { dx: 0, dy: 0 };
+    } else {
+      ({ dx, dy } = this.readKeys());
+      this.sendDirection(dx, dy);
+    }
 
-    const latest = snapshots[snapshots.length - 1].players;
+    const newest = snapshots[snapshots.length - 1];
+    const latest = newest.players;
     this.syncSprites(latest);
+    this.syncExams(latestState.failed_exams);
+    for (const [id, sprite] of this.sprites) sprite.setAlpha(newest.ghosts.has(id) ? 0.4 : 1);
     this.updateOwn(latest.get(welcome.id), dx, dy, deltaMs / 1000);
     this.updateOthers(latest);
+  }
+
+  // Failed exams ("6/20") lie on the floor until the next round; everyone sees them.
+  syncExams(exams) {
+    const ids = new Set(exams.map((e) => e.id));
+    for (const exam of exams) {
+      if (this.exams.has(exam.id)) continue;
+      const sheet = this.add.rectangle(0, 0, 16, 20, 0xffffff).setStrokeStyle(1, 0x8a8f99);
+      const mark = this.add
+        .text(0, 0, "6/20", {
+          fontFamily: "system-ui, sans-serif",
+          fontSize: "8px",
+          fontStyle: "bold",
+          color: "#d62828",
+        })
+        .setOrigin(0.5);
+      const container = this.add.container(exam.x, exam.y, [sheet, mark]);
+      container.setAngle(-10).setDepth(0.5); // under the players
+      this.exams.set(exam.id, container);
+    }
+    for (const [id, container] of this.exams) {
+      if (!ids.has(id)) {
+        container.destroy();
+        this.exams.delete(id);
+      }
+    }
   }
 
   // Create sprites for new players, remove sprites of players who left.
