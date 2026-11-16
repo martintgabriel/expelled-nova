@@ -179,8 +179,25 @@ button:disabled { opacity: 0.6; cursor: wait; }
 .tag.examiner { background: var(--error); color: #1d1f24; font-weight: 700; }
 .tag.student { background: #9fd3ff; color: #1d1f24; font-weight: 700; }
 
+/* --- Look (spec 005): current area and colour dots --- */
+
+#hud { max-width: calc(100vw - 24px); white-space: nowrap; }
+#hud [hidden] { display: none; }
+#area-name { font-weight: 700; color: var(--accent); }
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+}
+
 /* Phones: put the panel under the HUD instead of next to it. */
 @media (max-width: 600px) {
   .panel { top: 52px; left: 12px; right: 12px; width: auto; }
+  /* No room next to the area name, and a phone has no keyboard (controls: spec 007). */
+  #hud .hint { display: none; }
   #lobby { width: auto; }
 }

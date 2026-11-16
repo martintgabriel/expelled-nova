@@ -93,6 +93,7 @@ async def websocket_endpoint(ws: WebSocket):
                             "tick_rate": TICK_RATE,
                             "player_half": PLAYER_HALF,
                             "expel_range": EXPEL_RANGE,
+                            "vision_radius": game.vision_radius,
                         }
                     )
                     connections[player_id] = ws

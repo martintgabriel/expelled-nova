@@ -1,5 +1,6 @@
-"""Game rules: lobby, host, secret roles, live movement, expelling, ghosts and the end of a
-round. Plain Python, no network code, so it can be tested directly.
+"""Game rules: lobby, host, secret roles, live movement, expelling, ghosts, the end of a
+round, player colours and the vision radius. Plain Python, no network code, so it can be
+tested directly.
 
 The server owns the truth: browsers only send a direction (dx, dy), "start", "expel" or
 "restart". Every tick the server moves each player a fixed distance and blocks walls.
@@ -27,6 +28,9 @@ MESSAGE_TYPES = {"join", "input", "start", "expel", "restart"}
 EXPEL_RANGE = 48  # px between centres, about 1.5 tiles
 EXPEL_COOLDOWN = 20  # seconds between two expels by the same examiner
 EXPEL_COOLDOWN_TICKS = EXPEL_COOLDOWN * TICK_RATE  # 400
+VISION_TILES = 6  # how far a living player sees while playing, in tiles
+# Colour numbers 0-9, one per player. Which number is which colour is drawing (web/render.js).
+PLAYER_COLORS = range(MAX_PLAYERS)
 
 # Game phases. A later spec adds "meeting".
 LOBBY = "lobby"  # before the start: players join and walk around
@@ -58,6 +62,7 @@ class Player:
     dy: int = 0
     role: str | None = None  # None in the lobby, then STUDENT or EXAMINER
     alive: bool = True  # False = ghost: still walks, cannot expel or be expelled
+    color: int = 0  # colour number, unique in the game, kept until the player leaves
     next_expel_tick: int = 0  # first tick at which this player may expel (again)
 
 
@@ -147,6 +152,7 @@ class Game:
     def __init__(self, campus, rng=None):
         self.campus = campus
         self.tile = campus["tile_size"]
+        self.vision_radius = VISION_TILES * self.tile  # px between centres
         self.grid = campus["grid"]
         self.players = {}  # by id, in join order (Python dicts keep insertion order)
         self.tick = 0
@@ -175,7 +181,7 @@ class Game:
         if any(p.name.casefold() == name.casefold() for p in self.players.values()):
             raise GameError("Nickname is already taken")
         x, y = self._spawn_centre(*self._free_spawn())
-        player = Player(id=f"p{self.next_id}", name=name, x=x, y=y)
+        player = Player(id=f"p{self.next_id}", name=name, x=x, y=y, color=self._free_color())
         self.next_id += 1
         self.players[player.id] = player
         return player
@@ -220,6 +226,11 @@ class Game:
 
     def _spawn_centre(self, col, row):
         return (col + 0.5) * self.tile, (row + 0.5) * self.tile
+
+    def _free_color(self):
+        """The lowest colour number nobody in the game has (there are as many as players)."""
+        taken = {p.color for p in self.players.values()}
+        return min(color for color in PLAYER_COLORS if color not in taken)
 
     # --- Expelling ----------------------------------------------------------------
 
@@ -368,11 +379,35 @@ class Game:
 
     # --- What the browsers receive --------------------------------------------
 
-    def snapshot(self, see_ghosts=False):
-        """The part every player may see: phase, host, names, positions and failed exams.
+    def area_at(self, x, y):
+        """Name of the campus area whose rectangle contains the point, or None (a corridor)."""
+        col, row = math.floor(x / self.tile), math.floor(y / self.tile)
+        for area in self.campus["areas"]:
+            in_columns = area["x"] <= col < area["x"] + area["w"]
+            in_rows = area["y"] <= row < area["y"] + area["h"]
+            if in_columns and in_rows:
+                return area["name"]
+        return None
 
-        Never a role. Ghosts are left out unless see_ghosts is set.
+    def _in_sight(self, viewer, x, y):
+        """True if the point is within the vision radius of the viewer (a plain circle)."""
+        return math.hypot(x - viewer.x, y - viewer.y) <= self.vision_radius
+
+    def snapshot(self, see_ghosts=False, viewer=None):
+        """The part players may see: phase, host, names, positions, colours and failed exams.
+
+        Never a role. Ghosts are left out unless see_ghosts is set. With a viewer, players
+        and failed exams outside the viewer's vision radius are left out as well.
         """
+        players = [
+            p
+            for p in self.players.values()
+            if (p.alive or see_ghosts)
+            and (viewer is None or p is viewer or self._in_sight(viewer, p.x, p.y))
+        ]
+        exams = [
+            e for e in self.failed_exams if viewer is None or self._in_sight(viewer, e.x, e.y)
+        ]
         return {
             "type": "state",
             "tick": self.tick,
@@ -380,17 +415,18 @@ class Game:
             "host": self.host_id,
             "players": [
                 {"id": p.id, "name": p.name, "x": round(p.x, 1), "y": round(p.y, 1)}
-                for p in self.players.values()
-                if p.alive or see_ghosts
+                for p in players
             ],
-            "failed_exams": [
-                {"id": e.id, "x": round(e.x, 1), "y": round(e.y, 1)} for e in self.failed_exams
-            ],
+            # Kept next to the player entries, so those stay exactly {id, name, x, y}.
+            "colors": {p.id: p.color for p in players},
+            "failed_exams": [{"id": e.id, "x": round(e.x, 1), "y": round(e.y, 1)} for e in exams],
         }
 
     def snapshot_for(self, player_id):
         """What one player may know: the shared snapshot plus their own role and state.
 
+        - While playing, a living player only gets the players and failed exams within
+          the vision radius (spec 005). In the lobby and after the end there is no limit.
         - An examiner also gets the fellow examiners' ids and their own cooldown.
         - A ghost (and everyone once the game has ended) sees all players and who is a ghost.
         - Only in ENDED does anyone get other players' roles, together with the winner.
@@ -399,7 +435,9 @@ class Game:
         if me is None:
             raise GameError("Unknown player")
         see_ghosts = not me.alive or self.phase == ENDED
-        state = self.snapshot(see_ghosts)
+        limited = self.phase == PLAYING and me.alive
+        state = self.snapshot(see_ghosts, viewer=me if limited else None)
+        state["area"] = self.area_at(me.x, me.y)
         state["role"] = me.role
         state["alive"] = me.alive
         if see_ghosts:
