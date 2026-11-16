@@ -6,6 +6,9 @@
 
 const INTERPOLATION_DELAY = 100; // ms: draw other players this far in the past
 const SNAP_DISTANCE_TILES = 2; // jump to the server position if further off than this
+const ROLE_SCREEN_MS = 3000; // how long the role screen shows at the start
+// REPEATS SERVER RULE: MIN_PLAYERS in server/game.py. Only for the hint; the server decides.
+const MIN_PLAYERS = 4;
 
 const ui = {
   joinScreen: document.getElementById("join-screen"),
@@ -17,12 +20,23 @@ const ui = {
   playerCount: document.getElementById("player-count"),
   toast: document.getElementById("toast"),
   disconnected: document.getElementById("disconnected"),
+  lobby: document.getElementById("lobby"),
+  lobbyPlayers: document.getElementById("lobby-players"),
+  startButton: document.getElementById("start-button"),
+  startHint: document.getElementById("start-hint"),
+  roleScreen: document.getElementById("role-screen"),
+  roleTitle: document.getElementById("role-title"),
+  roleDetail: document.getElementById("role-detail"),
+  roleBadge: document.getElementById("role-badge"),
 };
 
 let socket = null;
 let welcome = null; // {id, map, speed, tick_rate, player_half} once joined
 let snapshots = []; // recent server states: {time, players: Map(id -> {name,x,y})}
 let toastTimer = null;
+let lastPhase = null; // "lobby" or "playing", from the latest state
+let lobbyKey = ""; // what the lobby list currently shows, to redraw only on changes
+let roleTimer = null;
 
 // --- Connection -----------------------------------------------------------------
 
@@ -62,8 +76,97 @@ function handleMessage(message) {
     // Keep about one second of history.
     while (snapshots.length > welcome.tick_rate) snapshots.shift();
     ui.playerCount.textContent = `Players: ${players.size}/10`;
+    updatePhase(message);
   }
 }
+
+// --- Lobby and roles --------------------------------------------------------------
+// Everything here is drawn from the server's state; this browser only ever receives
+// its own role (and, for an examiner, the fellow examiners' ids).
+
+function updatePhase(state) {
+  const justStarted = state.phase === "playing" && lastPhase !== "playing";
+  lastPhase = state.phase;
+  ui.lobby.hidden = state.phase !== "lobby";
+  if (state.phase === "lobby") {
+    ui.roleBadge.hidden = true;
+    renderLobby(state);
+    return;
+  }
+  const role = describeRole(state);
+  setText(ui.roleBadge, role.fellows ? `${role.title} · with ${role.fellows}` : role.title);
+  if (justStarted) showRoleScreen(state.role, role);
+}
+
+function renderLobby(state) {
+  // Redraw the list only when players or host change (states arrive 20 times a second).
+  const key = JSON.stringify([state.host, state.players.map((p) => [p.id, p.name])]);
+  if (key !== lobbyKey) {
+    lobbyKey = key;
+    ui.lobbyPlayers.replaceChildren(
+      ...state.players.map((p) => {
+        const item = document.createElement("li");
+        item.textContent = p.name; // textContent: a nickname is never read as HTML
+        if (p.id === state.host) item.append(tag("host", "host"));
+        if (p.id === welcome.id) item.append(tag("you", "you"));
+        return item;
+      }),
+    );
+  }
+  const isHost = state.host === welcome.id;
+  const enough = state.players.length >= MIN_PLAYERS;
+  ui.startButton.hidden = !isHost;
+  ui.startButton.disabled = !enough;
+  let hint = "";
+  if (!enough) hint = `Need at least ${MIN_PLAYERS} players`;
+  else if (!isHost) hint = "Waiting for the host to start";
+  setText(ui.startHint, hint);
+}
+
+function tag(text, kind) {
+  const span = document.createElement("span");
+  span.className = `tag ${kind}`;
+  span.textContent = text;
+  return span;
+}
+
+function describeRole(state) {
+  if (state.role === "examiner") {
+    const names = new Map(state.players.map((p) => [p.id, p.name]));
+    const fellows = (state.fellow_examiners || []).map((id) => names.get(id) ?? id).join(", ");
+    return { title: "You are an Undercover Examiner", fellows };
+  }
+  return { title: "You are a Student", fellows: "" };
+}
+
+function showRoleScreen(roleName, role) {
+  ui.roleTitle.textContent = role.title;
+  if (roleName === "examiner") {
+    ui.roleDetail.textContent = role.fellows
+      ? `Fellow examiner: ${role.fellows}`
+      : "You are the only examiner.";
+  } else {
+    ui.roleDetail.textContent = "Stay enrolled and find out who the examiners are.";
+  }
+  ui.roleScreen.dataset.role = roleName;
+  ui.roleScreen.hidden = false;
+  ui.roleBadge.hidden = true;
+  clearTimeout(roleTimer);
+  roleTimer = setTimeout(() => {
+    ui.roleScreen.hidden = true;
+    ui.roleBadge.hidden = lastPhase !== "playing";
+  }, ROLE_SCREEN_MS);
+}
+
+function setText(element, text) {
+  if (element.textContent !== text) element.textContent = text;
+}
+
+ui.startButton.addEventListener("click", () => {
+  // The server checks host, phase and player count; a rejection comes back as a toast.
+  send({ type: "start" });
+  ui.startButton.blur(); // keys go back to walking
+});
 
 // --- Join form ------------------------------------------------------------------
 

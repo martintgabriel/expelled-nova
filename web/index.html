@@ -26,6 +26,22 @@
     <span class="hint">WASD / arrow keys to move</span>
   </div>
 
+  <div id="lobby" class="panel" hidden>
+    <h2>Lobby</h2>
+    <ul id="lobby-players"></ul>
+    <button id="start-button" type="button" hidden>Start game</button>
+    <p id="start-hint" class="hint"></p>
+  </div>
+
+  <div id="role-badge" class="panel" hidden></div>
+
+  <div id="role-screen" class="overlay" hidden>
+    <div class="card role-card">
+      <h2 id="role-title"></h2>
+      <p id="role-detail"></p>
+    </div>
+  </div>
+
   <div id="toast" class="toast" role="status" hidden></div>
 
   <div id="disconnected" class="overlay" hidden>

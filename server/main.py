@@ -33,16 +33,19 @@ connections: dict[str, WebSocket] = {}
 
 
 async def game_loop():
-    """Move everyone one tick, then send the new positions to every joined player."""
+    """Move everyone one tick, then send each joined player their own snapshot.
+
+    Each player gets snapshot_for(their id), so a browser only ever receives its own role.
+    """
     loop = asyncio.get_running_loop()
     while True:
         started = loop.time()
         game.step()
-        text = json.dumps(game.snapshot())
-        for ws in list(connections.values()):
-            # A client that just closed raises here; its own handler removes it.
+        for player_id, ws in list(connections.items()):
+            # A client that just closed (or has just left the game) raises here;
+            # its own handler removes it.
             with contextlib.suppress(Exception):
-                await ws.send_text(text)
+                await ws.send_text(json.dumps(game.snapshot_for(player_id)))
         await asyncio.sleep(max(0.0, 1 / TICK_RATE - (loop.time() - started)))
 
 
@@ -91,6 +94,8 @@ async def websocket_endpoint(ws: WebSocket):
                         }
                     )
                     connections[player_id] = ws
+                elif message["type"] == "start":
+                    game.start(player_id)
                 else:
                     game.set_input(player_id, message)
             except GameError as error:
