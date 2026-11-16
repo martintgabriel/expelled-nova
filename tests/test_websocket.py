@@ -5,7 +5,7 @@ import json
 from fastapi.testclient import TestClient
 
 from server.game import RATE_LIMIT, TICK_RATE
-from server.main import app
+from server.main import app, game
 
 # How many server messages to read before giving up (2 seconds of state updates).
 TWO_SECONDS = 2 * TICK_RATE
@@ -165,3 +165,53 @@ def test_start_is_rejected_from_non_host_and_with_too_few_players():
             state = receive_until(a, lambda m: m["type"] == "state")
             assert state["phase"] == "lobby"
             assert state["host"] == a_id
+
+
+# --- Expel and ghosts (spec 003) ------------------------------------------------
+
+
+def test_examiner_expels_over_websocket_and_only_the_ghost_sees_the_ghost():
+    with TestClient(app) as client:
+        with (
+            client.websocket_connect("/ws") as a,
+            client.websocket_connect("/ws") as b,
+            client.websocket_connect("/ws") as c,
+            client.websocket_connect("/ws") as d,
+        ):
+            clients = [a, b, c, d]
+            ids = [join(ws, name)["id"] for ws, name in zip(clients, ["Kai", "Lia", "Max", "Noa"])]
+            a.send_json({"type": "start"})
+            roles = {}
+            for ws, player_id in zip(clients, ids):
+                state = receive_until(
+                    ws, lambda m: m["type"] == "state" and m["phase"] == "playing", limit=100
+                )
+                roles[player_id] = state["role"]
+            by_role = {"examiner": [], "student": []}
+            for ws, player_id in zip(clients, ids):
+                by_role[roles[player_id]].append((ws, player_id))
+            ((examiner_ws, examiner_id),) = by_role["examiner"]
+            (target_ws, target_id), (other_ws, _) = by_role["student"][:2]
+
+            # Spawn points are 2 tiles apart: out of range, so rejected with a reason.
+            examiner_ws.send_json({"type": "expel", "target": target_id})
+            error = receive_until(examiner_ws, lambda m: m["type"] == "error", limit=100)
+            assert "Too far away" in error["reason"]
+
+            # Skip the 20 s wait: stand on the target's spot and end the cooldown now.
+            examiner, target = game.players[examiner_id], game.players[target_id]
+            examiner.x, examiner.y = target.x, target.y
+            examiner.next_expel_tick = game.tick
+            examiner_ws.send_json({"type": "expel", "target": target_id})
+
+            ghost_view = receive_until(
+                target_ws, lambda m: m["type"] == "state" and m["alive"] is False, limit=100
+            )
+            assert sorted(p["id"] for p in ghost_view["players"]) == sorted(ids)
+            assert ghost_view["ghosts"] == [target_id]
+
+            living_view = receive_until(
+                other_ws, lambda m: m["type"] == "state" and m["failed_exams"], limit=100
+            )
+            assert living_view["alive"] is True
+            assert target_id not in [p["id"] for p in living_view["players"]]

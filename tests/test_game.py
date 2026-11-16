@@ -1,5 +1,6 @@
 """Unit tests for the game rules in server/game.py (no network)."""
 
+import dataclasses
 import json
 import math
 import random
@@ -7,11 +8,14 @@ import random
 import pytest
 
 from server.game import (
+    EXPEL_COOLDOWN,
+    EXPEL_RANGE,
     MAX_MESSAGE_BYTES,
     MAX_PLAYERS,
     PLAYER_HALF,
     RATE_LIMIT,
     STEP,
+    TICK_RATE,
     Game,
     GameError,
     RateLimiter,
@@ -592,3 +596,442 @@ def test_shared_snapshot_contains_no_roles():
     text = json.dumps(game.snapshot())
     assert "examiner" not in text
     assert "student" not in text
+
+
+# --- Expel, ghosts, game end and new round (spec 003) -------------------------
+
+# In TEST_MAP all players stand on the one spawn tile (80, 80), so everyone starts
+# within expel range of everyone else.
+COOLDOWN_TICKS = EXPEL_COOLDOWN * TICK_RATE
+
+
+def playing(count=4, seed=0):
+    """A started game. Returns the game, its examiners and its students (Player objects)."""
+    game, players = game_with(count, seed)
+    game.start(players[0].id)
+    examiners = [p for p in players if p.role == "examiner"]
+    students = [p for p in players if p.role == "student"]
+    return game, examiners, students
+
+
+def ready_game(count=4):
+    """A started game in which the examiners' first cooldown is just over."""
+    game, examiners, students = playing(count)
+    wait_ticks(game, COOLDOWN_TICKS)
+    return game, examiners, students
+
+
+def examiners_won():
+    """4 players: the examiner expels two students, so the game ends with an examiner win."""
+    game, (examiner,), students = ready_game(4)
+    game.expel(examiner.id, students[0].id)
+    wait_ticks(game, COOLDOWN_TICKS)
+    game.expel(examiner.id, students[1].id)
+    return game, [examiner], students
+
+
+def wait_ticks(game, ticks):
+    for _ in range(ticks):
+        game.step()
+
+
+def place(player, x, y=80):
+    player.x, player.y = x, y
+
+
+def full_state(game):
+    """Everything a rejected expel, move or restart must leave unchanged."""
+    return (
+        game.phase,
+        game.winner,
+        [dataclasses.asdict(p) for p in game.players.values()],
+        [dataclasses.asdict(e) for e in game.failed_exams],
+    )
+
+
+def ids_in(snapshot):
+    return sorted(p["id"] for p in snapshot["players"])
+
+
+# Accepted actions
+
+
+def test_examiner_expels_student_in_range_after_cooldown():
+    game, (examiner,), students = ready_game(4)
+    target = students[0]
+    place(target, 100, 90)  # about 22 px from the examiner at (80, 80)
+    game.expel(examiner.id, target.id)
+    assert target.alive is False
+    assert game.phase == "playing"  # 1 examiner, 2 living students
+    (exam,) = game.failed_exams
+    assert (exam.x, exam.y) == (100, 90)
+    assert exam.id not in game.players  # its own id, not the player's
+    assert game.snapshot_for(examiner.id)["expel_cooldown"] == EXPEL_COOLDOWN
+
+
+def test_expel_exactly_when_cooldown_ends_is_accepted():
+    game, (examiner,), students = playing(4)
+    wait_ticks(game, COOLDOWN_TICKS)  # exactly 20 seconds of ticks
+    game.expel(examiner.id, students[0].id)
+    assert students[0].alive is False
+
+
+def test_expel_at_exactly_expel_range_is_accepted():
+    game, (examiner,), students = ready_game(4)
+    place(examiner, 80)
+    place(students[0], 80 + EXPEL_RANGE)
+    game.expel(examiner.id, students[0].id)
+    assert students[0].alive is False
+
+
+def test_cooldown_restarts_after_an_expel():
+    game, (examiner,), students = ready_game(5)
+    game.expel(examiner.id, students[0].id)
+    with pytest.raises(GameError, match="Cooldown"):
+        game.expel(examiner.id, students[1].id)
+    wait_ticks(game, COOLDOWN_TICKS - 1)
+    with pytest.raises(GameError, match="Cooldown"):
+        game.expel(examiner.id, students[1].id)
+    game.step()
+    game.expel(examiner.id, students[1].id)
+    assert students[1].alive is False
+    assert game.phase == "playing"  # 1 examiner, 2 living students
+
+
+def test_examiner_snapshot_shows_cooldown_seconds_left():
+    game, (examiner,), students = playing(4)
+    assert game.snapshot_for(examiner.id)["expel_cooldown"] == EXPEL_COOLDOWN
+    wait_ticks(game, COOLDOWN_TICKS - 1)
+    assert game.snapshot_for(examiner.id)["expel_cooldown"] == 1  # one tick left: rounded up
+    game.step()
+    assert game.snapshot_for(examiner.id)["expel_cooldown"] == 0
+    for student in students:
+        assert "expel_cooldown" not in game.snapshot_for(student.id)
+
+
+def test_ghost_keeps_moving_and_walls_still_block():
+    game, (examiner,), students = ready_game(4)
+    ghost = students[0]
+    game.expel(examiner.id, ghost.id)
+    game.set_input(ghost.id, {"type": "input", "dx": 1, "dy": 0})
+    game.step()
+    assert ghost.x == pytest.approx(80 + STEP)
+    place(ghost, LEFT_WALL_X)
+    game.set_input(ghost.id, {"type": "input", "dx": -1, "dy": 0})
+    game.step()
+    assert (ghost.x, ghost.y) == (LEFT_WALL_X, 80)
+
+
+def test_expel_and_restart_messages_are_parsed_after_joining():
+    assert parse_message('{"type": "expel", "target": "p2"}', joined=True)["target"] == "p2"
+    assert parse_message('{"type": "restart"}', joined=True) == {"type": "restart"}
+
+
+@pytest.mark.parametrize("raw", ['{"type": "expel", "target": "p2"}', '{"type": "restart"}'])
+def test_expel_and_restart_before_joining_are_rejected(raw):
+    with pytest.raises(GameError, match="Join"):
+        parse_message(raw, joined=False)
+
+
+# Rejected expels: each case returns (game, sender id, target) ready for one expel
+
+
+def one_tick_before_cooldown_ends():
+    game, examiners, students = playing(4)
+    wait_ticks(game, COOLDOWN_TICKS - 1)
+    return game, examiners[0].id, students[0].id
+
+
+def out_of_range():
+    game, examiners, students = ready_game(4)
+    place(examiners[0], 80)
+    place(students[0], 80 + EXPEL_RANGE + 1)
+    return game, examiners[0].id, students[0].id
+
+
+def target_is_fellow_examiner():
+    game, examiners, _ = ready_game(7)
+    return game, examiners[0].id, examiners[1].id
+
+
+def target_is_self():
+    game, examiners, _ = ready_game(4)
+    return game, examiners[0].id, examiners[0].id
+
+
+def target_is_ghost():
+    game, examiners, students = ready_game(4)
+    game.expel(examiners[0].id, students[0].id)
+    wait_ticks(game, COOLDOWN_TICKS)
+    return game, examiners[0].id, students[0].id
+
+
+def sender_is_student():
+    game, _, students = ready_game(4)
+    return game, students[0].id, students[1].id
+
+
+def sender_is_ghost_student():
+    game, examiners, students = ready_game(4)
+    game.expel(examiners[0].id, students[0].id)
+    return game, students[0].id, students[1].id
+
+
+def sender_is_ghost_examiner():
+    # Examiners only become ghosts by vote (spec 006); set it directly here.
+    game, examiners, students = ready_game(7)
+    examiners[0].alive = False
+    return game, examiners[0].id, students[0].id
+
+
+def in_lobby():
+    game, players = game_with(4)
+    return game, players[0].id, players[1].id
+
+
+def in_ended():
+    game, examiners, students = examiners_won()
+    wait_ticks(game, COOLDOWN_TICKS)
+    return game, examiners[0].id, students[2].id
+
+
+def unknown_target():
+    game, examiners, _ = ready_game(4)
+    return game, examiners[0].id, "nobody"
+
+
+def unknown_sender():
+    game, _, students = ready_game(4)
+    return game, "nobody", students[0].id
+
+
+@pytest.mark.parametrize(
+    "case, reason",
+    [
+        (one_tick_before_cooldown_ends, "Cooldown"),
+        (out_of_range, "Too far away"),
+        (target_is_fellow_examiner, "Cannot expel an examiner"),
+        (target_is_self, "Cannot expel an examiner"),
+        (target_is_ghost, "Already expelled"),
+        (sender_is_student, "Only examiners can expel"),
+        (sender_is_ghost_student, "Ghosts cannot expel"),
+        (sender_is_ghost_examiner, "Ghosts cannot expel"),
+        (in_lobby, "not started"),
+        (in_ended, "Game is over"),
+        (unknown_target, "Unknown target"),
+        (unknown_sender, "Unknown player"),
+    ],
+    ids=lambda value: value.__name__ if callable(value) else None,
+)
+def test_rejected_expel_changes_nothing(case, reason):
+    game, sender, target = case()
+    before = full_state(game)
+    with pytest.raises(GameError, match=reason):
+        game.expel(sender, target)
+    assert full_state(game) == before
+
+
+@pytest.mark.parametrize("target", [2, None, True, ["p2"], {"id": "p2"}])
+def test_expel_target_that_is_not_a_string_is_rejected(target):
+    game, examiners, _ = ready_game(4)
+    before = full_state(game)
+    with pytest.raises(GameError, match="Target must be a player id"):
+        game.expel(examiners[0].id, target)
+    assert full_state(game) == before
+
+
+def test_movement_in_ended_is_rejected():
+    game, _, students = examiners_won()
+    before = full_state(game)
+    with pytest.raises(GameError, match="Game is over"):
+        game.set_input(students[2].id, {"type": "input", "dx": 1, "dy": 0})
+    assert full_state(game) == before
+
+
+# Simultaneous actions
+
+
+def test_two_expels_of_the_same_student_in_one_tick_first_wins():
+    game, (first, second), students = ready_game(7)
+    target = students[0]
+    game.expel(first.id, target.id)
+    with pytest.raises(GameError, match="Already expelled"):
+        game.expel(second.id, target.id)  # same tick: no step() in between
+    assert len(game.failed_exams) == 1
+    assert game.snapshot_for(second.id)["expel_cooldown"] == 0  # unchanged
+
+
+# Winning
+
+
+def test_examiners_win_when_they_equal_the_living_students():
+    game, (examiner,), students = ready_game(4)
+    game.expel(examiner.id, students[0].id)
+    assert game.phase == "playing"  # 1 examiner, 2 living students
+    wait_ticks(game, COOLDOWN_TICKS)
+    game.expel(examiner.id, students[1].id)
+    assert game.phase == "ended"  # 1 examiner, 1 living student
+    assert game.snapshot_for(examiner.id)["winner"] == "examiners"
+
+
+def test_students_win_when_the_only_examiner_leaves():
+    game, (examiner,), students = playing(4)
+    game.leave(examiner.id)
+    assert game.phase == "ended"
+    for student in students:
+        assert game.snapshot_for(student.id)["winner"] == "students"
+
+
+def test_one_of_two_examiners_leaving_keeps_the_game_running():
+    game, (first, second), _ = playing(7)
+    game.leave(first.id)
+    assert game.phase == "playing"
+    assert "winner" not in game.snapshot_for(second.id)
+
+
+def test_student_leaving_can_give_the_examiners_the_win():
+    game, (examiner,), students = ready_game(4)
+    game.expel(examiner.id, students[0].id)  # 1 examiner, 2 living students
+    game.leave(students[1].id)  # 1 examiner, 1 living student
+    assert game.phase == "ended"
+    assert game.snapshot_for(examiner.id)["winner"] == "examiners"
+
+
+def test_everyone_leaving_after_an_expel_leaves_a_clean_lobby():
+    game, (examiner,), students = ready_game(4)
+    game.expel(examiner.id, students[0].id)
+    for player_id in list(game.players):
+        game.leave(player_id)
+    assert game.phase == "lobby"
+    newcomer = game.join("Newcomer")
+    snapshot = game.snapshot_for(newcomer.id)
+    assert snapshot["failed_exams"] == []
+    assert snapshot["alive"] is True
+    assert "winner" not in snapshot
+
+
+def test_nobody_keeps_walking_when_the_game_ends():
+    game, (examiner,), students = ready_game(4)
+    game.expel(examiner.id, students[0].id)
+    wait_ticks(game, COOLDOWN_TICKS)
+    walker = students[2]
+    game.set_input(walker.id, {"type": "input", "dx": 1, "dy": 0})
+    game.expel(examiner.id, students[1].id)  # examiners win
+    before = (walker.x, walker.y)
+    game.step()
+    assert (walker.x, walker.y) == before
+
+
+# Snapshots: who sees ghosts, failed exams and roles
+
+
+def test_living_player_does_not_see_ghosts_but_sees_the_failed_exam():
+    game, (examiner,), students = ready_game(4)
+    ghost = students[0]
+    game.expel(examiner.id, ghost.id)
+    for player in [examiner, students[1], students[2]]:
+        snapshot = game.snapshot_for(player.id)
+        assert snapshot["alive"] is True
+        assert ids_in(snapshot) == sorted([examiner.id, students[1].id, students[2].id])
+        assert [set(e) for e in snapshot["failed_exams"]] == [{"id", "x", "y"}]
+        assert (snapshot["failed_exams"][0]["x"], snapshot["failed_exams"][0]["y"]) == (80, 80)
+
+
+def test_ghost_sees_everyone():
+    game, (examiner,), students = ready_game(4)
+    ghost = students[0]
+    game.expel(examiner.id, ghost.id)
+    snapshot = game.snapshot_for(ghost.id)
+    assert snapshot["alive"] is False
+    assert ids_in(snapshot) == sorted(game.players)
+    assert snapshot["ghosts"] == [ghost.id]
+    assert len(snapshot["failed_exams"]) == 1
+
+
+def test_no_snapshot_shows_other_roles_before_the_end():
+    game, examiners, students = ready_game(7)
+    game.expel(examiners[0].id, students[0].id)  # one ghost in the game
+    for player_id, player in game.players.items():
+        snapshot = game.snapshot_for(player_id)
+        assert "roles" not in snapshot
+        assert "winner" not in snapshot
+        assert all(set(p) == PLAYER_KEYS for p in snapshot["players"])
+        if player.role == "student":
+            assert "examiner" not in json.dumps(snapshot)
+
+
+def test_all_roles_and_the_winner_are_shown_at_the_end():
+    game, _, students = examiners_won()
+    roles = {p.id: p.role for p in game.players.values()}
+    for player_id in game.players:
+        snapshot = game.snapshot_for(player_id)
+        assert snapshot["phase"] == "ended"
+        assert snapshot["winner"] == "examiners"
+        assert snapshot["roles"] == roles
+        assert ids_in(snapshot) == sorted(game.players)  # ghosts included
+        assert sorted(snapshot["ghosts"]) == sorted([students[0].id, students[1].id])
+
+
+# New round
+
+
+def test_host_starts_a_new_round_after_the_end():
+    game, _, _ = examiners_won()
+    ids = list(game.players)
+    host = ids[0]
+    for player in game.players.values():
+        place(player, 150, 100)  # away from the spawn point
+    game.restart(host)
+    assert game.phase == "lobby"
+    assert list(game.players) == ids  # the same players stay
+    spawn_points = {((col + 0.5) * 32, (row + 0.5) * 32) for col, row in TEST_MAP["spawns"]}
+    for player in game.players.values():
+        assert (player.x, player.y) in spawn_points
+        snapshot = game.snapshot_for(player.id)
+        assert snapshot["role"] is None
+        assert snapshot["alive"] is True
+        assert snapshot["failed_exams"] == []
+        assert "winner" not in snapshot and "roles" not in snapshot
+        assert ids_in(snapshot) == sorted(ids)
+
+    game.start(host)
+    (examiner,) = [p for p in game.players.values() if p.role == "examiner"]
+    assert game.snapshot_for(examiner.id)["expel_cooldown"] == EXPEL_COOLDOWN
+
+
+def restart_by_non_host_in_ended():
+    game, _, _ = examiners_won()
+    return game, list(game.players)[1]
+
+
+def restart_by_host_in_lobby():
+    game, players = game_with(4)
+    return game, players[0].id
+
+
+def restart_by_host_while_playing():
+    game, _, _ = playing(4)
+    return game, game.host_id
+
+
+def restart_by_unknown_player():
+    game, _, _ = examiners_won()
+    return game, "nobody"
+
+
+@pytest.mark.parametrize(
+    "case, reason",
+    [
+        (restart_by_non_host_in_ended, "Only the host"),
+        (restart_by_host_in_lobby, "not over"),
+        (restart_by_host_while_playing, "not over"),
+        (restart_by_unknown_player, "Unknown player"),
+    ],
+    ids=lambda value: value.__name__ if callable(value) else None,
+)
+def test_rejected_restart_changes_nothing(case, reason):
+    game, sender = case()
+    before = full_state(game)
+    with pytest.raises(GameError, match=reason):
+        game.restart(sender)
+    assert full_state(game) == before
