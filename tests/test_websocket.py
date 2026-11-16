@@ -1,5 +1,7 @@
 """End-to-end tests over the real WebSocket endpoint (server/main.py)."""
 
+import json
+
 from fastapi.testclient import TestClient
 
 from server.game import RATE_LIMIT, TICK_RATE
@@ -100,3 +102,66 @@ def test_page_and_health_check_are_served():
         assert "vendor/phaser.min.js" in page.text
         assert client.get("/vendor/phaser.min.js").status_code == 200
         assert client.get("/healthz").json() == {"status": "ok"}
+
+
+# --- Lobby, host and secret roles (spec 002) ----------------------------------
+
+
+def test_host_starts_and_each_client_gets_only_its_own_role():
+    with TestClient(app) as client:
+        with (
+            client.websocket_connect("/ws") as a,
+            client.websocket_connect("/ws") as b,
+            client.websocket_connect("/ws") as c,
+            client.websocket_connect("/ws") as d,
+        ):
+            clients = [a, b, c, d]
+            ids = [join(ws, name)["id"] for ws, name in zip(clients, ["Hana", "Ben", "Cleo", "Dev"])]
+
+            # In the lobby everyone sees the first player as host and has no role yet.
+            for ws in clients:
+                state = receive_until(ws, lambda m: m["type"] == "state" and len(m["players"]) == 4)
+                assert state["phase"] == "lobby"
+                assert state["host"] == ids[0]
+                assert state["role"] is None
+
+            a.send_json({"type": "start"})
+
+            roles = []
+            for ws in clients:
+                state = receive_until(
+                    ws, lambda m: m["type"] == "state" and m["phase"] == "playing", limit=100
+                )
+                assert state["role"] in ("student", "examiner")
+                assert all(set(p) == {"id", "name", "x", "y"} for p in state["players"])
+                if state["role"] == "student":
+                    assert "fellow_examiners" not in state
+                    assert "examiner" not in json.dumps(state)
+                else:
+                    assert state["fellow_examiners"] == []
+                roles.append(state["role"])
+            assert roles.count("examiner") == 1
+
+            with client.websocket_connect("/ws") as late:
+                reply = join(late, "Late")
+                assert reply["type"] == "error"
+                assert "already running" in reply["reason"]
+
+
+def test_start_is_rejected_from_non_host_and_with_too_few_players():
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as a, client.websocket_connect("/ws") as b:
+            a_id = join(a, "Ines")["id"]
+            assert join(b, "Jon")["type"] == "welcome"
+
+            b.send_json({"type": "start"})
+            error = receive_until(b, lambda m: m["type"] == "error")
+            assert "Only the host" in error["reason"]
+
+            a.send_json({"type": "start"})
+            error = receive_until(a, lambda m: m["type"] == "error")
+            assert "at least 4 players" in error["reason"]
+
+            state = receive_until(a, lambda m: m["type"] == "state")
+            assert state["phase"] == "lobby"
+            assert state["host"] == a_id

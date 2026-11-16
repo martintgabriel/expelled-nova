@@ -1,11 +1,13 @@
-"""Game rules for live movement. Plain Python, no network code, so it can be tested directly.
+"""Game rules: lobby, host, secret roles and live movement. Plain Python, no network code,
+so it can be tested directly.
 
-The server owns the truth: browsers only send a direction (dx, dy). Every tick the
-server moves each player a fixed distance and blocks walls.
+The server owns the truth: browsers only send a direction (dx, dy) or "start". Every tick
+the server moves each player a fixed distance and blocks walls.
 """
 
 import json
 import math
+import random
 import unicodedata
 from collections import deque
 from dataclasses import dataclass
@@ -15,11 +17,20 @@ TICK_RATE = 20  # server updates per second
 SPEED = 160.0  # pixels per second
 STEP = SPEED / TICK_RATE  # pixels per tick (8)
 PLAYER_HALF = 10  # a player is a 20 x 20 px square; this is half its side
+MIN_PLAYERS = 4  # needed to start a game
 MAX_PLAYERS = 10
 NAME_MAX = 16
 MAX_MESSAGE_BYTES = 512
 RATE_LIMIT = 30  # messages per second per connection
-MESSAGE_TYPES = {"join", "input"}
+MESSAGE_TYPES = {"join", "input", "start"}
+
+# Game phases. Later specs add "meeting" and "ended".
+LOBBY = "lobby"  # before the start: players join and walk around
+PLAYING = "playing"
+
+# Roles. Secret: a player only ever receives their own (see Game.snapshot_for).
+STUDENT = "student"
+EXAMINER = "examiner"
 
 MAP_PATH = Path(__file__).with_name("campus.json")
 
@@ -36,6 +47,7 @@ class Player:
     y: float
     dx: int = 0
     dy: int = 0
+    role: str | None = None  # None in the lobby, then STUDENT or EXAMINER
 
 
 def load_map(path=MAP_PATH):
@@ -62,7 +74,7 @@ def parse_message(raw, joined):
     """Turn one raw WebSocket message into a dict, or raise GameError.
 
     Checks size, JSON, shape, type and whether the type is allowed right now:
-    before joining only "join", after joining only "input".
+    before joining only "join", after joining only "input" and "start".
     """
     if not isinstance(raw, str):
         raise GameError("Messages must be text")
@@ -101,23 +113,39 @@ class RateLimiter:
         return True
 
 
+def examiner_count(player_count):
+    """1 examiner for 4-6 players, 2 for 7-10."""
+    return 1 if player_count <= 6 else 2
+
+
 def is_direction(value):
     # type() instead of isinstance(): True/False are ints in Python and must be rejected.
     return type(value) is int and value in (-1, 0, 1)
 
 
 class Game:
-    def __init__(self, campus):
+    def __init__(self, campus, rng=None):
         self.campus = campus
         self.tile = campus["tile_size"]
         self.grid = campus["grid"]
-        self.players = {}
+        self.players = {}  # by id, in join order (Python dicts keep insertion order)
         self.tick = 0
         self.next_id = 1
+        self.phase = LOBBY
+        # Operating-system randomness, so nobody can predict the roles.
+        # Tests pass a seeded random.Random to fix the outcome.
+        self.rng = rng or random.SystemRandom()
+
+    @property
+    def host_id(self):
+        """The player who has been in the game longest: the first one in join order."""
+        return next(iter(self.players), None)
 
     # --- Joining and leaving --------------------------------------------------
 
     def join(self, raw_name):
+        if self.phase != LOBBY:
+            raise GameError("Game already running")
         if len(self.players) >= MAX_PLAYERS:
             raise GameError(f"Game is full ({MAX_PLAYERS} players)")
         name = validate_nickname(raw_name)
@@ -135,7 +163,28 @@ class Game:
         return player
 
     def leave(self, player_id):
+        """Remove a player. If it was the host, the next-longest player is host automatically."""
         self.players.pop(player_id, None)
+        if not self.players:
+            # Everyone has gone: open the lobby again, otherwise nobody could ever join.
+            self.phase = LOBBY
+
+    # --- Starting and roles -----------------------------------------------------
+
+    def start(self, player_id):
+        """Start the game and deal the secret roles. Checks everything before changing anything."""
+        if player_id not in self.players:
+            raise GameError("Unknown player")
+        if self.phase != LOBBY:
+            raise GameError("Game already running")
+        if player_id != self.host_id:
+            raise GameError("Only the host can start the game")
+        if len(self.players) < MIN_PLAYERS:
+            raise GameError(f"Need at least {MIN_PLAYERS} players")
+        examiners = self.rng.sample(list(self.players), examiner_count(len(self.players)))
+        for player in self.players.values():
+            player.role = EXAMINER if player.id in examiners else STUDENT
+        self.phase = PLAYING
 
     def _free_spawn(self):
         """First spawn point nobody is standing on (falls back to the first one)."""
@@ -203,11 +252,30 @@ class Game:
     # --- What the browsers receive --------------------------------------------
 
     def snapshot(self):
+        """The part every player may see: phase, host, names and positions. Never a role."""
         return {
             "type": "state",
             "tick": self.tick,
+            "phase": self.phase,
+            "host": self.host_id,
             "players": [
                 {"id": p.id, "name": p.name, "x": round(p.x, 1), "y": round(p.y, 1)}
                 for p in self.players.values()
             ],
         }
+
+    def snapshot_for(self, player_id):
+        """What one player may know: the shared snapshot plus their own role.
+
+        An examiner also gets the ids of the fellow examiners. Nobody gets anyone else's role.
+        """
+        me = self.players.get(player_id)
+        if me is None:
+            raise GameError("Unknown player")
+        state = self.snapshot()
+        state["role"] = me.role
+        if me.role == EXAMINER:
+            state["fellow_examiners"] = [
+                p.id for p in self.players.values() if p.role == EXAMINER and p.id != me.id
+            ]
+        return state

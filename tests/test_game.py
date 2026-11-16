@@ -2,6 +2,7 @@
 
 import json
 import math
+import random
 
 import pytest
 
@@ -355,3 +356,239 @@ def test_every_campus_spawn_is_free_to_stand_on():
     for i in range(MAX_PLAYERS):
         player = game.join(f"Player {i}")
         assert not game.blocked(player.x, player.y)
+
+
+# --- Lobby, host and secret roles (spec 002) ----------------------------------
+
+# A player entry in a snapshot may only hold these keys (never a role).
+PLAYER_KEYS = {"id", "name", "x", "y"}
+
+
+def game_with(count, seed=0):
+    """A lobby with `count` players and a seeded random generator. players[0] joined first."""
+    game = Game(TEST_MAP, rng=random.Random(seed))
+    players = [game.join(f"Player {i}") for i in range(count)]
+    return game, players
+
+
+def roles_of(game):
+    """Each player's own role, as their own snapshot shows it."""
+    return {pid: game.snapshot_for(pid)["role"] for pid in game.players}
+
+
+def examiners_of(game):
+    return sorted(pid for pid, role in roles_of(game).items() if role == "examiner")
+
+
+def host_seen_by_all(game):
+    """The host id; every player's snapshot must show the same one."""
+    hosts = {game.snapshot_for(pid)["host"] for pid in game.players}
+    assert len(hosts) == 1
+    return hosts.pop()
+
+
+def assert_rejected_without_change(game, action, reason):
+    """The action raises GameError with `reason` and changes neither phase nor roles."""
+    phase, roles = game.phase, roles_of(game)
+    with pytest.raises(GameError, match=reason):
+        action()
+    assert game.phase == phase
+    assert roles_of(game) == roles
+
+
+# Accepted actions
+
+
+def test_new_game_is_in_lobby_and_first_player_is_host():
+    game, players = game_with(3)
+    assert game.phase == "lobby"
+    for player in players:
+        snapshot = game.snapshot_for(player.id)
+        assert snapshot["phase"] == "lobby"
+        assert snapshot["host"] == players[0].id
+        assert snapshot["role"] is None
+
+
+def test_host_starts_with_four_players():
+    game, players = game_with(4)
+    game.start(players[0].id)
+    assert game.phase == "playing"
+    assert sorted(roles_of(game).values()) == ["examiner", "student", "student", "student"]
+
+
+@pytest.mark.parametrize(
+    "count, examiners", [(4, 1), (5, 1), (6, 1), (7, 2), (8, 2), (9, 2), (10, 2)]
+)
+def test_number_of_examiners_depends_on_player_count(count, examiners):
+    game, players = game_with(count)
+    game.start(players[0].id)
+    roles = list(roles_of(game).values())
+    assert roles.count("examiner") == examiners
+    assert roles.count("student") == count - examiners
+
+
+def test_roles_are_random_but_fixed_by_the_seed():
+    def examiners_for(seed):
+        game, players = game_with(4, seed)
+        game.start(players[0].id)
+        return examiners_of(game)
+
+    assert examiners_for(1) == examiners_for(1)
+    # Not always the same player (e.g. not simply the first or the last to join).
+    assert len({tuple(examiners_for(seed)) for seed in range(20)}) > 1
+
+
+def test_players_can_move_while_playing():
+    game, players = game_with(4)
+    game.start(players[0].id)
+    player = players[1]
+    start_x = player.x
+    game.set_input(player.id, {"type": "input", "dx": 1, "dy": 0})
+    game.step()
+    assert player.x == pytest.approx(start_x + STEP)
+
+
+def test_start_message_is_accepted_after_joining():
+    assert parse_message('{"type": "start"}', joined=True) == {"type": "start"}
+
+
+# Rejected actions: each leaves phase and roles unchanged
+
+
+def test_start_from_non_host_is_rejected():
+    game, players = game_with(4)
+    assert_rejected_without_change(game, lambda: game.start(players[1].id), "Only the host")
+    assert game.phase == "lobby"
+
+
+def test_start_with_three_players_is_rejected():
+    game, players = game_with(3)
+    assert_rejected_without_change(game, lambda: game.start(players[0].id), "at least 4 players")
+    assert game.phase == "lobby"
+
+
+def test_second_start_while_playing_is_rejected():
+    game, players = game_with(7)
+    game.start(players[0].id)
+    assert_rejected_without_change(game, lambda: game.start(players[0].id), "already running")
+    assert game.phase == "playing"
+
+
+def test_start_from_unknown_player_is_rejected():
+    game, _ = game_with(4)
+    assert_rejected_without_change(game, lambda: game.start("nobody"), "Unknown player")
+
+
+def test_join_while_playing_is_rejected():
+    game, players = game_with(4)
+    game.start(players[0].id)
+    before = state_of(game)
+    assert_rejected_without_change(game, lambda: game.join("Late"), "already running")
+    assert state_of(game) == before
+
+
+def test_start_before_joining_is_rejected():
+    with pytest.raises(GameError, match="Join"):
+        parse_message('{"type": "start"}', joined=False)
+
+
+def test_snapshot_for_unknown_player_is_rejected():
+    game, _ = game_with(2)
+    with pytest.raises(GameError):
+        game.snapshot_for("nobody")
+
+
+# Host changes and edge cases
+
+
+def test_host_leaving_in_lobby_passes_host_on():
+    game, players = game_with(5)
+    game.leave(players[0].id)
+    assert host_seen_by_all(game) == players[1].id
+    game.start(players[1].id)
+    assert game.phase == "playing"
+
+
+def test_host_leaving_while_playing_passes_host_on():
+    game, players = game_with(5)
+    game.start(players[0].id)
+    roles = roles_of(game)
+    game.leave(players[0].id)
+    del roles[players[0].id]
+    assert host_seen_by_all(game) == players[1].id
+    assert game.phase == "playing"
+    assert roles_of(game) == roles
+
+
+def test_non_host_leaving_keeps_the_host():
+    game, players = game_with(4)
+    game.leave(players[2].id)
+    assert host_seen_by_all(game) == players[0].id
+
+
+def test_host_order_follows_join_time_not_nickname():
+    game, (first, second, third) = game_with(3)
+    game.leave(second.id)
+    game.join(second.name)  # same nickname again, but now the newest player
+    game.leave(first.id)
+    assert host_seen_by_all(game) == third.id
+
+
+def test_start_is_rejected_again_when_a_player_leaves_the_lobby():
+    game, players = game_with(4)
+    game.leave(players[3].id)
+    assert_rejected_without_change(game, lambda: game.start(players[0].id), "at least 4 players")
+
+
+def test_last_player_leaving_returns_the_game_to_lobby():
+    game, players = game_with(4)
+    game.start(players[0].id)
+    for player in players:
+        game.leave(player.id)
+    assert game.phase == "lobby"
+    newcomer = game.join("Newcomer")
+    snapshot = game.snapshot_for(newcomer.id)
+    assert snapshot["host"] == newcomer.id
+    assert snapshot["role"] is None
+
+
+# Secret roles: nobody learns another player's role
+
+
+def test_student_snapshot_contains_no_other_role():
+    game, players = game_with(4)
+    game.start(players[0].id)
+    student = next(pid for pid, role in roles_of(game).items() if role == "student")
+    snapshot = game.snapshot_for(student)
+    assert snapshot["role"] == "student"
+    assert "fellow_examiners" not in snapshot
+    assert len(snapshot["players"]) == 4
+    assert all(set(p) == PLAYER_KEYS for p in snapshot["players"])
+    assert "examiner" not in json.dumps(snapshot)
+
+
+def test_examiner_snapshot_lists_fellow_examiner_and_no_student_roles():
+    game, players = game_with(7)
+    game.start(players[0].id)
+    first, second = examiners_of(game)
+    for me, fellow in [(first, second), (second, first)]:
+        snapshot = game.snapshot_for(me)
+        assert snapshot["role"] == "examiner"
+        assert snapshot["fellow_examiners"] == [fellow]
+        assert all(set(p) == PLAYER_KEYS for p in snapshot["players"])
+        assert "student" not in json.dumps(snapshot)
+
+
+def test_single_examiner_has_no_fellow_examiners():
+    game, players = game_with(4)
+    game.start(players[0].id)
+    (examiner,) = examiners_of(game)
+    assert game.snapshot_for(examiner)["fellow_examiners"] == []
+
+
+def test_shared_snapshot_contains_no_roles():
+    game, players = game_with(7)
+    game.start(players[0].id)
+    text = json.dumps(game.snapshot())
+    assert "examiner" not in text
+    assert "student" not in text
