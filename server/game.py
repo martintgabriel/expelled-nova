@@ -185,7 +185,7 @@ class Game:
         self.next_id = 1
         self.phase = LOBBY
         self.winner = None  # STUDENTS_WIN or EXAMINERS_WIN once the phase is ENDED
-        self.failed_exams = []  # FailedExam objects, visible to everyone
+        self.failed_exams = []  # FailedExam objects; the living see those within vision, ghosts all
         self.next_exam_id = 1
         self.meeting = None  # a Meeting while the phase is MEETING
         # Operating-system randomness, so nobody can predict the roles.
