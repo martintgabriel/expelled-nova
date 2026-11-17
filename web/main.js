@@ -8,6 +8,9 @@
 const INTERPOLATION_DELAY = 100; // ms: draw other players this far in the past
 const SNAP_DISTANCE_TILES = 2; // jump to the server position if further off than this
 const ROLE_SCREEN_MS = 3000; // how long the role screen shows at the start
+// A held joystick direction changes fast under a wiggling thumb; this throttles sending
+// a new one to at most once per server tick, always flushing the newest at the end.
+const SEND_INTERVAL_MS = 50;
 // REPEATS SERVER RULE: MIN_PLAYERS in server/game.py. Only for the hint; the server decides.
 const MIN_PLAYERS = 4;
 
@@ -24,6 +27,10 @@ const ui = {
   disconnected: document.getElementById("disconnected"),
   lobby: document.getElementById("lobby"),
   lobbyPlayers: document.getElementById("lobby-players"),
+  inviteButton: document.getElementById("invite-button"),
+  inviteScreen: document.getElementById("invite-screen"),
+  inviteUrl: document.getElementById("invite-url"),
+  inviteClose: document.getElementById("invite-close"),
   startButton: document.getElementById("start-button"),
   startHint: document.getElementById("start-hint"),
   roleScreen: document.getElementById("role-screen"),
@@ -48,6 +55,19 @@ const ui = {
   restartButton: document.getElementById("restart-button"),
   restartHint: document.getElementById("restart-hint"),
 };
+
+// --- Hints and key labels by input device, not by screen width (spec 007) -----------
+
+for (const el of document.querySelectorAll(".hint-keyboard")) el.hidden = Controls.isTouch;
+for (const el of document.querySelectorAll(".hint-touch")) el.hidden = !Controls.isTouch;
+for (const el of document.querySelectorAll(".key-hint")) el.hidden = Controls.isTouch;
+const EXPEL_KEY_HINT = Controls.isTouch ? "" : " (E)";
+
+// --- Invite players: QR code and URL, lobby only (spec 007) -------------------------
+
+ui.inviteUrl.textContent = `${location.origin}/`;
+ui.inviteButton.addEventListener("click", () => (ui.inviteScreen.hidden = false));
+ui.inviteClose.addEventListener("click", () => (ui.inviteScreen.hidden = true));
 
 let socket = null;
 // {id, map, speed, tick_rate, player_half, expel_range, report_range, vision_radius} once joined
@@ -152,8 +172,10 @@ function updatePhase(state) {
   const justStarted = state.phase === "playing" && lastPhase === "lobby";
   lastPhase = state.phase;
   ui.lobby.hidden = state.phase !== "lobby";
+  if (state.phase !== "lobby") ui.inviteScreen.hidden = true;
   ui.endScreen.hidden = state.phase !== "ended";
   ui.meetingScreen.hidden = state.phase !== "meeting";
+  Controls.setHidden(state.phase === "meeting"); // must not cover the meeting screen
   if (state.phase === "lobby") sentSurfing = false;
   const result = state.meeting && state.meeting.result;
   if (result && result.surfing === welcome.id) sentSurfing = true;
@@ -285,9 +307,9 @@ function updateExpelButton(state) {
   const cooldown = state.expel_cooldown;
   const target = expelTarget(state);
   ui.expelButton.disabled = cooldown > 0 || !target;
-  let label = "Expel (E) · nobody in range";
-  if (cooldown > 0) label = `Expel (E) · ready in ${cooldown} s`;
-  else if (target) label = `Expel ${target.name} (E)`; // textContent: never read as HTML
+  let label = `Expel${EXPEL_KEY_HINT} · nobody in range`;
+  if (cooldown > 0) label = `Expel${EXPEL_KEY_HINT} · ready in ${cooldown} s`;
+  else if (target) label = `Expel ${target.name}${EXPEL_KEY_HINT}`; // textContent: never read as HTML
   setText(ui.expelButton, label);
 }
 
@@ -551,6 +573,8 @@ class CampusScene extends Phaser.Scene {
     this.sprites = new Map(); // id -> character from Render.makeCharacter()
     this.exams = new Map(); // failed exam id -> sheet from Render.makeExam()
     this.lastSent = { dx: 0, dy: 0 };
+    this.lastSentAt = 0; // performance.now() of the last "input" actually sent
+    this.pendingSend = null; // a scheduled trailing send, while throttled
     this.predicted = null; // own position as predicted by this browser
   }
 
@@ -579,13 +603,27 @@ class CampusScene extends Phaser.Scene {
   }
 
   sendDirection(dx, dy) {
-    if (dx !== this.lastSent.dx || dy !== this.lastSent.dy) {
-      this.lastSent = { dx, dy };
+    if (dx === this.lastSent.dx && dy === this.lastSent.dy) return;
+    this.lastSent = { dx, dy };
+    const elapsed = performance.now() - this.lastSentAt;
+    if (elapsed >= SEND_INTERVAL_MS) {
+      clearTimeout(this.pendingSend);
+      this.pendingSend = null;
+      this.lastSentAt = performance.now();
       send({ type: "input", dx, dy });
+    } else if (!this.pendingSend) {
+      this.pendingSend = setTimeout(() => {
+        this.pendingSend = null;
+        this.lastSentAt = performance.now();
+        send({ type: "input", dx: this.lastSent.dx, dy: this.lastSent.dy });
+      }, SEND_INTERVAL_MS - elapsed);
     }
   }
 
+  // A held joystick wins over the keys (readKeys still runs on a laptop with no joystick).
   readKeys() {
+    const joystick = Controls.direction();
+    if (joystick) return joystick;
     const k = this.keys;
     const dx = (k.D.isDown || k.RIGHT.isDown ? 1 : 0) - (k.A.isDown || k.LEFT.isDown ? 1 : 0);
     const dy = (k.S.isDown || k.DOWN.isDown ? 1 : 0) - (k.W.isDown || k.UP.isDown ? 1 : 0);
@@ -599,6 +637,8 @@ class CampusScene extends Phaser.Scene {
     if (lastPhase === "ended" || lastPhase === "meeting") {
       // The server rejects movement now and has already stopped everyone. Sending and
       // predicting nothing keeps the own character where the server put it.
+      clearTimeout(this.pendingSend);
+      this.pendingSend = null;
       this.lastSent = { dx: 0, dy: 0 };
     } else {
       ({ dx, dy } = this.readKeys());

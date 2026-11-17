@@ -1,11 +1,14 @@
 """End-to-end tests over the real WebSocket endpoint (server/main.py)."""
 
+import contextlib
+import io
 import json
 
+import segno
 from fastapi.testclient import TestClient
 
 from server.game import RATE_LIMIT, TICK_RATE
-from server.main import app, game
+from server.main import app, invite_url
 
 # How many server messages to read before giving up (2 seconds of state updates).
 TWO_SECONDS = 2 * TICK_RATE
@@ -170,7 +173,7 @@ def test_start_is_rejected_from_non_host_and_with_too_few_players():
 # --- Expel and ghosts (spec 003) ------------------------------------------------
 
 
-def test_examiner_expels_over_websocket_and_only_the_ghost_sees_the_ghost():
+def test_examiner_expels_over_websocket_and_only_the_ghost_sees_the_ghost(fresh_game):
     with TestClient(app) as client:
         with (
             client.websocket_connect("/ws") as a,
@@ -199,9 +202,9 @@ def test_examiner_expels_over_websocket_and_only_the_ghost_sees_the_ghost():
             assert "Too far away" in error["reason"]
 
             # Skip the 20 s wait: stand on the target's spot and end the cooldown now.
-            examiner, target = game.players[examiner_id], game.players[target_id]
+            examiner, target = fresh_game.players[examiner_id], fresh_game.players[target_id]
             examiner.x, examiner.y = target.x, target.y
-            examiner.next_expel_tick = game.tick
+            examiner.next_expel_tick = fresh_game.tick
             examiner_ws.send_json({"type": "expel", "target": target_id})
 
             ghost_view = receive_until(
@@ -215,3 +218,128 @@ def test_examiner_expels_over_websocket_and_only_the_ghost_sees_the_ghost():
             )
             assert living_view["alive"] is True
             assert target_id not in [p["id"] for p in living_view["players"]]
+
+
+# --- Review follow-ups from spec 001: 11th client and invalid input ------------------
+
+
+def test_eleventh_client_is_rejected_then_a_new_one_joins_after_a_player_leaves():
+    with TestClient(app) as client:
+        with contextlib.ExitStack() as stack:
+            clients = [stack.enter_context(client.websocket_connect("/ws")) for _ in range(10)]
+            for i, ws in enumerate(clients):
+                assert join(ws, f"Player {i}")["type"] == "welcome"
+
+            with client.websocket_connect("/ws") as eleventh:
+                reply = join(eleventh, "Eleven")
+                assert reply["type"] == "error"
+                assert "Game is full (10 players)" in reply["reason"]
+
+            clients[0].close()  # one player leaves, freeing a slot
+            with client.websocket_connect("/ws") as newcomer:
+                assert join(newcomer, "Newcomer")["type"] == "welcome"
+
+
+def test_invalid_input_over_websocket_leaves_the_position_unchanged():
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as ws:
+            player_id = join(ws, "Uma")["id"]
+            first = receive_until(ws, lambda m: m["type"] == "state" and find_player(m, player_id))
+            start = find_player(first, player_id)
+            start_pos = (start["x"], start["y"])
+
+            bad_inputs = [
+                {"type": "input", "dx": 2, "dy": 0},
+                {"type": "input", "dx": "1", "dy": 0},
+                {"type": "input", "dx": True, "dy": 0},
+                {"type": "input", "dx": 0},  # dy missing
+            ]
+            for bad in bad_inputs:
+                ws.send_json(bad)
+                error = receive_until(ws, lambda m: m["type"] == "error")
+                assert "dx and dy" in error["reason"]
+                state = receive_until(
+                    ws, lambda m: m["type"] == "state" and find_player(m, player_id)
+                )
+                position = find_player(state, player_id)
+                assert (position["x"], position["y"]) == start_pos
+
+            ws.send_json({"type": "input", "dx": 1, "dy": 0})
+            receive_until(
+                ws,
+                lambda m: m["type"] == "state"
+                and find_player(m, player_id)
+                and find_player(m, player_id)["x"] > start_pos[0],
+            )
+
+
+# --- Invite URL and QR-code join (spec 007) -----------------------------------------
+
+
+def test_invite_url_uses_the_env_value_with_exactly_one_trailing_slash():
+    assert invite_url("https://expelled-nova.onrender.com", "http://ignored/") == (
+        "https://expelled-nova.onrender.com/"
+    )
+    assert invite_url("https://expelled-nova.onrender.com/", "http://ignored/") == (
+        "https://expelled-nova.onrender.com/"
+    )
+
+
+def test_invite_url_falls_back_to_the_request_base_url_when_the_env_value_is_not_set():
+    assert invite_url(None, "http://192.168.1.20:8000/") == "http://192.168.1.20:8000/"
+    assert invite_url(None, "http://192.168.1.20:8000") == "http://192.168.1.20:8000/"
+
+
+def test_invite_url_treats_an_empty_env_value_as_not_set():
+    assert invite_url("", "http://192.168.1.20:8000/") == "http://192.168.1.20:8000/"
+
+
+def qr_svg_bytes(url):
+    """The exact SVG server/main.py's /qr.svg must produce for `url`."""
+    buffer = io.BytesIO()
+    segno.make(url, error="m").save(buffer, kind="svg", border=4, dark="#000", light="#fff")
+    return buffer.getvalue()
+
+
+def test_qr_svg_encodes_the_render_external_url(monkeypatch):
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://expelled-nova.onrender.com")
+    with TestClient(app) as client:
+        response = client.get("/qr.svg")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/svg+xml"
+    assert response.content == qr_svg_bytes("https://expelled-nova.onrender.com/")
+
+
+def test_qr_svg_encodes_the_request_base_url_without_render_external_url(monkeypatch):
+    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+    with TestClient(app) as client:
+        response = client.get("/qr.svg")
+    assert response.content == qr_svg_bytes("http://testserver/")
+
+
+def test_qr_svg_ignores_a_url_query_parameter(monkeypatch):
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://expelled-nova.onrender.com")
+    with TestClient(app) as client:
+        response = client.get("/qr.svg", params={"url": "https://evil.example"})
+    assert response.content == qr_svg_bytes("https://expelled-nova.onrender.com/")
+
+
+def test_qr_svg_rejects_post():
+    with TestClient(app) as client:
+        assert client.post("/qr.svg").status_code == 405
+
+
+def test_controls_js_is_served_and_loaded_before_main_js():
+    with TestClient(app) as client:
+        assert client.get("/controls.js").status_code == 200
+        page = client.get("/").text
+        controls = page.index('src="controls.js"')
+        main = page.index('src="main.js"')
+        assert controls < main
+
+
+def test_page_contains_both_movement_hints():
+    with TestClient(app) as client:
+        page = client.get("/").text
+    assert "Drag the joystick to move" in page
+    assert "WASD / arrow keys to move" in page

@@ -18,7 +18,13 @@ html, body {
   overflow: hidden;
 }
 
-#game { position: fixed; inset: 0; }
+#game {
+  position: fixed;
+  inset: 0;
+  touch-action: none;
+  user-select: none;
+  overscroll-behavior: none;
+}
 
 .overlay {
   position: fixed;
@@ -68,6 +74,7 @@ button {
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
+  touch-action: manipulation; /* a double tap must not zoom */
 }
 button:disabled { opacity: 0.6; cursor: wait; }
 
@@ -75,9 +82,10 @@ button:disabled { opacity: 0.6; cursor: wait; }
 
 #hud {
   position: fixed;
-  top: 12px;
-  left: 12px;
+  top: calc(12px + env(safe-area-inset-top));
+  left: calc(12px + env(safe-area-inset-left));
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 6px 12px;
   border-radius: 8px;
@@ -103,8 +111,8 @@ button:disabled { opacity: 0.6; cursor: wait; }
 
 .panel {
   position: fixed;
-  top: 12px;
-  right: 12px;
+  top: calc(12px + env(safe-area-inset-top));
+  right: calc(12px + env(safe-area-inset-right));
   max-width: calc(100vw - 24px);
   padding: 10px 14px;
   border-radius: 8px;
@@ -175,7 +183,7 @@ button:disabled { opacity: 0.6; cursor: wait; }
 
 /* --- Look (spec 005): current area and colour dots --- */
 
-#hud { max-width: calc(100vw - 24px); white-space: nowrap; }
+#hud { max-width: calc(100vw - 24px); }
 #hud [hidden] { display: none; }
 #area-name { font-weight: 700; color: var(--accent); }
 
@@ -193,8 +201,8 @@ button:disabled { opacity: 0.6; cursor: wait; }
 /* Report, Bell and Expel share the corner (the Expel button sat there alone before). */
 #actions {
   position: fixed;
-  right: 16px;
-  bottom: 16px;
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(16px + env(safe-area-inset-bottom));
   max-width: calc(100vw - 32px);
   display: flex;
   flex-wrap: wrap;
@@ -204,6 +212,8 @@ button:disabled { opacity: 0.6; cursor: wait; }
 }
 #report-button { background: #9fd3ff; }
 #bell-button:disabled { opacity: 0.55; cursor: not-allowed; }
+/* At least 56 px high everywhere: a comfortable thumb target on a phone (spec 007). */
+#actions button { min-height: 56px; min-width: 56px; }
 
 /* Lighter than the other overlays, so the Auditorium stays visible behind the card. */
 #meeting-screen { background: rgba(20, 22, 26, 0.55); }
@@ -241,8 +251,63 @@ button:disabled { opacity: 0.6; cursor: wait; }
 
 /* Phones: put the panel under the HUD instead of next to it. */
 @media (max-width: 600px) {
-  .panel { top: 52px; left: 12px; right: 12px; width: auto; }
-  /* No room next to the area name, and a phone has no keyboard (controls: spec 007). */
-  #hud .hint { display: none; }
+  .panel {
+    top: calc(52px + env(safe-area-inset-top));
+    left: calc(12px + env(safe-area-inset-left));
+    right: calc(12px + env(safe-area-inset-right));
+    width: auto;
+  }
   #lobby { width: auto; }
 }
+
+/* --- Phone controls and hints by device (spec 007) ----------------------------- */
+
+/* Only one of these two is shown, chosen by input device (main.js), not by width. */
+.hint-touch, .hint-keyboard { color: var(--muted); }
+
+#invite-button { background: #3a3e47; color: var(--text); }
+
+.invite-card { align-items: center; text-align: center; }
+#invite-qr {
+  width: min(240px, 100%);
+  height: auto;
+  min-width: 240px;
+  max-width: 100%;
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px;
+}
+@media (max-width: 280px) {
+  #invite-qr { min-width: 0; }
+}
+#invite-url { word-break: break-all; }
+
+/* A round, half-transparent joystick at the bottom left, drawn in CSS (no images). */
+#joystick {
+  position: fixed;
+  left: calc(16px + env(safe-area-inset-left));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(241, 241, 241, 0.15);
+  border: 2px solid rgba(241, 241, 241, 0.3);
+  touch-action: none;
+  user-select: none;
+  z-index: 6;
+}
+#joystick[hidden] { display: none; }
+#joystick-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 52px;
+  height: 52px;
+  margin: -26px 0 0 -26px;
+  border-radius: 50%;
+  background: rgba(241, 241, 241, 0.4);
+  pointer-events: none;
+}
+
+/* Meeting: vote and skip buttons at least 44 px high on every screen. */
+#meeting-players li button, #skip-button { min-height: 44px; }

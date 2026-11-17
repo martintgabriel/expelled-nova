@@ -6,11 +6,14 @@ game and sends results back.
 
 import asyncio
 import contextlib
+import io
 import json
+import os
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import segno
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from server.game import (
@@ -66,6 +69,30 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}
+
+
+def invite_url(env_url, base_url):
+    """The URL the QR code points to, ending in exactly one "/".
+
+    `env_url` is RENDER_EXTERNAL_URL (set by Render for every web service); an unset or
+    empty value falls back to `base_url`, the base URL of the current request (e.g. the
+    laptop's address on the local Wi-Fi).
+    """
+    url = env_url or base_url
+    return url if url.endswith("/") else url + "/"
+
+
+@app.get("/qr.svg")
+def qr_svg(request: Request):
+    """The invite URL as a QR code: black on white, with the standard quiet zone.
+
+    Takes no input: query parameters are ignored, so nobody can make the game show a
+    QR code for another site.
+    """
+    url = invite_url(os.environ.get("RENDER_EXTERNAL_URL"), str(request.base_url))
+    buffer = io.BytesIO()
+    segno.make(url, error="m").save(buffer, kind="svg", border=4, dark="#000", light="#fff")
+    return Response(content=buffer.getvalue(), media_type="image/svg+xml")
 
 
 @app.websocket("/ws")

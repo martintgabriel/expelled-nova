@@ -4,6 +4,7 @@ import dataclasses
 import json
 import math
 import random
+from collections import deque
 
 import pytest
 
@@ -360,6 +361,73 @@ def test_every_campus_spawn_is_free_to_stand_on():
     for i in range(MAX_PLAYERS):
         player = game.join(f"Player {i}")
         assert not game.blocked(player.x, player.y)
+
+
+# --- Map connectivity: flood fill (review of spec 001) -------------------------
+
+
+def reachable_tiles(game, start):
+    """Every floor tile reachable from `start` (col, row), walking the 4 neighbours."""
+    visited = {start}
+    queue = deque([start])
+    while queue:
+        col, row = queue.popleft()
+        for dc, dr in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+            tile = (col + dc, row + dr)
+            if tile in visited:
+                continue
+            if game.blocked(*game._tile_centre(*tile)):
+                continue
+            visited.add(tile)
+            queue.append(tile)
+    return visited
+
+
+def area_floor_tiles(game, area):
+    return [
+        (col, row)
+        for row in range(area["y"], area["y"] + area["h"])
+        for col in range(area["x"], area["x"] + area["w"])
+        if not game.blocked(*game._tile_centre(col, row))
+    ]
+
+
+def assert_every_spawn_and_area_is_reachable(game):
+    """Every spawn point, and at least one floor tile of every area, is reachable from
+    the first spawn point. Walks the floor (4 neighbours), checking each tile centre
+    with Game.blocked(), so it holds for any map, not just the real campus."""
+    reached = reachable_tiles(game, tuple(game.campus["spawns"][0]))
+    for col, row in game.campus["spawns"]:
+        assert (col, row) in reached, f"spawn {(col, row)} is unreachable"
+    for area in game.campus["areas"]:
+        floor = area_floor_tiles(game, area)
+        assert floor, f"{area['name']} has no floor tile"
+        assert any(tile in reached for tile in floor), f"{area['name']} is unreachable"
+
+
+def test_every_campus_spawn_and_area_is_reachable_from_the_first_spawn():
+    assert_every_spawn_and_area_is_reachable(Game(load_map()))
+
+
+# A small room (columns 1-3) with a second, walled-off room (columns 5-6) that has
+# no door: the same check must find it unreachable, so we know it really detects this.
+CLOSED_ROOM_MAP = {
+    "tile_size": 32,
+    "grid": [
+        "########",
+        "#...#..#",
+        "#...#..#",
+        "########",
+    ],
+    "areas": [{"name": "Sealed Room", "x": 5, "y": 1, "w": 2, "h": 2, "color": "#000000"}],
+    "spawns": [[1, 1]],
+}
+
+
+def test_flood_fill_detects_a_walled_off_room():
+    game = Game(CLOSED_ROOM_MAP)
+    with pytest.raises(AssertionError, match="Sealed Room"):
+        assert_every_spawn_and_area_is_reachable(game)
 
 
 # --- Lobby, host and secret roles (spec 002) ----------------------------------
