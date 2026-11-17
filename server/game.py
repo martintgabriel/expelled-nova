@@ -1,10 +1,11 @@
-"""Game rules: lobby, host, secret roles, live movement, expelling, ghosts, the end of a
-round, player colours and the vision radius. Plain Python, no network code, so it can be
-tested directly.
+"""Game rules: lobby, host, secret roles, live movement, expelling, ghosts, meetings and
+votes, the end of a round, player colours and the vision radius. Plain Python, no network
+code, so it can be tested directly.
 
-The server owns the truth: browsers only send a direction (dx, dy), "start", "expel" or
-"restart". Every tick the server moves each player a fixed distance and blocks walls.
-Time is counted in ticks (not the wall clock), so tests can advance it with step().
+The server owns the truth: browsers only send a direction (dx, dy), "start", "expel",
+"report", "bell", "vote" or "restart". Every tick the server moves each player a fixed
+distance and blocks walls. Time is counted in ticks (not the wall clock), so tests can
+advance it with step().
 """
 
 import json
@@ -12,7 +13,7 @@ import math
 import random
 import unicodedata
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 TICK_RATE = 20  # server updates per second
@@ -24,22 +25,34 @@ MAX_PLAYERS = 10
 NAME_MAX = 16
 MAX_MESSAGE_BYTES = 512
 RATE_LIMIT = 30  # messages per second per connection
-MESSAGE_TYPES = {"join", "input", "start", "expel", "restart"}
+MESSAGE_TYPES = {"join", "input", "start", "expel", "report", "bell", "vote", "restart"}
 EXPEL_RANGE = 48  # px between centres, about 1.5 tiles
 EXPEL_COOLDOWN = 20  # seconds between two expels by the same examiner
 EXPEL_COOLDOWN_TICKS = EXPEL_COOLDOWN * TICK_RATE  # 400
 VISION_TILES = 6  # how far a living player sees while playing, in tiles
+REPORT_RANGE = 48  # px from a player's centre to a failed exam, about 1.5 tiles
+MEETING_SECONDS = 60  # voting time
+RESULT_SECONDS = 5  # how long the result is shown before play resumes
+MEETING_TICKS = MEETING_SECONDS * TICK_RATE  # 1200
+RESULT_TICKS = RESULT_SECONDS * TICK_RATE  # 100
+MEETING_ROOM = "Auditorium"  # the map area where everyone gathers for a meeting
 # Colour numbers 0-9, one per player. Which number is which colour is drawing (web/render.js).
 PLAYER_COLORS = range(MAX_PLAYERS)
 
-# Game phases. A later spec adds "meeting".
+# Game phases.
 LOBBY = "lobby"  # before the start: players join and walk around
 PLAYING = "playing"
+MEETING = "meeting"  # everyone in the Auditorium: voting, then the result; nobody moves
 ENDED = "ended"  # a side has won; all roles are revealed until the host restarts
 
 # Roles. Secret: a player only ever receives their own (see Game.snapshot_for).
 STUDENT = "student"
 EXAMINER = "examiner"
+
+# Why a meeting was called, and the vote for nobody.
+REPORT = "report"
+BELL = "bell"
+SKIP = "skip"
 
 # Winners, shown on the end screen.
 STUDENTS_WIN = "students"
@@ -64,6 +77,7 @@ class Player:
     alive: bool = True  # False = ghost: still walks, cannot expel or be expelled
     color: int = 0  # colour number, unique in the game, kept until the player leaves
     next_expel_tick: int = 0  # first tick at which this player may expel (again)
+    bell_used: bool = False  # one bell per player per round
 
 
 @dataclass
@@ -73,6 +87,18 @@ class FailedExam:
     id: str
     x: float
     y: float
+
+
+@dataclass
+class Meeting:
+    """A running meeting. The votes stay on the server: players only learn who has voted."""
+
+    reason: str  # REPORT or BELL
+    called_by: str  # player id
+    voting_ends: int  # the tick at which the voting closes at the latest
+    votes: dict = field(default_factory=dict)  # voter id -> target id or SKIP
+    result: dict | None = None  # set when the voting closes
+    result_ends: int = 0  # the tick at which play resumes (set together with the result)
 
 
 def load_map(path=MAP_PATH):
@@ -161,6 +187,7 @@ class Game:
         self.winner = None  # STUDENTS_WIN or EXAMINERS_WIN once the phase is ENDED
         self.failed_exams = []  # FailedExam objects, visible to everyone
         self.next_exam_id = 1
+        self.meeting = None  # a Meeting while the phase is MEETING
         # Operating-system randomness, so nobody can predict the roles.
         # Tests pass a seeded random.Random to fix the outcome.
         self.rng = rng or random.SystemRandom()
@@ -180,7 +207,7 @@ class Game:
         name = validate_nickname(raw_name)
         if any(p.name.casefold() == name.casefold() for p in self.players.values()):
             raise GameError("Nickname is already taken")
-        x, y = self._spawn_centre(*self._free_spawn())
+        x, y = self._tile_centre(*self._free_spawn())
         player = Player(id=f"p{self.next_id}", name=name, x=x, y=y, color=self._free_color())
         self.next_id += 1
         self.players[player.id] = player
@@ -189,13 +216,21 @@ class Game:
     def leave(self, player_id):
         """Remove a player. If it was the host, the next-longest player is host automatically.
 
-        While playing, a player leaving can decide the game (see _check_win).
+        While playing or in a meeting, a player leaving can decide the game (see _check_win).
+        During the vote, the leaver's vote and the votes for them are taken back.
         """
         self.players.pop(player_id, None)
         if not self.players:
             # Everyone has gone: open a clean lobby again, otherwise nobody could ever join.
             self._reset_round()
-        elif self.phase == PLAYING:
+            return
+        if self.phase == MEETING and self.meeting.result is None:
+            self.meeting.votes = {
+                voter: target
+                for voter, target in self.meeting.votes.items()
+                if player_id not in (voter, target)
+            }
+        if self.phase in (PLAYING, MEETING):
             self._check_win()
 
     # --- Starting and roles -----------------------------------------------------
@@ -220,11 +255,11 @@ class Game:
         """First spawn point nobody is standing on (falls back to the first one)."""
         taken = {(p.x, p.y) for p in self.players.values()}
         for col, row in self.campus["spawns"]:
-            if self._spawn_centre(col, row) not in taken:
+            if self._tile_centre(col, row) not in taken:
                 return col, row
         return self.campus["spawns"][0]
 
-    def _spawn_centre(self, col, row):
+    def _tile_centre(self, col, row):
         return (col + 0.5) * self.tile, (row + 0.5) * self.tile
 
     def _free_color(self):
@@ -246,6 +281,8 @@ class Game:
             raise GameError("Unknown player")
         if self.phase == ENDED:
             raise GameError("Game is over")
+        if self.phase == MEETING:
+            raise GameError("Meeting in progress")
         if self.phase != PLAYING:
             raise GameError("The game has not started yet")
         if not examiner.alive:
@@ -274,14 +311,164 @@ class Game:
 
     def _cooldown_left(self, player):
         """Whole seconds until the player may expel, rounded up (0 = ready)."""
-        return max(0, math.ceil((player.next_expel_tick - self.tick) / TICK_RATE))
+        return self._seconds_until(player.next_expel_tick)
+
+    def _seconds_until(self, tick):
+        """Whole seconds from now until the given tick, rounded up (0 = now or past)."""
+        return max(0, math.ceil((tick - self.tick) / TICK_RATE))
+
+    # --- Meetings: report, bell and vote -----------------------------------------------
+
+    def report(self, player_id, exam_id):
+        """A living player reports a failed exam within reach, and a meeting starts.
+
+        An unknown exam and an exam out of reach get the same reason, so a browser cannot
+        find out about failed exams it cannot see by trying ids.
+        """
+        player = self._check_meeting_caller(player_id, "Ghosts cannot report")
+        if not isinstance(exam_id, str):
+            raise GameError("Exam must be a failed exam id")
+        exam = next((e for e in self.failed_exams if e.id == exam_id), None)
+        if exam is None or math.hypot(exam.x - player.x, exam.y - player.y) > REPORT_RANGE:
+            raise GameError("No failed exam within reach")
+        self._start_meeting(REPORT, player)
+
+    def bell(self, player_id):
+        """A living player rings the bell, anywhere on the map, once per round."""
+        player = self._check_meeting_caller(player_id, "Ghosts cannot ring the bell")
+        if player.bell_used:
+            raise GameError("You have already rung the bell")
+        player.bell_used = True
+        self._start_meeting(BELL, player)
+
+    def _check_meeting_caller(self, player_id, ghost_reason):
+        """The checks report and bell share. Returns the player.
+
+        Only while playing: a second report or bell before the next tick finds the
+        meeting already running, so the first one the server processes wins (R7).
+        """
+        player = self.players.get(player_id)
+        if player is None:
+            raise GameError("Unknown player")
+        if self.phase == ENDED:
+            raise GameError("Game is over")
+        if self.phase == MEETING:
+            raise GameError("A meeting is already running")
+        if self.phase != PLAYING:
+            raise GameError("The game has not started yet")
+        if not player.alive:
+            raise GameError(ghost_reason)
+        return player
+
+    def _start_meeting(self, reason, caller):
+        """Everyone, ghosts too, goes to their own Auditorium tile and stands still."""
+        self.phase = MEETING
+        self.meeting = Meeting(reason, caller.id, voting_ends=self.tick + MEETING_TICKS)
+        # zip() stops at the shorter list: players without a tile stay where they are.
+        for player, (col, row) in zip(self.players.values(), self._meeting_tiles()):
+            player.x, player.y = self._tile_centre(col, row)
+        for player in self.players.values():
+            player.dx = player.dy = 0
+
+    def _meeting_tiles(self):
+        """The Auditorium's floor tiles in the order players are seated (join order).
+
+        First every second tile of every second row, in reading order, so no two players
+        stand on neighbouring tiles; then the other floor tiles. Empty without an Auditorium.
+        """
+        area = next((a for a in self.campus["areas"] if a["name"] == MEETING_ROOM), None)
+        if area is None:
+            return []
+        floor = [
+            (col, row)
+            for row in range(area["y"], area["y"] + area["h"])
+            for col in range(area["x"], area["x"] + area["w"])
+            if not self.blocked(*self._tile_centre(col, row))
+        ]
+        spaced = [
+            (col, row)
+            for col, row in floor
+            if (col - area["x"]) % 2 == 0 and (row - area["y"]) % 2 == 0
+        ]
+        return spaced + [tile for tile in floor if tile not in spaced]
+
+    def vote(self, player_id, target):
+        """A living player votes for a living player (themself too) or skips, once.
+
+        The sender is checked before the target, as with expel.
+        """
+        voter = self.players.get(player_id)
+        if voter is None:
+            raise GameError("Unknown player")
+        if self.phase == ENDED:
+            raise GameError("Game is over")
+        if self.phase != MEETING:
+            raise GameError("No meeting is running")
+        if self.meeting.result is not None:
+            raise GameError("Voting has closed")
+        if not voter.alive:
+            raise GameError("Ghosts cannot vote")
+        if voter.id in self.meeting.votes:
+            raise GameError("You have already voted")
+        if not isinstance(target, str):
+            raise GameError("Target must be a player id or skip")
+        if target != SKIP:
+            chosen = self.players.get(target)
+            if chosen is None:
+                raise GameError("Unknown target")
+            if not chosen.alive:
+                raise GameError("Can only vote for a living player")
+        self.meeting.votes[voter.id] = target
+
+    def _step_meeting(self):
+        """Called every tick of a meeting: close the voting when due, end the meeting after
+        the result time."""
+        meeting = self.meeting
+        if meeting.result is None:
+            living = [p for p in self.players.values() if p.alive]
+            if self.tick >= meeting.voting_ends or all(p.id in meeting.votes for p in living):
+                self._close_voting(living)
+        elif self.tick >= meeting.result_ends:
+            self._end_meeting()
+
+    def _close_voting(self, living):
+        """Count the votes (R5). Whoever has not voted counts as a skip.
+
+        A player is sent surfing only with more votes than every other player and more
+        votes than skips. The player sent surfing becomes a ghost and leaves no failed exam.
+        """
+        votes = self.meeting.votes
+        counts = {p.id: 0 for p in living}
+        for target in votes.values():
+            if target in counts:  # a living player (not SKIP)
+                counts[target] += 1
+        skips = sum(votes.get(p.id, SKIP) == SKIP for p in living)
+        top = max(counts.values(), default=0)
+        leaders = [player_id for player_id, count in counts.items() if count == top]
+        surfing = leaders[0] if len(leaders) == 1 and top > skips else None
+        if surfing is not None:
+            self.players[surfing].alive = False
+        self.meeting.result = {"votes": counts, "skips": skips, "surfing": surfing}
+        self.meeting.result_ends = self.tick + RESULT_TICKS
+
+    def _end_meeting(self):
+        """After the result: failed exams go, cooldowns restart, play resumes, then the win
+        check (so everyone has seen the result before the end screen)."""
+        self.meeting = None
+        self.failed_exams = []
+        for player in self.players.values():
+            if player.role == EXAMINER:
+                player.next_expel_tick = self.tick + EXPEL_COOLDOWN_TICKS
+        self.phase = PLAYING
+        self._check_win()
 
     # --- Winning and a new round --------------------------------------------------
 
     def _check_win(self):
-        """Called after every expel and every player leaving while playing.
+        """Called after every expel, every meeting end and every player leaving while
+        playing or in a meeting.
 
-        Only living players count, so examiners voted out later (spec 006) count as gone.
+        Only living players count, so examiners voted out count as gone.
         """
         living = [p for p in self.players.values() if p.alive]
         examiners = sum(p.role == EXAMINER for p in living)
@@ -294,6 +481,7 @@ class Game:
     def _end(self, winner):
         self.phase = ENDED
         self.winner = winner
+        self.meeting = None  # a player leaving can end the game during a meeting
         for player in self.players.values():
             player.dx = player.dy = 0  # movement is rejected now, so nobody keeps walking
 
@@ -308,17 +496,20 @@ class Game:
         self._reset_round()
 
     def _reset_round(self):
-        """Back to the lobby: no roles, no failed exams, everyone alive and on a spawn point."""
+        """Back to the lobby: no roles, no failed exams, no meeting, everyone alive, with
+        their bell back and on a spawn point."""
         self.phase = LOBBY
         self.winner = None
         self.failed_exams = []
+        self.meeting = None
         spawns = self.campus["spawns"]
         for index, player in enumerate(self.players.values()):
-            player.x, player.y = self._spawn_centre(*spawns[index % len(spawns)])
+            player.x, player.y = self._tile_centre(*spawns[index % len(spawns)])
             player.dx = player.dy = 0
             player.role = None
             player.alive = True
             player.next_expel_tick = 0
+            player.bell_used = False
 
     # --- Input and movement ---------------------------------------------------
 
@@ -329,6 +520,8 @@ class Game:
             raise GameError("Unknown player")
         if self.phase == ENDED:
             raise GameError("Game is over")
+        if self.phase == MEETING:
+            raise GameError("Meeting in progress")
         if not isinstance(message, dict) or message.get("type") != "input":
             raise GameError("Not an input message")
         dx, dy = message.get("dx"), message.get("dy")
@@ -337,8 +530,14 @@ class Game:
         player.dx, player.dy = dx, dy
 
     def step(self):
-        """Advance the game by one tick: move every player in their direction."""
+        """Advance the game by one tick: move every player in their direction.
+
+        In a meeting nobody moves; the tick only counts towards the voting and result time.
+        """
         self.tick += 1
+        if self.phase == MEETING:
+            self._step_meeting()
+            return
         for player in self.players.values():
             if player.dx == 0 and player.dy == 0:
                 continue
@@ -426,7 +625,8 @@ class Game:
         """What one player may know: the shared snapshot plus their own role and state.
 
         - While playing, a living player only gets the players and failed exams within
-          the vision radius (spec 005). In the lobby and after the end there is no limit.
+          the vision radius (spec 005). In the lobby, in a meeting and after the end there
+          is no limit (ghosts stay hidden from the living until the end).
         - An examiner also gets the fellow examiners' ids and their own cooldown.
         - A ghost (and everyone once the game has ended) sees all players and who is a ghost.
         - Only in ENDED does anyone get other players' roles, together with the winner.
@@ -440,6 +640,9 @@ class Game:
         state["area"] = self.area_at(me.x, me.y)
         state["role"] = me.role
         state["alive"] = me.alive
+        state["bell_used"] = me.bell_used
+        if self.phase == MEETING:
+            state["meeting"] = self._meeting_for(me)
         if see_ghosts:
             state["ghosts"] = [p.id for p in self.players.values() if not p.alive]
         if me.role == EXAMINER:
@@ -451,3 +654,19 @@ class Game:
             state["winner"] = self.winner
             state["roles"] = {p.id: p.role for p in self.players.values()}
         return state
+
+    def _meeting_for(self, me):
+        """The meeting as one player may see it: who has voted, never whom they voted for."""
+        meeting = self.meeting
+        voting = meeting.result is None
+        return {
+            "reason": meeting.reason,
+            "called_by": meeting.called_by,
+            "living": [p.id for p in self.players.values() if p.alive],
+            "voted": [p.id for p in self.players.values() if p.id in meeting.votes],
+            "my_vote": meeting.votes.get(me.id),
+            "seconds_left": self._seconds_until(
+                meeting.voting_ends if voting else meeting.result_ends
+            ),
+            "result": meeting.result,
+        }

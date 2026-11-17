@@ -43,11 +43,28 @@
     </div>
   </div>
 
-  <button id="expel-button" type="button" hidden>Expel (E)</button>
+  <div id="actions">
+    <button id="report-button" type="button" hidden>Report failed exam (R)</button>
+    <button id="bell-button" type="button" hidden>Ring the bell</button>
+    <button id="expel-button" type="button" hidden>Expel (E)</button>
+  </div>
 
   <div id="ghost-banner" class="banner" role="status" hidden>
-    <strong>You have been expelled</strong>
+    <strong id="ghost-title">You have been expelled</strong>
     You are a ghost now: keep walking, the living cannot see you.
+  </div>
+
+  <div id="meeting-screen" class="overlay" hidden>
+    <div class="card meeting-card">
+      <div class="meeting-head">
+        <h2 id="meeting-title">Meeting</h2>
+        <span id="meeting-timer" class="timer" aria-label="Seconds left"></span>
+      </div>
+      <p id="meeting-reason"></p>
+      <ul id="meeting-players"></ul>
+      <button id="skip-button" type="button">Skip vote</button>
+      <p id="meeting-status" role="status"></p>
+    </div>
   </div>
 
   <div id="end-screen" class="overlay" hidden>
