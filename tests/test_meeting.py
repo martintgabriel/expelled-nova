@@ -108,10 +108,13 @@ def expel_now(game, examiner, student):
 
 
 def everyone_votes(game, target):
-    """Every living player votes for `target` (a Player or "skip"); the meeting runs to its end."""
+    """Every living player votes for `target` (a Player or "skip"); the meeting runs to its end.
+
+    The target skips: nobody can vote for themself (spec 008, part 2).
+    """
     choice = target if isinstance(target, str) else target.id
     for player in [p for p in game.players.values() if p.alive]:
-        game.vote(player.id, choice)
+        game.vote(player.id, "skip" if player.id == choice else choice)
     game.step()  # the voting closes
     wait_ticks(game, RESULT_TICKS)  # the result time passes
 
@@ -136,6 +139,11 @@ def ids_in(snapshot):
 
 def tile_centre(col, row):
     return (col + 0.5) * TILE, (row + 0.5) * TILE
+
+
+def go_to_bell(player):
+    """Put a player on the campus bell: it rings only there (spec 008, part 4)."""
+    player.x, player.y = tile_centre(*load_map()["bell"])
 
 
 def full_state(game):
@@ -207,6 +215,7 @@ def test_meeting_puts_everyone_on_their_own_auditorium_tile_on_the_campus():
     game.set_input(students[1].id, {"type": "input", "dx": 1, "dy": 0})
     game.set_input(ghost.id, {"type": "input", "dx": 0, "dy": -1})
     game.step()
+    go_to_bell(students[2])
     game.bell(students[2].id)
 
     tiles = []
@@ -744,8 +753,8 @@ def test_nobody_voting_sends_nobody_surfing_and_the_game_goes_on():
 @pytest.mark.parametrize(
     "ballots, votes, skips",
     [
-        ([1, 1, 2, 2], [0, 2, 2, 0], 0),
-        ([1, 1, "skip", "skip"], [0, 2, 0, 0], 2),
+        ([1, 0, 1, 0], [2, 2, 0, 0], 0),
+        ([1, "skip", 1, "skip"], [0, 2, 0, 0], 2),
         ([1, "skip", "skip", "skip"], [0, 1, 0, 0], 3),
         ([1, None, None, None], [0, 1, 0, 0], 3),
     ],
@@ -767,17 +776,11 @@ def test_without_a_clear_majority_nobody_is_sent_surfing(ballots, votes, skips):
     assert all(p.alive for p in players)
 
 
-def test_a_vote_for_yourself_counts():
-    game, (examiner,), students = bell_meeting(4)
+def test_a_vote_for_yourself_is_rejected():
+    """Spec 008, part 2 replaces spec 006's "a vote for yourself counts"."""
+    game, _, students = bell_meeting(4)
     me = students[1]
-    for voter in [me, students[0], students[2]]:
-        game.vote(voter.id, me.id)
-    game.vote(examiner.id, "skip")
-    game.step()
-    result = meeting_of(game, students[0])["result"]
-    assert result["votes"][me.id] == 3
-    assert result["surfing"] == me.id
-    assert me.alive is False
+    assert_rejected(game, lambda: game.vote(me.id, me.id), "You cannot vote for yourself")
 
 
 def test_voting_closes_at_the_next_tick_once_every_living_player_has_voted():
@@ -857,7 +860,7 @@ def test_a_student_sent_surfing_is_a_ghost_who_can_no_longer_report_ring_or_vote
     surfer = students[0]
     game.bell(students[1].id)
     for player in game.players.values():
-        game.vote(player.id, surfer.id)
+        game.vote(player.id, "skip" if player is surfer else surfer.id)
     game.step()
     assert surfer.alive is False
     assert game.failed_exams == []
@@ -925,7 +928,7 @@ def test_meeting_and_result_contain_only_the_allowed_fields():
     for player_id in game.players:
         assert set(game.snapshot_for(player_id)["meeting"]) == MEETING_KEYS
     for player in game.players.values():
-        game.vote(player.id, examiner.id)
+        game.vote(player.id, "skip" if player is examiner else examiner.id)
     game.step()
     for player_id in game.players:
         meeting = game.snapshot_for(player_id)["meeting"]
@@ -946,7 +949,7 @@ def test_a_students_snapshot_shows_no_other_role_during_or_after_a_meeting():
     game.bell(students[0].id)
     assert_no_roles()  # voting
     for player in game.players.values():
-        game.vote(player.id, students[1].id)
+        game.vote(player.id, "skip" if player is students[1] else students[1].id)
     game.step()
     assert_no_roles()  # result
     wait_ticks(game, RESULT_TICKS)
@@ -1075,7 +1078,7 @@ def start_four(clients, names):
     return ids, roles
 
 
-def test_bell_over_websocket_opens_the_meeting_for_every_client():
+def test_bell_over_websocket_opens_the_meeting_for_every_client(fresh_game):
     with TestClient(app) as client:
         with (
             client.websocket_connect("/ws") as a,
@@ -1085,6 +1088,7 @@ def test_bell_over_websocket_opens_the_meeting_for_every_client():
         ):
             clients = [a, b, c, d]
             ids, _ = start_four(clients, ["Ada", "Bo", "Cy", "Di"])
+            go_to_bell(fresh_game.players[ids[1]])
             b.send_json({"type": "bell"})
             for ws in clients:
                 meeting = receive_until(ws, in_meeting)["meeting"]
@@ -1093,7 +1097,7 @@ def test_bell_over_websocket_opens_the_meeting_for_every_client():
                 assert meeting["living"] == ids
 
 
-def test_second_vote_over_websocket_gets_an_error_and_the_connection_stays_usable():
+def test_second_vote_over_websocket_gets_an_error_and_the_connection_stays_usable(fresh_game):
     with TestClient(app) as client:
         with (
             client.websocket_connect("/ws") as a,
@@ -1102,7 +1106,8 @@ def test_second_vote_over_websocket_gets_an_error_and_the_connection_stays_usabl
             client.websocket_connect("/ws") as d,
         ):
             clients = [a, b, c, d]
-            start_four(clients, ["Eli", "Fay", "Gus", "Hal"])
+            ids, _ = start_four(clients, ["Eli", "Fay", "Gus", "Hal"])
+            go_to_bell(fresh_game.players[ids[0]])
             a.send_json({"type": "bell"})
             receive_until(a, in_meeting)
             a.send_json({"type": "vote", "target": "skip"})
@@ -1113,7 +1118,7 @@ def test_second_vote_over_websocket_gets_an_error_and_the_connection_stays_usabl
             assert state["meeting"]["my_vote"] == "skip"
 
 
-def test_four_votes_over_websocket_send_the_student_surfing():
+def test_four_votes_over_websocket_send_the_student_surfing(fresh_game):
     with TestClient(app) as client:
         with (
             client.websocket_connect("/ws") as a,
@@ -1124,16 +1129,17 @@ def test_four_votes_over_websocket_send_the_student_surfing():
             clients = [a, b, c, d]
             ids, roles = start_four(clients, ["Ivy", "Jay", "Kim", "Lou"])
             target = ids[roles.index("student")]
+            go_to_bell(fresh_game.players[ids[0]])
             a.send_json({"type": "bell"})
             for ws in clients:
                 receive_until(ws, in_meeting)
-            for ws in clients:
-                ws.send_json({"type": "vote", "target": target})
+            for ws, player_id in zip(clients, ids):
+                ws.send_json({"type": "vote", "target": "skip" if player_id == target else target})
             for ws, player_id in zip(clients, ids):
                 state = receive_until(ws, has_result)
                 result = state["meeting"]["result"]
-                assert result["votes"][target] == 4
-                assert result["skips"] == 0
+                assert result["votes"][target] == 3
+                assert result["skips"] == 1
                 assert result["surfing"] == target
                 if player_id == target:
                     assert state["alive"] is False

@@ -1,16 +1,20 @@
 // Browser client: sends only the pressed direction, draws what the server sends.
 // The server decides every position. To feel immediate, the own character is
-// predicted locally with the same speed and wall rule (see REPEATS SERVER RULE).
+// predicted locally in the server's own ticks, with the same step and wall rule
+// (see REPEATS SERVER RULE), and repaired from the server's position (spec 008, part 1).
 // How things look (map, characters, failed exams, darkness) is in render.js.
 
 "use strict";
 
 const INTERPOLATION_DELAY = 100; // ms: draw other players this far in the past
 const SNAP_DISTANCE_TILES = 2; // jump to the server position if further off than this
+// Own movement (spec 008, part 1). The server's answer is always a little old, so it is
+// compared with where this browser predicted itself during the last TRAIL_TICKS ticks.
+const TRAIL_TICKS = 8; // 8 ticks = 400 ms: longer than a round trip to the server
+const MIN_CORRECTION = 0.5; // px: smaller differences are only the rounding of positions
+const BLEND_RATE = 8; // per second: how fast the drawn character glides after a repair
+const MAX_TICKS_PER_FRAME = 5; // after a very long frame (hidden tab), do not replay it all
 const ROLE_SCREEN_MS = 3000; // how long the role screen shows at the start
-// A held joystick direction changes fast under a wiggling thumb; this throttles sending
-// a new one to at most once per server tick, always flushing the newest at the end.
-const SEND_INTERVAL_MS = 50;
 // REPEATS SERVER RULE: MIN_PLAYERS in server/game.py. Only for the hint; the server decides.
 const MIN_PLAYERS = 4;
 
@@ -38,6 +42,26 @@ const ui = {
   roleDetail: document.getElementById("role-detail"),
   roleBadge: document.getElementById("role-badge"),
   expelButton: document.getElementById("expel-button"),
+  taskButton: document.getElementById("task-button"),
+  doorButtons: document.getElementById("door-buttons"),
+  fixButton: document.getElementById("fix-button"),
+  controlMove: document.getElementById("control-move"),
+  controlExpel: document.getElementById("control-expel"),
+  controlReport: document.getElementById("control-report"),
+  controlUse: document.getElementById("control-use"),
+  controlUseLabel: document.getElementById("control-use-label"),
+  controlDoor: document.getElementById("control-door"),
+  controlSabotage: document.getElementById("control-sabotage"),
+  sabotageButton: document.getElementById("sabotage-button"),
+  lightsBanner: document.getElementById("lights-banner"),
+  switchArea: document.getElementById("switch-area"),
+  taskBar: document.getElementById("task-bar"),
+  taskBarFill: document.getElementById("task-bar-fill"),
+  taskList: document.getElementById("task-list"),
+  taskItems: document.getElementById("task-items"),
+  joke: document.getElementById("joke"),
+  jokeTitle: document.getElementById("joke-title"),
+  jokeText: document.getElementById("joke-text"),
   reportButton: document.getElementById("report-button"),
   bellButton: document.getElementById("bell-button"),
   ghostBanner: document.getElementById("ghost-banner"),
@@ -70,7 +94,8 @@ ui.inviteButton.addEventListener("click", () => (ui.inviteScreen.hidden = false)
 ui.inviteClose.addEventListener("click", () => (ui.inviteScreen.hidden = true));
 
 let socket = null;
-// {id, map, speed, tick_rate, player_half, expel_range, report_range, vision_radius} once joined
+// {id, map, speed, tick_rate, step, player_half, expel_range, report_range, bell_range,
+// task_range, switch_range, vision_radius, lights_out_radius} once joined
 let welcome = null;
 // Recent server states: {time, players: Map(id -> {name,x,y}), ghosts: Set(id)}
 let snapshots = [];
@@ -163,6 +188,22 @@ function nameOf(playerId) {
   return knownNames.get(playerId) ?? "A player";
 }
 
+// --- Controls as pictograms (spec 008, part 9) --------------------------------------------
+// The keycaps in the HUD (index.html, style.css). A key is shown exactly while its action
+// button is shown, so the HUD never promises an action that is not possible right now.
+// Called after the buttons were updated. On touch devices the whole group is hidden and
+// the joystick hint shows instead (chosen by input device at the top of this file).
+
+function updateControls(state) {
+  ui.controlMove.hidden = state.phase === "meeting" || state.phase === "ended"; // nobody moves
+  ui.controlExpel.hidden = ui.expelButton.hidden;
+  ui.controlReport.hidden = ui.reportButton.hidden;
+  ui.controlUse.hidden = ui.taskButton.hidden && ui.fixButton.hidden;
+  setText(ui.controlUseLabel, ui.fixButton.hidden ? "task" : "fix lights");
+  ui.controlDoor.hidden = ui.doorButtons.children.length === 0;
+  ui.controlSabotage.hidden = ui.sabotageButton.hidden;
+}
+
 // --- Lobby and roles --------------------------------------------------------------
 // Everything here is drawn from the server's state; this browser only ever receives
 // its own role (and, for an examiner, the fellow examiners' ids).
@@ -183,6 +224,10 @@ function updatePhase(state) {
   setText(ui.ghostTitle, sentSurfing ? "You have been sent surfing" : "You have been expelled");
   updateExpelButton(state);
   updateReportAndBell(state);
+  updateTasks(state);
+  updateDoors(state);
+  updateLights(state);
+  updateControls(state);
   if (state.phase === "lobby") {
     ui.roleBadge.hidden = true;
     renderLobby(state);
@@ -332,7 +377,12 @@ function renderEnd(state) {
   const key = JSON.stringify([state.winner, state.roles, state.ghosts, state.colors, state.players.map((p) => [p.id, p.name])]);
   if (key !== endKey) {
     endKey = key;
-    ui.endTitle.textContent = state.winner === "students" ? "Students win!" : "Examiners win!";
+    // The task win is the only way a round ends with every task done (spec 004).
+    const progress = state.task_progress;
+    const byTasks = state.winner === "students" && progress.total > 0 && progress.done === progress.total;
+    let title = state.winner === "students" ? "Students win!" : "Examiners win!";
+    if (byTasks) title = "All tasks done: students win";
+    ui.endTitle.textContent = title;
     ui.endScreen.dataset.winner = state.winner;
     const ghosts = new Set(state.ghosts || []);
     ui.endRoles.replaceChildren(
@@ -388,9 +438,20 @@ function reportTarget(state) {
   return best;
 }
 
+// The bell rings only next to it (spec 008, part 4): is the latest server position within
+// bell_range of the bell's tile? A map without a bell place rings anywhere.
+function nearBell(state) {
+  const place = welcome.map.bell;
+  if (!place) return true;
+  const me = state.players.find((p) => p.id === welcome.id);
+  if (!me) return false;
+  const t = welcome.map.tile_size;
+  return Math.hypot((place[0] + 0.5) * t - me.x, (place[1] + 0.5) * t - me.y) <= welcome.bell_range;
+}
+
 function updateReportAndBell(state) {
   ui.reportButton.hidden = !reportTarget(state);
-  ui.bellButton.hidden = !isLivingAndPlaying(state);
+  ui.bellButton.hidden = !(isLivingAndPlaying(state) && nearBell(state));
   ui.bellButton.disabled = state.bell_used;
   setText(ui.bellButton, state.bell_used ? "Bell used" : "Ring the bell");
 }
@@ -449,7 +510,8 @@ function renderVoting(state, meeting) {
     ...meeting.living.map((playerId) => {
       const { item, who } = meetingRow(state, playerId);
       if (voted.has(playerId)) who.append(tag("voted", "voted"));
-      if (state.alive) {
+      // No button on the own row: the server rejects a vote for yourself (spec 008, part 2).
+      if (state.alive && playerId !== welcome.id) {
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = "Vote";
@@ -503,6 +565,258 @@ function castVote(target) {
 
 ui.skipButton.addEventListener("click", () => castVote("skip"));
 
+// --- Tasks (spec 004) ----------------------------------------------------------------
+// The server deals, times and counts the tasks. This only shows them and sends "task";
+// the button is a convenience, the server checks the place and the task again.
+
+const JOKE_MS = 4000; // how long the joke of a finished task shows
+let taskKey = ""; // what the task list currently shows, to redraw only on changes
+let lastDoing = null; // the task id the previous state had in `doing`, to notice it ending
+let doingSince = 0; // performance.now() when the running task was first seen
+let doingSeconds = 0; // how long that task takes in all
+let wasAlive = true; // `alive` in the previous state
+let jokeTimer = null;
+
+function isStudentPlaying(state) {
+  return state.phase === "playing" && state.role === "student"; // alive or ghost (R4)
+}
+
+// Nearest own open task within task_range of the latest server position.
+function taskTarget(state) {
+  if (!isStudentPlaying(state) || state.doing) return null;
+  const me = state.players.find((p) => p.id === welcome.id);
+  if (!me) return null;
+  let best = null;
+  let bestDistance = welcome.task_range;
+  for (const task of state.tasks) {
+    if (task.done) continue;
+    const distance = Math.hypot(task.x - me.x, task.y - me.y);
+    if (distance <= bestDistance) {
+      best = task;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function updateTasks(state) {
+  const inRound = state.phase === "playing" || state.phase === "meeting";
+
+  // The shared bar, for everyone.
+  const progress = state.task_progress;
+  ui.taskBar.hidden = !(inRound && progress && progress.total > 0);
+  if (!ui.taskBar.hidden) {
+    ui.taskBarFill.style.width = `${(100 * progress.done) / progress.total}%`;
+    ui.taskBar.setAttribute("aria-valuemax", progress.total);
+    ui.taskBar.setAttribute("aria-valuenow", progress.done);
+  }
+
+  // The own task list, for students. Titles are added as text, never as HTML.
+  const tasks = state.tasks || [];
+  ui.taskList.hidden = !(inRound && tasks.length > 0);
+  const key = JSON.stringify(tasks.map((task) => [task.id, task.done]));
+  if (key !== taskKey) {
+    taskKey = key;
+    ui.taskItems.replaceChildren(
+      ...tasks.map((task) => {
+        const item = document.createElement("li");
+        if (task.done) item.className = "done";
+        const area = document.createElement("span");
+        area.className = "task-area";
+        area.textContent = task.area;
+        item.append(task.title, area);
+        return item;
+      }),
+    );
+  }
+  ui.taskButton.hidden = !taskTarget(state);
+
+  // A task that was running in the previous state and is not any more: done or cancelled.
+  const doing = state.doing ? state.doing.task : null;
+  if (doing && doing !== lastDoing) {
+    doingSince = performance.now();
+    doingSeconds = state.doing.seconds_left;
+  }
+  if (lastDoing && !doing) {
+    const finished = tasks.find((task) => task.id === lastDoing && task.done);
+    if (finished) showJoke(finished);
+    else if (state.phase === "meeting") showToast("Task cancelled: a meeting started");
+    else if (wasAlive && !state.alive) showToast("Task cancelled: you were expelled");
+    else if (state.phase === "playing") showToast("Task cancelled: you walked away");
+  }
+  lastDoing = doing;
+  wasAlive = state.alive;
+}
+
+function showJoke(task) {
+  ui.jokeTitle.textContent = `Done: ${task.title}`;
+  ui.jokeText.textContent = task.joke;
+  ui.joke.hidden = false;
+  clearTimeout(jokeTimer);
+  jokeTimer = setTimeout(() => (ui.joke.hidden = true), JOKE_MS);
+}
+
+function tryTask() {
+  if (!latestState || !isStudentPlaying(latestState) || latestState.doing) return;
+  const task = taskTarget(latestState);
+  if (!task) {
+    showToast("None of your tasks is within reach");
+    return;
+  }
+  send({ type: "task", task: task.id });
+}
+
+ui.taskButton.addEventListener("click", () => {
+  tryTask();
+  ui.taskButton.blur();
+});
+
+// --- Lights sabotage (spec 008, part 8) -------------------------------------------------
+// The server turns the lights off and on and shortens what a student receives. This shows
+// it and sends "sabotage" and "fix"; the buttons are a convenience, the server checks again.
+
+const SABOTAGE_KEY_HINT = Controls.isTouch ? "" : " (Q)";
+let wasFixing = false; // `fixing` in the previous state, to notice it starting and ending
+let fixSince = 0; // performance.now() when the running fix was first seen
+let fixSeconds = 0; // how long fixing takes in all
+
+function isLivingStudent(state) {
+  return state.phase === "playing" && state.role === "student" && state.alive;
+}
+
+// Can this player start fixing now: a living student in the dark, within switch_range of
+// the latest server position, and not busy.
+function canFix(state) {
+  if (!isLivingStudent(state) || state.lights_on || state.fixing || state.doing) return false;
+  const me = state.players.find((p) => p.id === welcome.id);
+  if (!me) return false;
+  const t = welcome.map.tile_size;
+  const [col, row] = welcome.map.light_switch;
+  return Math.hypot((col + 0.5) * t - me.x, (row + 0.5) * t - me.y) <= welcome.switch_range;
+}
+
+// The name of the area the switch is in, for the banner (from the map's areas).
+function switchAreaName() {
+  const [col, row] = welcome.map.light_switch;
+  const area = welcome.map.areas.find((a) => col >= a.x && col < a.x + a.w && row >= a.y && row < a.y + a.h);
+  return area ? area.name : "the corridor";
+}
+
+function updateLights(state) {
+  const dark = state.phase === "playing" && state.lights_on === false;
+  ui.lightsBanner.hidden = !(dark && isLivingStudent(state));
+  if (!ui.lightsBanner.hidden) setText(ui.switchArea, switchAreaName());
+  ui.fixButton.hidden = !canFix(state);
+
+  // Examiners: the sabotage button with the shared cooldown.
+  ui.sabotageButton.hidden = !(isLivingExaminer(state) && welcome.map.light_switch);
+  if (!ui.sabotageButton.hidden) {
+    const cooldown = state.sabotage_cooldown;
+    ui.sabotageButton.disabled = dark || cooldown > 0;
+    let label = `Lights off${SABOTAGE_KEY_HINT}`;
+    if (dark) label = "The lights are off";
+    else if (cooldown > 0) label = `Lights off${SABOTAGE_KEY_HINT} · ready in ${cooldown} s`;
+    setText(ui.sabotageButton, label);
+  }
+
+  // Fixing that was running in the previous state and is not any more.
+  const fixing = Boolean(state.fixing);
+  if (fixing && !wasFixing) {
+    fixSince = performance.now();
+    fixSeconds = state.fixing.seconds_left;
+  }
+  if (wasFixing && !fixing && dark) {
+    showToast(state.alive ? "Fixing cancelled: you moved away from the switch" : "Fixing cancelled: you were expelled");
+  }
+  wasFixing = fixing;
+}
+
+function trySabotage() {
+  if (!latestState || !isLivingExaminer(latestState)) return;
+  if (latestState.lights_on === false) {
+    showToast("The lights are already off");
+    return;
+  }
+  if (latestState.sabotage_cooldown > 0) {
+    showToast(`Lights cooldown: ${latestState.sabotage_cooldown} s left`);
+    return;
+  }
+  send({ type: "sabotage" });
+}
+
+// Key F: fix the lights at the switch, otherwise do a task (no task place is that close).
+function tryUse() {
+  if (latestState && canFix(latestState)) send({ type: "fix" });
+  else tryTask();
+}
+
+ui.fixButton.addEventListener("click", () => {
+  send({ type: "fix" });
+  ui.fixButton.blur();
+});
+
+ui.sabotageButton.addEventListener("click", () => {
+  trySabotage();
+  ui.sabotageButton.blur();
+});
+
+// --- Staff doors (spec 008, part 6) ---------------------------------------------------
+// The buttons are only a convenience: the server checks role, door and cooldown again.
+
+let doorKey = ""; // what the door buttons currently show, to redraw only on changes
+
+// The staff door under the latest server position of a living examiner, or null.
+// REPEATS SERVER RULE: Game._door_under() in server/game.py (the centre is on the tile).
+function doorUnder(state) {
+  if (!isLivingExaminer(state)) return null;
+  const me = state.players.find((p) => p.id === welcome.id);
+  if (!me) return null;
+  const t = welcome.map.tile_size;
+  const col = Math.floor(me.x / t);
+  const row = Math.floor(me.y / t);
+  return (welcome.map.staff_doors || []).find((door) => door.x === col && door.y === row) || null;
+}
+
+// The other doors of the network, starting with the one after `here` in the map's list,
+// so pressing V again and again goes round all of them.
+function doorTargets(here) {
+  const doors = welcome.map.staff_doors;
+  const at = doors.indexOf(here);
+  return [...doors.slice(at + 1), ...doors.slice(0, at)];
+}
+
+function updateDoors(state) {
+  const here = doorUnder(state);
+  const cooldown = here ? state.door_cooldown : 0;
+  const key = here ? `${here.id}:${cooldown}` : "";
+  if (key === doorKey) return;
+  doorKey = key;
+  const targets = here ? doorTargets(here) : [];
+  ui.doorButtons.replaceChildren(
+    ...targets.map((door, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      const hint = index === 0 && !Controls.isTouch ? " (V)" : "";
+      // Names come from the map and are added as text, never as HTML.
+      button.textContent = cooldown > 0 ? `${door.name} · ready in ${cooldown} s` : `Staff door: ${door.name}${hint}`;
+      button.disabled = cooldown > 0;
+      button.addEventListener("click", () => send({ type: "door", to: door.id }));
+      return button;
+    }),
+  );
+}
+
+// Key V: travel to the next door of the network.
+function tryDoor() {
+  const here = latestState && doorUnder(latestState);
+  if (!here) return;
+  if (latestState.door_cooldown > 0) {
+    showToast(`Staff door cooldown: ${latestState.door_cooldown} s left`);
+    return;
+  }
+  send({ type: "door", to: doorTargets(here)[0].id });
+}
+
 // --- Join form ------------------------------------------------------------------
 
 ui.joinForm.addEventListener("submit", async (event) => {
@@ -533,7 +847,8 @@ function showToast(text) {
 // --- Wall check -------------------------------------------------------------------
 
 // REPEATS SERVER RULE: same as Game.blocked() in server/game.py.
-function blocked(map, half, x, y) {
+// With walls = false (a ghost) only leaving the map counts.
+function blocked(map, half, x, y, walls = true) {
   const t = map.tile_size;
   const left = Math.floor((x - half) / t);
   const right = Math.floor((x + half) / t - 1e-9);
@@ -542,15 +857,17 @@ function blocked(map, half, x, y) {
   for (let row = top; row <= bottom; row++) {
     for (let col = left; col <= right; col++) {
       if (row < 0 || row >= map.grid.length || col < 0 || col >= map.grid[row].length) return true;
-      if (map.grid[row][col] === "#") return true;
+      if (walls && map.grid[row][col] === "#") return true;
     }
   }
   return false;
 }
 
 // REPEATS SERVER RULE: same as Game._move_axis() in server/game.py
-// (move in pieces of at most 1 px, stop at the first piece that hits a wall).
+// (move in pieces of at most 1 px, stop at the first piece that hits a wall). The own
+// character ignores walls as a ghost; the server sends `alive` with every state.
 function moveAxis(pos, mx, my) {
+  const walls = latestState.alive;
   let remaining = Math.abs(mx) + Math.abs(my);
   const sx = Math.sign(mx);
   const sy = Math.sign(my);
@@ -558,11 +875,57 @@ function moveAxis(pos, mx, my) {
     const part = Math.min(1, remaining);
     const nx = pos.x + sx * part;
     const ny = pos.y + sy * part;
-    if (blocked(welcome.map, welcome.player_half, nx, ny)) return;
+    if (blocked(welcome.map, welcome.player_half, nx, ny, walls)) return;
     pos.x = nx;
     pos.y = ny;
     remaining -= part;
   }
+}
+
+// --- Vision blocked by walls (spec 008, part 7) ----------------------------------------
+// The server only sends what is in sight. The browser repeats the rule to darken the
+// tiles behind walls, so what is drawn matches what the server sends.
+
+// REPEATS SERVER RULE: line_between() in server/game.py. The tiles strictly between two
+// tiles on the straight line (Bresenham), always traced from the smaller end.
+function lineBetween(col0, row0, col1, row1) {
+  if (row0 > row1 || (row0 === row1 && col0 > col1)) {
+    [col0, row0, col1, row1] = [col1, row1, col0, row0];
+  }
+  const width = Math.abs(col1 - col0);
+  const height = Math.abs(row1 - row0);
+  const stepCol = col1 > col0 ? 1 : -1;
+  const stepRow = row1 > row0 ? 1 : -1;
+  let error = width - height;
+  let col = col0;
+  let row = row0;
+  const tiles = [];
+  while (col !== col1 || row !== row1) {
+    const twice = 2 * error;
+    if (twice > -height) {
+      error -= height;
+      col += stepCol;
+    }
+    if (twice < width) {
+      error += width;
+      row += stepRow;
+    }
+    if (col !== col1 || row !== row1) tiles.push([col, row]);
+  }
+  return tiles;
+}
+
+// REPEATS SERVER RULE: Game._visible_tiles() in server/game.py. The tiles up to `reach`
+// away with no wall tile on the line, as a Set of "col,row".
+function visibleTiles(map, col, row, reach) {
+  const isWall = ([c, r]) => r >= 0 && r < map.grid.length && map.grid[r][c] === "#";
+  const visible = new Set();
+  for (let dr = -reach; dr <= reach; dr++) {
+    for (let dc = -reach; dc <= reach; dc++) {
+      if (!lineBetween(col, row, col + dc, row + dr).some(isWall)) visible.add(`${col + dc},${row + dr}`);
+    }
+  }
+  return visible;
 }
 
 // --- Phaser scene -----------------------------------------------------------------
@@ -572,17 +935,29 @@ class CampusScene extends Phaser.Scene {
     super("campus");
     this.sprites = new Map(); // id -> character from Render.makeCharacter()
     this.exams = new Map(); // failed exam id -> sheet from Render.makeExam()
+    this.taskMarkers = new Map(); // own open task id -> mark from Render.makeTaskMarker()
+    this.shadowKey = ""; // the tile the darkness behind walls was last drawn for
     this.lastSent = { dx: 0, dy: 0 };
-    this.lastSentAt = 0; // performance.now() of the last "input" actually sent
-    this.pendingSend = null; // a scheduled trailing send, while throttled
-    this.predicted = null; // own position as predicted by this browser
+    // The own character, predicted in whole server ticks (see updateOwn).
+    this.predicted = null; // position after the newest predicted tick
+    this.previous = null; // position one tick earlier: the character is drawn between the two
+    this.trail = []; // the last TRAIL_TICKS predicted positions, oldest first
+    this.tickTime = 0; // seconds of frame time not yet used up by a tick
+    this.drawOffset = { x: 0, y: 0 }; // how far the picture still is from the prediction
   }
 
   create() {
     // The map is drawn from the server's data; the darkness covers it outside the
     // vision radius (which the server sent in "welcome").
     const { width, height } = Render.drawMap(this, welcome.map);
+    if (welcome.map.bell) Render.makeBell(this, welcome.map);
+    for (const door of welcome.map.staff_doors || []) Render.makeDoor(this, welcome.map, door);
+    this.taskRing = Render.makeTaskRing(this);
     this.fog = Render.makeFog(this, welcome.vision_radius, Math.max(width, height));
+    // A second, much smaller clear circle for a student while the lights are off.
+    this.darkFog = Render.makeFog(this, welcome.lights_out_radius, Math.max(width, height), "fog-dark");
+    this.switchMark = welcome.map.light_switch ? Render.makeSwitch(this, welcome.map) : null;
+    this.shadows = Render.makeShadows(this);
 
     const camera = this.cameras.main;
     camera.setBounds(0, 0, width, height);
@@ -591,10 +966,13 @@ class CampusScene extends Phaser.Scene {
     fitCamera();
     this.scale.on("resize", fitCamera);
 
-    this.keys = this.input.keyboard.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,E,R");
+    this.keys = this.input.keyboard.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,E,R,F,V,Q");
     // On the key event itself, so even a very short tap counts (tryExpel checks the role).
     this.keys.E.on("down", () => tryExpel());
     this.keys.R.on("down", () => tryReport());
+    this.keys.F.on("down", () => tryUse());
+    this.keys.Q.on("down", () => trySabotage());
+    this.keys.V.on("down", () => tryDoor());
 
     // When the tab loses focus, stop walking (otherwise the server keeps moving us).
     const stop = () => this.sendDirection(0, 0);
@@ -602,22 +980,13 @@ class CampusScene extends Phaser.Scene {
     document.addEventListener("visibilitychange", () => document.hidden && stop());
   }
 
+  // Sends the direction if it changed. Called once per predicted tick, so at most
+  // tick_rate times a second (far below the server's rate limit), and the direction sent
+  // is always the one the prediction uses.
   sendDirection(dx, dy) {
     if (dx === this.lastSent.dx && dy === this.lastSent.dy) return;
     this.lastSent = { dx, dy };
-    const elapsed = performance.now() - this.lastSentAt;
-    if (elapsed >= SEND_INTERVAL_MS) {
-      clearTimeout(this.pendingSend);
-      this.pendingSend = null;
-      this.lastSentAt = performance.now();
-      send({ type: "input", dx, dy });
-    } else if (!this.pendingSend) {
-      this.pendingSend = setTimeout(() => {
-        this.pendingSend = null;
-        this.lastSentAt = performance.now();
-        send({ type: "input", dx: this.lastSent.dx, dy: this.lastSent.dy });
-      }, SEND_INTERVAL_MS - elapsed);
-    }
+    send({ type: "input", dx, dy });
   }
 
   // A held joystick wins over the keys (readKeys still runs on a laptop with no joystick).
@@ -632,24 +1001,11 @@ class CampusScene extends Phaser.Scene {
 
   update(time, deltaMs) {
     if (snapshots.length === 0) return;
-    let dx = 0;
-    let dy = 0;
-    if (lastPhase === "ended" || lastPhase === "meeting") {
-      // The server rejects movement now and has already stopped everyone. Sending and
-      // predicting nothing keeps the own character where the server put it.
-      clearTimeout(this.pendingSend);
-      this.pendingSend = null;
-      this.lastSent = { dx: 0, dy: 0 };
-    } else {
-      ({ dx, dy } = this.readKeys());
-      this.sendDirection(dx, dy);
-    }
-
     const newest = snapshots[snapshots.length - 1];
     const latest = newest.players;
     this.syncSprites(latest);
     this.syncExams(latestState.failed_exams);
-    this.updateOwn(latest.get(welcome.id), dx, dy, deltaMs / 1000);
+    this.updateOwn(latest.get(welcome.id), deltaMs / 1000);
     this.updateOthers(latest);
     for (const [id, sprite] of this.sprites) {
       Render.animateCharacter(sprite, { ...sprite.walk, ghost: newest.ghosts.has(id) }, time);
@@ -658,7 +1014,66 @@ class CampusScene extends Phaser.Scene {
     // Darkness only for the living while playing: ghosts, the lobby and the end screen
     // show the whole map (the server sends them everything as well).
     const own = this.sprites.get(welcome.id);
-    if (own) Render.updateFog(this.fog, own.x, own.y, lastPhase === "playing" && latestState.alive);
+    const limited = lastPhase === "playing" && latestState.alive;
+    // The server says how far this player sees right now: less for a student in the dark.
+    const dark = limited && latestState.vision_radius < welcome.vision_radius;
+    if (own) Render.updateFog(this.fog, own.x, own.y, limited && !dark);
+    if (own) Render.updateFog(this.darkFog, own.x, own.y, dark);
+    if (this.switchMark) {
+      const off = lastPhase === "playing" && latestState.lights_on === false;
+      const t = welcome.map.tile_size;
+      const [col, row] = welcome.map.light_switch;
+      const near = own && Math.hypot((col + 0.5) * t - own.x, (row + 0.5) * t - own.y) <= welcome.switch_range;
+      Render.updateSwitch(this.switchMark, off, time, near);
+    }
+    this.updateShadows(latest.get(welcome.id), limited);
+
+    // Tasks: marks on the own open task places and the ring while one runs. The ring
+    // moves smoothly from the time the task was first seen; the seconds are the server's.
+    this.syncTaskMarkers(latestState.tasks || [], own);
+    const doing = lastPhase === "playing" ? latestState.doing : null;
+    const fixing = lastPhase === "playing" ? latestState.fixing : null;
+    if (own && doing) {
+      const fraction = Math.min(1, (performance.now() - doingSince) / (doingSeconds * 1000));
+      Render.updateTaskRing(this.taskRing, own.x, own.y, fraction, doing.seconds_left);
+    } else if (own && fixing) {
+      // Fixing the lights uses the same ring.
+      const fraction = Math.min(1, (performance.now() - fixSince) / (fixSeconds * 1000));
+      Render.updateTaskRing(this.taskRing, own.x, own.y, fraction, fixing.seconds_left);
+    } else {
+      Render.updateTaskRing(this.taskRing, 0, 0, null);
+    }
+  }
+
+  // The darkness behind walls, for the tile the server has the own character on (that is
+  // the tile the server's vision uses). Redrawn only when that tile changes.
+  updateShadows(server, limited) {
+    const t = welcome.map.tile_size;
+    const col = server ? Math.floor(server.x / t) : 0;
+    const row = server ? Math.floor(server.y / t) : 0;
+    const key = server && limited ? `${col},${row}` : "";
+    if (key === this.shadowKey) return;
+    this.shadowKey = key;
+    const reach = Math.round(welcome.vision_radius / t);
+    const visible = key ? visibleTiles(welcome.map, col, row, reach) : null;
+    Render.drawShadows(this.shadows, welcome.map, col, row, reach, visible);
+  }
+
+  // One mark per own open task; a finished task (and a new round) removes its mark.
+  // A mark fades while the own character stands at it, so it does not cover the face.
+  syncTaskMarkers(tasks, own) {
+    const open = new Map(tasks.filter((task) => !task.done).map((task) => [task.id, task]));
+    for (const [id, task] of open) {
+      if (!this.taskMarkers.has(id)) this.taskMarkers.set(id, Render.makeTaskMarker(this, task));
+      const near = own && Math.hypot(task.x - own.x, task.y - own.y) <= welcome.task_range;
+      this.taskMarkers.get(id).setAlpha(near ? 0.3 : 1);
+    }
+    for (const [id, marker] of this.taskMarkers) {
+      if (!open.has(id)) {
+        marker.destroy();
+        this.taskMarkers.delete(id);
+      }
+    }
   }
 
   // Failed exams ("6/20") lie on the floor until the next round. While playing, the
@@ -701,32 +1116,111 @@ class CampusScene extends Phaser.Scene {
     }
   }
 
-  // Own character: predict locally every frame, the server position wins.
-  updateOwn(server, dx, dy, dt) {
+  // Own character: predicted in the server's own ticks, repaired from the server's
+  // position (the server wins), drawn smoothly in between.
+  updateOwn(server, dt) {
     const sprite = this.sprites.get(welcome.id);
     if (!server || !sprite) return;
-    if (!this.predicted) this.predicted = { x: server.x, y: server.y };
-    const pos = this.predicted;
+    if (!this.predicted) this.resetPrediction(server);
 
+    const tick = 1 / welcome.tick_rate;
+    this.tickTime = Math.min(this.tickTime + dt, MAX_TICKS_PER_FRAME * tick);
+    while (this.tickTime >= tick) {
+      this.tickTime -= tick;
+      this.predictTick();
+    }
+    this.repair(server);
+
+    // What is left of the last repair fades out, so a repair is a glide and not a jump.
+    const fade = Math.exp(-BLEND_RATE * dt);
+    this.drawOffset.x *= fade;
+    this.drawOffset.y *= fade;
+    const at = this.betweenTicks();
+    sprite.setPosition(at.x + this.drawOffset.x, at.y + this.drawOffset.y);
+    sprite.walk = { ...this.lastSent };
+  }
+
+  // One tick of the own character, exactly as the server will move it.
+  predictTick() {
+    let dx = 0;
+    let dy = 0;
+    if (lastPhase === "ended" || lastPhase === "meeting") {
+      // The server rejects movement now and has already stopped everyone. Sending and
+      // predicting nothing keeps the own character where the server put it.
+      this.lastSent = { dx: 0, dy: 0 };
+    } else {
+      ({ dx, dy } = this.readKeys());
+      this.sendDirection(dx, dy);
+    }
+    this.previous = { ...this.predicted };
     if (dx !== 0 || dy !== 0) {
-      // REPEATS SERVER RULE: fixed speed, diagonal normalised (Game.step()).
+      // REPEATS SERVER RULE: Game.step() in server/game.py: one fixed step per tick,
+      // diagonal normalised, first the x axis and then the y axis.
       const length = Math.hypot(dx, dy);
-      const distance = welcome.speed * Math.min(dt, 0.1);
-      moveAxis(pos, (dx / length) * distance, 0);
-      moveAxis(pos, 0, (dy / length) * distance);
+      moveAxis(this.predicted, (dx / length) * welcome.step, 0);
+      moveAxis(this.predicted, 0, (dy / length) * welcome.step);
     }
+    this.trail.push({ ...this.predicted });
+    if (this.trail.length > TRAIL_TICKS) this.trail.shift();
+  }
 
-    const error = Math.hypot(server.x - pos.x, server.y - pos.y);
-    if (error > SNAP_DISTANCE_TILES * welcome.map.tile_size) {
-      pos.x = server.x; // too far apart: trust the server immediately
-      pos.y = server.y;
-    } else if (dx === 0 && dy === 0) {
-      const ease = 1 - Math.exp(-10 * dt); // standing still: glide to the server position
-      pos.x += (server.x - pos.x) * ease;
-      pos.y += (server.y - pos.y) * ease;
+  // Where the own character is between the last two predicted ticks: the prediction
+  // runs 20 times a second, the screen is drawn more often.
+  betweenTicks() {
+    const part = this.tickTime * welcome.tick_rate; // 0 to 1
+    return {
+      x: this.previous.x + (this.predicted.x - this.previous.x) * part,
+      y: this.previous.y + (this.predicted.y - this.previous.y) * part,
+    };
+  }
+
+  // Start predicting again from the server's position.
+  resetPrediction(server) {
+    this.predicted = { x: server.x, y: server.y };
+    this.previous = { ...this.predicted };
+    this.trail = [{ ...this.predicted }];
+  }
+
+  // The server's position must lie on the trail this browser predicted. If it does not,
+  // the prediction was wrong at that point: move the whole prediction by the difference.
+  repair(server) {
+    let near = this.trail[0];
+    let error = Infinity;
+    for (const point of this.trail) {
+      const distance = Math.hypot(server.x - point.x, server.y - point.y);
+      if (distance < error) {
+        near = point;
+        error = distance;
+      }
     }
-    sprite.setPosition(pos.x, pos.y);
-    sprite.walk = { dx, dy };
+    if (error < MIN_CORRECTION) return;
+
+    const shown = this.betweenTicks();
+    const moved = error > SNAP_DISTANCE_TILES * welcome.map.tile_size; // meeting, new round
+    const wantX = server.x - near.x;
+    const wantY = server.y - near.y;
+    // The repair uses the wall rule of walking, so it never ends inside a wall.
+    const before = { ...this.predicted };
+    moveAxis(this.predicted, wantX, 0);
+    moveAxis(this.predicted, 0, wantY);
+    const doneX = this.predicted.x - before.x;
+    const doneY = this.predicted.y - before.y;
+    if (moved || Math.hypot(wantX - doneX, wantY - doneY) > welcome.step) {
+      // Put somewhere else by the server, or a wall is in the way of the repair.
+      this.resetPrediction(server);
+    } else {
+      this.previous = { x: this.previous.x + doneX, y: this.previous.y + doneY };
+      for (const point of this.trail) {
+        point.x += doneX;
+        point.y += doneY;
+      }
+    }
+    // The picture stays where it was and glides to the repaired position (updateOwn);
+    // only a move by the server is shown at once.
+    const now = this.betweenTicks();
+    this.drawOffset = moved
+      ? { x: 0, y: 0 }
+      : { x: this.drawOffset.x + shown.x - now.x, y: this.drawOffset.y + shown.y - now.y };
   }
 
   // Other players: draw them slightly in the past, blending between two server states.
@@ -747,7 +1241,9 @@ class CampusScene extends Phaser.Scene {
     for (const [id, sprite] of this.sprites) {
       if (id === welcome.id) continue;
       const b = newer.players.get(id) || latest.get(id);
-      const a = older.players.get(id) || b;
+      let a = older.players.get(id) || b;
+      // A player the server moved (staff door, meeting) is not drawn gliding across the map.
+      if (Math.hypot(b.x - a.x, b.y - a.y) > SNAP_DISTANCE_TILES * welcome.map.tile_size) a = b;
       sprite.setPosition(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f);
       // Walking direction for the animation: where they moved between the two states.
       sprite.walk = { dx: direction(b.x - a.x), dy: direction(b.y - a.y) };

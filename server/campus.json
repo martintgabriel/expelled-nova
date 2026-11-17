@@ -89,5 +89,23 @@
     [37, 20],
     [32, 22],
     [36, 22]
+  ],
+  "bell": [20, 15],
+  "light_switch": [10, 20],
+  "staff_doors": [
+    {"id": "library", "name": "Library", "x": 11, "y": 1},
+    {"id": "food-court", "name": "Food Court", "x": 38, "y": 1},
+    {"id": "student-services", "name": "Student Services", "x": 1, "y": 20},
+    {"id": "main-entrance", "name": "Main Entrance", "x": 38, "y": 24}
+  ],
+  "tasks": [
+    {"id": "certificate", "title": "Submit your Bachelor certificate", "area": "Student Services", "x": 3, "y": 14, "seconds": 8, "joke": "Ticket A-347. Now serving: A-012."},
+    {"id": "helpdesk", "title": "Ask the Helpdesk for help", "area": "Main Entrance", "x": 36, "y": 17, "seconds": 6, "joke": "Olá! Só em português, por favor."},
+    {"id": "print", "title": "Print your assignment", "area": "Library", "x": 2, "y": 2, "seconds": 7, "joke": "PAPER JAM in tray 2. Printed anyway, 1 of 12 pages."},
+    {"id": "coffee", "title": "Grab a coffee before class", "area": "Food Court", "x": 36, "y": 3, "seconds": 5, "joke": "Coffee: 0.80 €. Queue: 40 minutes."},
+    {"id": "eduroam", "title": "Reconnect to eduroam", "area": "Courtyard", "x": 15, "y": 12, "seconds": 6, "joke": "Connected. Disconnected. Connected."},
+    {"id": "socket", "title": "Find a free socket for your laptop", "area": "Auditorium", "x": 24, "y": 2, "seconds": 5, "joke": "All sockets taken. 3 % battery it is."},
+    {"id": "gate", "title": "Tap your student card at the gate", "area": "Main Entrance", "x": 31, "y": 24, "seconds": 5, "joke": "Beep. Red. Beep. Red. Beep. Green."},
+    {"id": "nata", "title": "Eat your pastel de nata in the sun", "area": "Courtyard", "x": 25, "y": 16, "seconds": 5, "joke": "A seagull took it. Task counts anyway."}
   ]
 }
