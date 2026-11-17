@@ -244,11 +244,13 @@ const Render = (() => {
 
   // The "6/20" sheet a student leaves on the floor.
   function makeExam(scene, exam) {
-    const shadow = scene.add.rectangle(1.5, 2, 15, 19, 0x000000, 0.25);
-    const sheet = scene.add.rectangle(0, 0, 15, 19, 0xffffff).setStrokeStyle(1, 0x8a8f99);
+    // The sheet is wider than the "6/20" text (about 18 px), so the mark never sticks out
+    // over the floor, where red on a red floor would be hard to read.
+    const shadow = scene.add.rectangle(1.5, 2, 22, 25, 0x000000, 0.25);
+    const sheet = scene.add.rectangle(0, 0, 22, 25, 0xffffff).setStrokeStyle(1, 0x8a8f99);
     const lines = scene.add.graphics();
     lines.fillStyle(0xb9bec8);
-    for (const y of [-6.5, 3.5, 6]) lines.fillRect(-5, y, 10, 1);
+    for (const y of [-8.5, 5, 8]) lines.fillRect(-7, y, 14, 1);
     const mark = scene.add
       .text(0, -1.5, "6/20", {
         fontFamily: FONT,

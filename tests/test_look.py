@@ -137,8 +137,9 @@ def test_eleventh_player_gets_no_colour():
 
 
 def test_join_while_playing_changes_no_colours():
-    game, examiners, students = playing(4)
-    before = colours_in_game(game)
+    game, players = lobby(4)
+    before = colours_in_game(game)  # saved in the lobby, so a change at the start shows too
+    game.start(players[0].id)
     with pytest.raises(GameError, match="already running"):
         game.join("Late")
     assert colours_in_game(game) == before
@@ -165,8 +166,13 @@ def test_lowest_free_colour_is_taken_first():
 
 
 def test_colours_survive_start_expel_end_and_new_round():
-    game, (examiner,), students = playing(4)
-    before = colours_in_game(game)
+    game, players = lobby(4)
+    before = colours_in_game(game)  # saved in the lobby, before the start
+
+    game.start(players[0].id)
+    assert colours_in_game(game) == before
+    (examiner,) = [p for p in players if p.role == "examiner"]
+    students = [p for p in players if p.role == "student"]
 
     expel_first_student(game, examiner, students)
     assert colours_in_game(game) == before  # the ghost keeps their colour
@@ -312,10 +318,12 @@ def test_hidden_player_appears_when_walking_towards_them():
 def test_ghost_sees_everyone_and_every_failed_exam_at_any_distance():
     game, (examiner,), students = playing(4)
     ghost = expel_first_student(game, examiner, students)
-    place(ghost, 2, 2)
+    (exam,) = game.failed_exams  # lies where the ghost was expelled, near the spawns
+    place(ghost, 26, 13)  # far away from the failed exam
     place(examiner, 26, 2)
-    place(students[1], 26, 13)
+    place(students[1], 14, 8)
     place(students[2], 2, 13)
+    assert (ghost.x - exam.x) ** 2 + (ghost.y - exam.y) ** 2 > RADIUS**2
     snapshot = game.snapshot_for(ghost.id)
     assert ids_in(snapshot) == sorted(game.players)
     assert sorted(snapshot["colors"]) == sorted(game.players)
