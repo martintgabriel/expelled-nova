@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from server.game import (
     EXPEL_RANGE,
     PLAYER_HALF,
+    REPORT_RANGE,
     SPEED,
     TICK_RATE,
     Game,
@@ -93,6 +94,8 @@ async def websocket_endpoint(ws: WebSocket):
                             "tick_rate": TICK_RATE,
                             "player_half": PLAYER_HALF,
                             "expel_range": EXPEL_RANGE,
+                            "report_range": REPORT_RANGE,
+                            "vision_radius": game.vision_radius,
                         }
                     )
                     connections[player_id] = ws
@@ -100,6 +103,12 @@ async def websocket_endpoint(ws: WebSocket):
                     game.start(player_id)
                 elif message["type"] == "expel":
                     game.expel(player_id, message.get("target"))
+                elif message["type"] == "report":
+                    game.report(player_id, message.get("exam"))
+                elif message["type"] == "bell":
+                    game.bell(player_id)
+                elif message["type"] == "vote":
+                    game.vote(player_id, message.get("target"))
                 elif message["type"] == "restart":
                     game.restart(player_id)
                 else:
