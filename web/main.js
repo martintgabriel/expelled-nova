@@ -31,7 +31,17 @@ const ui = {
   roleDetail: document.getElementById("role-detail"),
   roleBadge: document.getElementById("role-badge"),
   expelButton: document.getElementById("expel-button"),
+  reportButton: document.getElementById("report-button"),
+  bellButton: document.getElementById("bell-button"),
   ghostBanner: document.getElementById("ghost-banner"),
+  ghostTitle: document.getElementById("ghost-title"),
+  meetingScreen: document.getElementById("meeting-screen"),
+  meetingTitle: document.getElementById("meeting-title"),
+  meetingTimer: document.getElementById("meeting-timer"),
+  meetingReason: document.getElementById("meeting-reason"),
+  meetingPlayers: document.getElementById("meeting-players"),
+  skipButton: document.getElementById("skip-button"),
+  meetingStatus: document.getElementById("meeting-status"),
   endScreen: document.getElementById("end-screen"),
   endTitle: document.getElementById("end-title"),
   endRoles: document.getElementById("end-roles"),
@@ -40,19 +50,23 @@ const ui = {
 };
 
 let socket = null;
-// {id, map, speed, tick_rate, player_half, expel_range, vision_radius} once joined
+// {id, map, speed, tick_rate, player_half, expel_range, report_range, vision_radius} once joined
 let welcome = null;
 // Recent server states: {time, players: Map(id -> {name,x,y}), ghosts: Set(id)}
 let snapshots = [];
 let latestState = null; // the newest state message as the server sent it
 let toastTimer = null;
-let lastPhase = null; // "lobby", "playing" or "ended", from the latest state
+let lastPhase = null; // "lobby", "playing", "meeting" or "ended", from the latest state
 let lobbyKey = ""; // what the lobby list currently shows, to redraw only on changes
 let endKey = ""; // the same for the end screen
+let meetingKey = ""; // the same for the meeting screen
 let roleTimer = null;
-// Nicknames by player id. While playing, the server only sends the players in sight,
-// so names seen earlier (everyone is visible in the lobby) are remembered here.
+let sentSurfing = false; // this player was voted out in this round
+// Nicknames and colour numbers by player id. While playing, the server only sends the
+// players in sight (and the living never receive ghosts), so the ones seen earlier
+// (everyone is visible in the lobby) are remembered here.
 const knownNames = new Map();
+const knownColors = new Map();
 
 // --- Connection -----------------------------------------------------------------
 
@@ -84,8 +98,12 @@ function handleMessage(message) {
     ui.hud.hidden = false;
     startGame();
   } else if (message.type === "error") {
-    if (welcome) showToast(message.reason);
-    else showJoinError(message.reason);
+    if (welcome) {
+      showToast(message.reason);
+      meetingKey = ""; // redraw the meeting screen: re-enables the vote buttons
+    } else {
+      showJoinError(message.reason);
+    }
   } else if (message.type === "state" && welcome) {
     const players = new Map(message.players.map((p) => [p.id, p]));
     // Only a ghost (or everyone after the end) receives the ghost list; the living
@@ -93,6 +111,7 @@ function handleMessage(message) {
     snapshots.push({ time: performance.now(), players, ghosts: new Set(message.ghosts || []) });
     latestState = message;
     for (const p of message.players) knownNames.set(p.id, p.name);
+    for (const [id, color] of Object.entries(message.colors)) knownColors.set(id, color);
     // Keep about one second of history.
     while (snapshots.length > welcome.tick_rate) snapshots.shift();
     updateHud(message);
@@ -115,8 +134,13 @@ function updateHud(state) {
 function colorDot(state, playerId) {
   const dot = document.createElement("span");
   dot.className = "dot";
-  dot.style.background = Render.colorCss(state.colors[playerId]);
+  dot.style.background = Render.colorCss(state.colors[playerId] ?? knownColors.get(playerId));
   return dot;
+}
+
+// A player's nickname, also for players out of sight or voted out.
+function nameOf(playerId) {
+  return knownNames.get(playerId) ?? "A player";
 }
 
 // --- Lobby and roles --------------------------------------------------------------
@@ -124,16 +148,27 @@ function colorDot(state, playerId) {
 // its own role (and, for an examiner, the fellow examiners' ids).
 
 function updatePhase(state) {
-  const justStarted = state.phase === "playing" && lastPhase !== "playing";
+  // Only at the start of a game: play resuming after a meeting shows no role screen.
+  const justStarted = state.phase === "playing" && lastPhase === "lobby";
   lastPhase = state.phase;
   ui.lobby.hidden = state.phase !== "lobby";
   ui.endScreen.hidden = state.phase !== "ended";
+  ui.meetingScreen.hidden = state.phase !== "meeting";
+  if (state.phase === "lobby") sentSurfing = false;
+  const result = state.meeting && state.meeting.result;
+  if (result && result.surfing === welcome.id) sentSurfing = true;
   ui.ghostBanner.hidden = !(state.phase === "playing" && !state.alive);
+  setText(ui.ghostTitle, sentSurfing ? "You have been sent surfing" : "You have been expelled");
   updateExpelButton(state);
+  updateReportAndBell(state);
   if (state.phase === "lobby") {
     ui.roleBadge.hidden = true;
     renderLobby(state);
     return;
+  }
+  if (state.phase === "meeting") {
+    ui.roleScreen.hidden = true;
+    renderMeeting(state);
   }
   if (state.phase === "ended") {
     ui.roleBadge.hidden = true;
@@ -202,7 +237,7 @@ function showRoleScreen(roleName, role) {
   clearTimeout(roleTimer);
   roleTimer = setTimeout(() => {
     ui.roleScreen.hidden = true;
-    ui.roleBadge.hidden = lastPhase !== "playing";
+    ui.roleBadge.hidden = lastPhase !== "playing" && lastPhase !== "meeting";
   }, ROLE_SCREEN_MS);
 }
 
@@ -284,7 +319,8 @@ function renderEnd(state) {
         const item = document.createElement("li");
         item.append(colorDot(state, p.id), p.name); // appended as text: never read as HTML
         item.append(tag(role === "examiner" ? "Examiner" : "Student", role));
-        if (ghosts.has(p.id)) item.append(tag("expelled", "expelled"));
+        // "ghost", not "expelled": a ghost may also have been voted out (spec 006).
+        if (ghosts.has(p.id)) item.append(tag("ghost", "ghost"));
         if (p.id === welcome.id) item.append(tag("you", "you"));
         return item;
       }),
@@ -305,6 +341,145 @@ ui.restartButton.addEventListener("click", () => {
   send({ type: "restart" });
   ui.restartButton.blur();
 });
+
+// --- Report, bell, meeting and vote (spec 006) --------------------------------------
+// The buttons are only a convenience: the server checks phase, range, bell and votes again.
+
+function isLivingAndPlaying(state) {
+  return state.phase === "playing" && state.alive;
+}
+
+// Nearest failed exam within report range of the latest server position.
+function reportTarget(state) {
+  if (!isLivingAndPlaying(state)) return null;
+  const me = state.players.find((p) => p.id === welcome.id);
+  if (!me) return null;
+  let best = null;
+  let bestDistance = welcome.report_range;
+  for (const exam of state.failed_exams) {
+    const distance = Math.hypot(exam.x - me.x, exam.y - me.y);
+    if (distance <= bestDistance) {
+      best = exam;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function updateReportAndBell(state) {
+  ui.reportButton.hidden = !reportTarget(state);
+  ui.bellButton.hidden = !isLivingAndPlaying(state);
+  ui.bellButton.disabled = state.bell_used;
+  setText(ui.bellButton, state.bell_used ? "Bell used" : "Ring the bell");
+}
+
+function tryReport() {
+  if (!latestState || !isLivingAndPlaying(latestState)) return;
+  const exam = reportTarget(latestState);
+  if (!exam) {
+    showToast("No failed exam within reach");
+    return;
+  }
+  send({ type: "report", exam: exam.id });
+}
+
+ui.reportButton.addEventListener("click", () => {
+  tryReport();
+  ui.reportButton.blur();
+});
+
+ui.bellButton.addEventListener("click", () => {
+  send({ type: "bell" });
+  ui.bellButton.blur();
+});
+
+function renderMeeting(state) {
+  const meeting = state.meeting;
+  setText(ui.meetingTimer, `${meeting.seconds_left} s`);
+  const result = meeting.result;
+  // Redraw only when something on the screen changes; the timer is updated above, so a
+  // redraw does not replace the buttons under the mouse every second.
+  const key = JSON.stringify([{ ...meeting, seconds_left: null }, state.alive]);
+  if (key === meetingKey) return;
+  meetingKey = key;
+
+  const caller = nameOf(meeting.called_by); // added as text: never read as HTML
+  ui.meetingReason.textContent =
+    meeting.reason === "report" ? `${caller} found a failed exam` : `${caller} rang the bell`;
+  if (result) renderResult(state, result);
+  else renderVoting(state, meeting);
+}
+
+function meetingRow(state, playerId) {
+  const item = document.createElement("li");
+  const who = document.createElement("span");
+  who.append(colorDot(state, playerId), nameOf(playerId)); // as text: never read as HTML
+  if (playerId === welcome.id) who.append(tag("you", "you"));
+  item.append(who);
+  return { item, who };
+}
+
+function renderVoting(state, meeting) {
+  setText(ui.meetingTitle, "Meeting: who is an examiner?");
+  const canVote = state.alive && meeting.my_vote === null;
+  const voted = new Set(meeting.voted);
+  ui.meetingPlayers.replaceChildren(
+    ...meeting.living.map((playerId) => {
+      const { item, who } = meetingRow(state, playerId);
+      if (voted.has(playerId)) who.append(tag("voted", "voted"));
+      if (state.alive) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "Vote";
+        button.disabled = !canVote;
+        button.addEventListener("click", () => castVote(playerId));
+        item.append(button);
+      }
+      return item;
+    }),
+  );
+  ui.skipButton.hidden = !state.alive; // ghosts get the screen without buttons
+  ui.skipButton.disabled = !canVote;
+  ui.meetingStatus.classList.remove("verdict");
+  let status = "Vote for a player or skip.";
+  if (!state.alive) status = "Ghosts cannot vote";
+  else if (meeting.my_vote === "skip") status = "You skipped";
+  else if (meeting.my_vote) status = `You voted for ${nameOf(meeting.my_vote)}`;
+  ui.meetingStatus.textContent = status;
+}
+
+function renderResult(state, result) {
+  setText(ui.meetingTitle, "Result");
+  const rows = Object.entries(result.votes).map(([playerId, count]) => {
+    const { item, who } = meetingRow(state, playerId);
+    if (playerId === result.surfing) who.append(tag("sent surfing", "surfing"));
+    const votes = document.createElement("span");
+    votes.className = "count";
+    votes.textContent = count === 1 ? "1 vote" : `${count} votes`;
+    item.append(votes);
+    return item;
+  });
+  const skips = document.createElement("li");
+  const skipCount = document.createElement("span");
+  skipCount.className = "count";
+  skipCount.textContent = String(result.skips);
+  skips.append("Skipped", skipCount);
+  ui.meetingPlayers.replaceChildren(...rows, skips);
+  ui.skipButton.hidden = true;
+  ui.meetingStatus.classList.add("verdict");
+  ui.meetingStatus.textContent = result.surfing
+    ? `${nameOf(result.surfing)} was sent surfing`
+    : "Nobody was sent surfing";
+}
+
+function castVote(target) {
+  // Disable the buttons until the server's answer: the next state shows the vote,
+  // a rejection comes back as a toast and re-enables them.
+  for (const button of ui.meetingScreen.querySelectorAll("button")) button.disabled = true;
+  send({ type: "vote", target });
+}
+
+ui.skipButton.addEventListener("click", () => castVote("skip"));
 
 // --- Join form ------------------------------------------------------------------
 
@@ -392,9 +567,10 @@ class CampusScene extends Phaser.Scene {
     fitCamera();
     this.scale.on("resize", fitCamera);
 
-    this.keys = this.input.keyboard.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,E");
+    this.keys = this.input.keyboard.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,E,R");
     // On the key event itself, so even a very short tap counts (tryExpel checks the role).
     this.keys.E.on("down", () => tryExpel());
+    this.keys.R.on("down", () => tryReport());
 
     // When the tab loses focus, stop walking (otherwise the server keeps moving us).
     const stop = () => this.sendDirection(0, 0);
@@ -420,8 +596,9 @@ class CampusScene extends Phaser.Scene {
     if (snapshots.length === 0) return;
     let dx = 0;
     let dy = 0;
-    if (lastPhase === "ended") {
-      // The server rejects movement now and has already stopped everyone.
+    if (lastPhase === "ended" || lastPhase === "meeting") {
+      // The server rejects movement now and has already stopped everyone. Sending and
+      // predicting nothing keeps the own character where the server put it.
       this.lastSent = { dx: 0, dy: 0 };
     } else {
       ({ dx, dy } = this.readKeys());
