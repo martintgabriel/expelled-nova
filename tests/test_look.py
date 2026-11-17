@@ -20,7 +20,7 @@ from server.game import (
     GameError,
     load_map,
 )
-from server.main import app, game as shared_game
+from server.main import app
 
 TILE = 32
 
@@ -444,7 +444,7 @@ def test_clients_receive_server_colours_and_cannot_pick_their_own():
             assert state_a["area"] == "Main Entrance"
 
 
-def test_player_far_away_disappears_from_a_living_players_state():
+def test_player_far_away_disappears_from_a_living_players_state(fresh_game):
     with TestClient(app) as client:
         with (
             client.websocket_connect("/ws") as a,
@@ -460,7 +460,7 @@ def test_player_far_away_disappears_from_a_living_players_state():
 
             # Skip the long walk: put the last player into the Library, far from the entrance.
             far_id = ids[3]
-            far = shared_game.players[far_id]
+            far = fresh_game.players[far_id]
             far.x, far.y = 2.5 * TILE, 2.5 * TILE
 
             near_view = receive_until(

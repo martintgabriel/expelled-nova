@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Expelled!</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -12,7 +12,11 @@
   <div id="join-screen" class="overlay">
     <form id="join-form" class="card" novalidate>
       <h1>Expelled!</h1>
-      <p class="subtitle">Live campus test: walk around with WASD or the arrow keys.</p>
+      <p class="subtitle">
+        Live campus test.
+        <span class="hint-keyboard">WASD / arrow keys to move</span>
+        <span class="hint-touch" hidden>Drag the joystick to move</span>
+      </p>
       <label for="nickname">Nickname</label>
       <input id="nickname" name="nickname" type="text" maxlength="16" autocomplete="off"
              placeholder="1–16 letters, digits, spaces" autofocus>
@@ -24,14 +28,26 @@
   <div id="hud" hidden>
     <span id="area-name"></span>
     <span id="player-count"></span>
-    <span class="hint">WASD / arrow keys to move</span>
+    <span class="hint hint-keyboard">WASD / arrow keys to move</span>
+    <span class="hint hint-touch" hidden>Drag the joystick to move</span>
   </div>
 
   <div id="lobby" class="panel" hidden>
     <h2>Lobby</h2>
     <ul id="lobby-players"></ul>
+    <button id="invite-button" type="button">Invite players</button>
     <button id="start-button" type="button" hidden>Start game</button>
     <p id="start-hint" class="hint"></p>
+  </div>
+
+  <div id="invite-screen" class="overlay" hidden>
+    <div class="card invite-card">
+      <h2>Invite players</h2>
+      <img id="invite-qr" src="/qr.svg" alt="QR code to join the game">
+      <p id="invite-url"></p>
+      <p class="hint">Scan to join &middot; max 10 players</p>
+      <button id="invite-close" type="button">Close</button>
+    </div>
   </div>
 
   <div id="role-badge" class="panel" hidden></div>
@@ -44,9 +60,9 @@
   </div>
 
   <div id="actions">
-    <button id="report-button" type="button" hidden>Report failed exam (R)</button>
+    <button id="report-button" type="button" hidden>Report failed exam <span class="key-hint">(R)</span></button>
     <button id="bell-button" type="button" hidden>Ring the bell</button>
-    <button id="expel-button" type="button" hidden>Expel (E)</button>
+    <button id="expel-button" type="button" hidden>Expel</button>
   </div>
 
   <div id="ghost-banner" class="banner" role="status" hidden>
@@ -88,6 +104,7 @@
 
   <script src="vendor/phaser.min.js"></script>
   <script src="render.js"></script>
+  <script src="controls.js"></script>
   <script src="main.js"></script>
 </body>
 </html>

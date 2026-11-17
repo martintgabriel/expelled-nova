@@ -5,6 +5,7 @@ description = "Live 2D multiplayer social-deduction game on the Nova SBE campus"
 requires-python = "==3.12.*"
 dependencies = [
     "fastapi==0.163.0",
+    "segno==1.6.6",
     "uvicorn==0.54.0",
     "websockets==17.4",
 ]
