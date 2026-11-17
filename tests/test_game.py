@@ -777,7 +777,8 @@ def test_examiner_snapshot_shows_cooldown_seconds_left():
         assert "expel_cooldown" not in game.snapshot_for(student.id)
 
 
-def test_ghost_keeps_moving_and_walls_still_block():
+def test_ghost_keeps_moving_and_passes_walls():
+    """Spec 008, part 3 replaces spec 003's "walls still block" for ghosts."""
     game, (examiner,), students = ready_game(4)
     ghost = students[0]
     game.expel(examiner.id, ghost.id)
@@ -787,7 +788,7 @@ def test_ghost_keeps_moving_and_walls_still_block():
     place(ghost, LEFT_WALL_X)
     game.set_input(ghost.id, {"type": "input", "dx": -1, "dy": 0})
     game.step()
-    assert (ghost.x, ghost.y) == (LEFT_WALL_X, 80)
+    assert (ghost.x, ghost.y) == (LEFT_WALL_X - STEP, 80)
 
 
 def test_expel_and_restart_messages_are_parsed_after_joining():

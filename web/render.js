@@ -1,4 +1,5 @@
-// All drawing code (spec 005): the map, the characters, the failed exams and the darkness.
+// All drawing code (spec 005): the map, the characters, the failed exams, the bell, the staff
+// doors, the light switch, the task markers and the darkness.
 // Everything is drawn here from simple shapes and text: there are no image files.
 // main.js decides WHAT to draw from the server's state; this file decides HOW it looks.
 // Loaded as a plain script after Phaser and before main.js (no build step).
@@ -264,15 +265,166 @@ const Render = (() => {
     return container.setAngle(-10).setDepth(0.5); // on the floor, under the players
   }
 
+  // --- Emergency bell (spec 008, part 4) -------------------------------------------------
+
+  // A brass bell on the tile the server's map names ("bell": [col, row]).
+  function makeBell(scene, map) {
+    const t = map.tile_size;
+    const [col, row] = map.bell;
+    const brass = 0xf2b33d;
+    const darkBrass = 0xc98a17;
+    const body = (grow) => [
+      { x: -8 - grow, y: -3 },
+      { x: 8 + grow, y: -3 },
+      { x: 11 + grow, y: 7 + grow },
+      { x: -11 - grow, y: 7 + grow },
+    ];
+    const g = scene.add.graphics();
+    g.fillStyle(0x000000, 0.28).fillEllipse(1, 11, 28, 8); // shadow on the floor
+    // Outlines are dark shapes behind slightly smaller coloured ones, as for the characters.
+    g.fillStyle(OUTLINE).fillCircle(0, -12, 3.5).fillCircle(0, -3, 9.5).fillPoints(body(1.5), true);
+    g.fillCircle(0, 9.5, 3.8);
+    g.fillStyle(darkBrass).fillCircle(0, -12, 2); // the knob it hangs from
+    g.fillStyle(brass).fillCircle(0, -3, 8).fillPoints(body(0), true);
+    g.fillStyle(darkBrass).fillRect(-11, 4.5, 22, 2.5); // rim
+    g.fillStyle(0xffffff, 0.4).fillEllipse(-3.5, -3, 3, 8); // shine
+    g.fillStyle(darkBrass).fillCircle(0, 9.5, 2.3); // clapper
+    const label = scene.add
+      .text(0, 14, "BELL", {
+        fontFamily: FONT,
+        fontSize: "8px",
+        fontStyle: "bold",
+        color: "#ffffff",
+        resolution: TEXT_RESOLUTION,
+      })
+      .setLetterSpacing(1.5)
+      .setOrigin(0.5, 0)
+      .setAlpha(0.75);
+    // On the floor: over a failed exam, under the players.
+    return scene.add.container((col + 0.5) * t, (row + 0.5) * t, [g, label]).setDepth(0.6);
+  }
+
+  // --- Staff doors (spec 008, part 6) ----------------------------------------------------
+
+  // A hatch in the floor on a tile the server's map names ("staff_doors"). Everyone sees
+  // the hatches; only examiners can use them.
+  function makeDoor(scene, map, door) {
+    const t = map.tile_size;
+    const g = scene.add.graphics();
+    g.fillStyle(OUTLINE).fillRoundedRect(-13, -13, 26, 26, 4);
+    g.fillStyle(0x6a7183).fillRoundedRect(-11, -11, 22, 22, 3); // the metal plate
+    g.fillStyle(0x23262e);
+    for (const y of [-7.5, -1.5, 4.5]) g.fillRect(-8, y, 16, 3); // three slats
+    g.fillStyle(0xf2b33d).fillCircle(8, -8, 1.6); // a small handle
+    return scene.add.container((door.x + 0.5) * t, (door.y + 0.5) * t, [g]).setDepth(0.4);
+  }
+
+  // --- Light switch (spec 008, part 8) ---------------------------------------------------
+
+  // The switch on the tile the server's map names ("light_switch"), and a flashing mark
+  // above it that only shows while the lights are off. The mark is drawn above the
+  // darkness, so students find the switch.
+  function makeSwitch(scene, map) {
+    const t = map.tile_size;
+    const x = (map.light_switch[0] + 0.5) * t;
+    const y = (map.light_switch[1] + 0.5) * t;
+    const plate = scene.add.graphics();
+    plate.fillStyle(OUTLINE).fillRoundedRect(-8, -11, 16, 22, 3);
+    plate.fillStyle(0xe9ecef).fillRoundedRect(-6.5, -9.5, 13, 19, 2);
+    plate.fillStyle(0x9aa0aa).fillRoundedRect(-2.5, -5, 5, 10, 1.5); // the lever's slot
+    plate.fillStyle(0x23262e).fillRoundedRect(-2.5, -5, 5, 5, 1.5); // the lever, up
+    scene.add.container(x, y, [plate]).setDepth(0.6);
+
+    const bolt = scene.add.graphics();
+    bolt.fillStyle(OUTLINE, 0.9).fillCircle(0, 0, 12);
+    bolt.lineStyle(2, 0xf5d547).strokeCircle(0, 0, 12);
+    bolt.fillStyle(0xf5d547).fillPoints(
+      [
+        { x: 2, y: -8 },
+        { x: -5, y: 1 },
+        { x: -1, y: 1 },
+        { x: -2, y: 8 },
+        { x: 5, y: -2 },
+        { x: 1, y: -2 },
+      ],
+      true,
+    );
+    return scene.add.container(x, y - 26, [bolt]).setDepth(11).setVisible(false);
+  }
+
+  // Call every frame with the mark from makeSwitch(): shown and flashing while `off`,
+  // faint while the own character stands at the switch (`near`), so it does not cover the name.
+  function updateSwitch(mark, off, time, near) {
+    mark.setVisible(off);
+    if (off) mark.setAlpha(near ? 0.25 : 0.65 + 0.35 * Math.sin(time / 180));
+  }
+
+  // --- Tasks (spec 004) -------------------------------------------------------------------
+
+  const TASK_COLOR = 0x4cb963; // the green of the task button and bar (style.css)
+
+  // The mark on one of the player's own open task places. It is drawn above the darkness,
+  // so it also shows outside the vision radius: a player's own tasks are no secret.
+  function makeTaskMarker(scene, task) {
+    const g = scene.add.graphics();
+    g.fillStyle(OUTLINE, 0.85).fillCircle(0, 0, 11);
+    g.lineStyle(2, TASK_COLOR).strokeCircle(0, 0, 11);
+    const mark = scene.add
+      .text(0, 0, "!", {
+        fontFamily: FONT,
+        fontSize: "14px",
+        fontStyle: "bold",
+        color: "#4cb963",
+        resolution: TEXT_RESOLUTION,
+      })
+      .setOrigin(0.5);
+    return scene.add.container(task.x, task.y, [g, mark]).setDepth(11);
+  }
+
+  // The ring around the own character while a task runs, with the seconds left below.
+  function makeTaskRing(scene) {
+    const arc = scene.add.graphics();
+    const label = scene.add
+      .text(0, 27, "", {
+        fontFamily: FONT,
+        fontSize: "11px",
+        fontStyle: "bold",
+        color: "#ffffff",
+        stroke: "#101216",
+        strokeThickness: 3,
+        resolution: TEXT_RESOLUTION,
+      })
+      .setOrigin(0.5, 0);
+    const ring = scene.add.container(0, 0, [arc, label]).setDepth(12).setVisible(false);
+    ring.parts = { arc, label };
+    return ring;
+  }
+
+  // Call every frame. `fraction` is how much of the task is done (0-1), or null: no ring.
+  function updateTaskRing(ring, x, y, fraction, secondsLeft) {
+    ring.setVisible(fraction !== null);
+    if (fraction === null) return;
+    ring.setPosition(x, y);
+    const { arc, label } = ring.parts;
+    const start = -Math.PI / 2; // 12 o'clock
+    arc.clear();
+    arc.lineStyle(6, 0x101216, 0.75).strokeCircle(0, 0, 23);
+    arc.lineStyle(4, TASK_COLOR).beginPath();
+    arc.arc(0, 0, 23, start, start + Math.PI * 2 * fraction, false);
+    arc.strokePath();
+    label.setText(`${secondsLeft} s`);
+  }
+
   // --- Darkness outside the vision radius ----------------------------------------------
 
   // One big square picture that is clear in the middle and dark everywhere else. It is
   // painted once with a canvas gradient and then follows the own character.
   // `reach` is how far it must extend from the player to cover the whole map.
   // This is only the look: the server does not even send what is outside the radius.
-  function makeFog(scene, radius, reach) {
+  // `key` names the picture: there is one for the normal radius and one for lights out.
+  function makeFog(scene, radius, reach, key = "fog") {
     const size = FOG_TEXTURE_SIZE;
-    const texture = scene.textures.createCanvas("fog", size, size);
+    const texture = scene.textures.createCanvas(key, size, size);
     const context = texture.getContext();
     const centre = size / 2;
     const scale = centre / reach; // texture pixels per map pixel
@@ -286,7 +438,32 @@ const Render = (() => {
     context.fillStyle = gradient;
     context.fillRect(0, 0, size, size);
     texture.refresh();
-    return scene.add.image(0, 0, "fog").setDisplaySize(reach * 2, reach * 2).setDepth(10).setAlpha(0);
+    return scene.add.image(0, 0, key).setDisplaySize(reach * 2, reach * 2).setDepth(10).setAlpha(0);
+  }
+
+  // --- Darkness behind walls (spec 008, part 7) ------------------------------------------
+
+  const SHADOW_ALPHA = 0.72;
+
+  // One drawing layer for the tiles the own character cannot see. It lies on the floor,
+  // over the bell and the hatches and under the players (the server only sends players
+  // who stand on visible tiles).
+  function makeShadows(scene) {
+    return scene.add.graphics().setDepth(0.9);
+  }
+
+  // Darkens every tile around (col, row) that is not in `visible`, a Set of "col,row"
+  // worked out by main.js with the server's rule. `visible` = null: no darkness at all.
+  function drawShadows(shadows, map, col, row, reach, visible) {
+    shadows.clear();
+    if (!visible) return;
+    const t = map.tile_size;
+    shadows.fillStyle(0x080a0e, SHADOW_ALPHA);
+    for (let r = row - reach - 1; r <= row + reach + 1; r++) {
+      for (let c = col - reach - 1; c <= col + reach + 1; c++) {
+        if (!visible.has(`${c},${r}`)) shadows.fillRect(c * t, r * t, t, t);
+      }
+    }
   }
 
   // Call every frame: keeps the darkness centred on (x, y) and fades it in or out.
@@ -305,7 +482,16 @@ const Render = (() => {
     makeCharacter,
     animateCharacter,
     makeExam,
+    makeBell,
+    makeDoor,
+    makeSwitch,
+    updateSwitch,
+    makeTaskMarker,
+    makeTaskRing,
+    updateTaskRing,
     makeFog,
     updateFog,
+    makeShadows,
+    drawShadows,
   };
 })();

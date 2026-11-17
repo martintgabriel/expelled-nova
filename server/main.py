@@ -17,10 +17,14 @@ from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from server.game import (
+    BELL_RANGE,
     EXPEL_RANGE,
     PLAYER_HALF,
     REPORT_RANGE,
     SPEED,
+    STEP,
+    SWITCH_RANGE,
+    TASK_RANGE,
     TICK_RATE,
     Game,
     GameError,
@@ -37,21 +41,41 @@ game = Game(load_map())
 connections: dict[str, WebSocket] = {}
 
 
+# After a pause longer than this many ticks, the loop does not run the missed ticks in a burst.
+MAX_CATCH_UP_TICKS = 5
+
+
+def next_tick_at(scheduled, now):
+    """The time at which the next tick is due.
+
+    One tick length after the time the previous tick was scheduled, not after the time it
+    really ran. A tick that ran late is followed by a shorter wait, so the game keeps exactly
+    TICK_RATE ticks per second and players move at exactly SPEED, the speed the browser
+    predicts with (spec 008, part 1). If the loop is more than MAX_CATCH_UP_TICKS behind
+    (the server was paused), a new timetable starts at `now`.
+    """
+    due = scheduled + 1 / TICK_RATE
+    if now - due > MAX_CATCH_UP_TICKS / TICK_RATE:
+        return now
+    return due
+
+
 async def game_loop():
     """Move everyone one tick, then send each joined player their own snapshot.
 
     Each player gets snapshot_for(their id), so a browser only ever receives its own role.
     """
     loop = asyncio.get_running_loop()
+    due = loop.time()
     while True:
-        started = loop.time()
         game.step()
         for player_id, ws in list(connections.items()):
             # A client that just closed (or has just left the game) raises here;
             # its own handler removes it.
             with contextlib.suppress(Exception):
                 await ws.send_text(json.dumps(game.snapshot_for(player_id)))
-        await asyncio.sleep(max(0.0, 1 / TICK_RATE - (loop.time() - started)))
+        due = next_tick_at(due, loop.time())
+        await asyncio.sleep(max(0.0, due - loop.time()))
 
 
 @contextlib.asynccontextmanager
@@ -119,9 +143,14 @@ async def websocket_endpoint(ws: WebSocket):
                             "map": game.campus,
                             "speed": SPEED,
                             "tick_rate": TICK_RATE,
+                            "step": STEP,
                             "player_half": PLAYER_HALF,
                             "expel_range": EXPEL_RANGE,
                             "report_range": REPORT_RANGE,
+                            "bell_range": BELL_RANGE,
+                            "task_range": TASK_RANGE,
+                            "switch_range": SWITCH_RANGE,
+                            "lights_out_radius": game.lights_out_radius,
                             "vision_radius": game.vision_radius,
                         }
                     )
@@ -134,6 +163,14 @@ async def websocket_endpoint(ws: WebSocket):
                     game.report(player_id, message.get("exam"))
                 elif message["type"] == "bell":
                     game.bell(player_id)
+                elif message["type"] == "sabotage":
+                    game.sabotage(player_id)
+                elif message["type"] == "fix":
+                    game.fix(player_id)
+                elif message["type"] == "door":
+                    game.use_door(player_id, message.get("to"))
+                elif message["type"] == "task":
+                    game.task(player_id, message.get("task"))
                 elif message["type"] == "vote":
                     game.vote(player_id, message.get("target"))
                 elif message["type"] == "restart":
@@ -150,6 +187,21 @@ async def websocket_endpoint(ws: WebSocket):
             game.leave(player_id)
 
 
+class FreshStaticFiles(StaticFiles):
+    """Static files that the browser must re-check on every load.
+
+    The files in web/ belong together: a new main.js with an old, cached render.js breaks
+    the page. "Cache-Control: no-cache" lets the browser keep its copy but makes it ask the
+    server each time whether the file has changed; an unchanged file is answered with a
+    short "304 Not Modified" (found while checking spec 008, part 4).
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # Serve web/ at "/" (index.html, main.js, vendor/phaser.min.js). Mounted last so
 # /ws and /healthz are matched first.
-app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+app.mount("/", FreshStaticFiles(directory=WEB_DIR, html=True), name="web")

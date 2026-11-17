@@ -94,6 +94,40 @@ button:disabled { opacity: 0.6; cursor: wait; }
   z-index: 5;
 }
 #hud .hint { color: var(--muted); }
+#hud { align-items: center; }
+
+/* --- Controls as pictograms (spec 008, part 9): everything here is drawn with CSS --- */
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.control { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; }
+/* One keycap: a small raised key with its letter. */
+kbd.key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid #6a7183;
+  border-bottom-width: 3px;
+  border-radius: 4px;
+  background: #3a3e47;
+  color: var(--text);
+  font: 700 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+/* Four keys laid out as on a keyboard: one on top, three below. */
+.cluster { display: grid; grid-template-columns: repeat(3, 14px); grid-template-rows: repeat(2, 13px); gap: 1px; }
+.cluster kbd.key { min-width: 0; width: 14px; height: 13px; padding: 0; border-bottom-width: 2px; border-radius: 3px; font-size: 8px; }
+.cluster kbd.key:first-child { grid-column: 2; grid-row: 1; }
+.cluster kbd.key:nth-child(n + 2) { grid-row: 2; }
+/* An arrow key: a triangle made of borders. */
+kbd.arrow::before { content: ""; border: 3px solid transparent; }
+kbd.arrow.up::before { border-top-width: 0; border-bottom: 4px solid var(--text); }
+kbd.arrow.down::before { border-bottom-width: 0; border-top: 4px solid var(--text); }
+kbd.arrow.left::before { border-left-width: 0; border-right: 4px solid var(--text); }
+kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--text); }
+/* The joystick, for touch devices: a ring with a knob. */
+.stick { position: relative; width: 16px; height: 16px; border: 2px solid rgba(241, 241, 241, 0.45); border-radius: 50%; }
+.stick::after { content: ""; position: absolute; top: 1px; left: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--text); }
 
 .toast {
   position: fixed;
@@ -249,8 +283,70 @@ button:disabled { opacity: 0.6; cursor: wait; }
 .tag.surfing { background: var(--error); color: #1d1f24; font-weight: 700; }
 #meeting-status.verdict { color: var(--text); font-size: 18px; font-weight: 700; }
 
+/* --- Tasks (spec 004) --- */
+
+/* The shared progress: a strip along the top edge, also over the meeting screen. */
+#task-bar {
+  position: fixed;
+  top: env(safe-area-inset-top);
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: rgba(20, 22, 26, 0.8);
+  z-index: 12;
+}
+#task-bar[hidden], #task-list[hidden], .joke[hidden] { display: none; }
+#task-bar-fill { width: 0; height: 100%; background: #4cb963; transition: width 0.4s; }
+
+/* The student's own tasks, under the HUD. Touches go through it to the game. */
+#task-list {
+  position: fixed;
+  top: calc(52px + env(safe-area-inset-top));
+  left: calc(12px + env(safe-area-inset-left));
+  max-width: min(270px, calc(100vw - 24px));
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(20, 22, 26, 0.75);
+  font-size: 13px;
+  z-index: 5;
+  pointer-events: none;
+}
+#task-list h2 { margin-bottom: 4px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+#task-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+#task-items li.done { text-decoration: line-through; color: var(--muted); }
+.task-area { display: block; font-size: 12px; color: var(--muted); }
+
+#task-button { background: #4cb963; }
+
+/* --- Lights sabotage (spec 008, part 8) --- */
+#fix-button { background: #f5d547; }
+#sabotage-button { background: #3a3e47; color: var(--text); }
+#sabotage-button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* --- Staff doors (spec 008, part 6): one button per destination, in the action bar --- */
+#door-buttons { display: contents; }
+#door-buttons button { background: #596072; color: var(--text); }
+#door-buttons button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.joke {
+  position: fixed;
+  left: 50%;
+  top: 22%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 12px 18px;
+  border: 2px solid #4cb963;
+  border-radius: 10px;
+  background: rgba(20, 22, 26, 0.92);
+  text-align: center;
+  z-index: 7;
+}
+.joke strong { display: block; color: #4cb963; }
+
 /* Phones: put the panel under the HUD instead of next to it. */
 @media (max-width: 600px) {
+  #task-list { top: calc(100px + env(safe-area-inset-top)); } /* under the role badge */
   .panel {
     top: calc(52px + env(safe-area-inset-top));
     left: calc(12px + env(safe-area-inset-left));

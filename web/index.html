@@ -28,8 +28,34 @@
   <div id="hud" hidden>
     <span id="area-name"></span>
     <span id="player-count"></span>
-    <span class="hint hint-keyboard">WASD / arrow keys to move</span>
-    <span class="hint hint-touch" hidden>Drag the joystick to move</span>
+    <!-- Controls as pictograms (spec 008, part 9): keycaps drawn with CSS, no images.
+         The action keys are shown only while their action is possible (main.js). -->
+    <span id="controls" class="controls hint-keyboard">
+      <span id="control-move" class="control" title="WASD / arrow keys to move">
+        <span class="cluster" aria-hidden="true">
+          <kbd class="key">W</kbd><kbd class="key">A</kbd><kbd class="key">S</kbd><kbd class="key">D</kbd>
+        </span>
+        <span class="cluster" aria-hidden="true">
+          <kbd class="key arrow up"></kbd><kbd class="key arrow left"></kbd><kbd class="key arrow down"></kbd><kbd class="key arrow right"></kbd>
+        </span>
+        move
+      </span>
+      <span id="control-expel" class="control" hidden><kbd class="key">E</kbd> expel</span>
+      <span id="control-report" class="control" hidden><kbd class="key">R</kbd> report</span>
+      <span id="control-use" class="control" hidden><kbd class="key">F</kbd> <span id="control-use-label">task</span></span>
+      <span id="control-door" class="control" hidden><kbd class="key">V</kbd> staff door</span>
+      <span id="control-sabotage" class="control" hidden><kbd class="key">Q</kbd> lights off</span>
+    </span>
+    <span class="control hint-touch" title="Drag the joystick to move" hidden><span class="stick" aria-hidden="true"></span> drag to move</span>
+  </div>
+
+  <div id="task-bar" role="progressbar" aria-label="Tasks done by all students" aria-valuemin="0" hidden>
+    <div id="task-bar-fill"></div>
+  </div>
+
+  <div id="task-list" hidden>
+    <h2>Your tasks</h2>
+    <ul id="task-items"></ul>
   </div>
 
   <div id="lobby" class="panel" hidden>
@@ -60,14 +86,23 @@
   </div>
 
   <div id="actions">
+    <button id="task-button" type="button" hidden>Do task <span class="key-hint">(F)</span></button>
     <button id="report-button" type="button" hidden>Report failed exam <span class="key-hint">(R)</span></button>
     <button id="bell-button" type="button" hidden>Ring the bell</button>
+    <button id="fix-button" type="button" hidden>Fix the lights <span class="key-hint">(F)</span></button>
+    <button id="sabotage-button" type="button" hidden>Lights off</button>
+    <span id="door-buttons"></span>
     <button id="expel-button" type="button" hidden>Expel</button>
   </div>
 
   <div id="ghost-banner" class="banner" role="status" hidden>
     <strong id="ghost-title">You have been expelled</strong>
     You are a ghost now: keep walking, the living cannot see you.
+  </div>
+
+  <div id="lights-banner" class="banner" role="status" hidden>
+    <strong>Lights out</strong>
+    You can hardly see. Fix the lights at the switch in <span id="switch-area"></span>.
   </div>
 
   <div id="meeting-screen" class="overlay" hidden>
@@ -90,6 +125,11 @@
       <button id="restart-button" type="button" hidden>New round</button>
       <p id="restart-hint" class="hint"></p>
     </div>
+  </div>
+
+  <div id="joke" class="joke" role="status" hidden>
+    <strong id="joke-title"></strong>
+    <span id="joke-text"></span>
   </div>
 
   <div id="toast" class="toast" role="status" hidden></div>
