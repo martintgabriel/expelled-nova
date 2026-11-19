@@ -461,7 +461,7 @@ def test_player_far_away_disappears_from_a_living_players_state(fresh_game):
             # Skip the long walk: put the last player into the Library, far from the entrance.
             far_id = ids[3]
             far = fresh_game.players[far_id]
-            far.x, far.y = 2.5 * TILE, 2.5 * TILE
+            far.x, far.y = 37.5 * TILE, 23.5 * TILE
 
             near_view = receive_until(
                 a,

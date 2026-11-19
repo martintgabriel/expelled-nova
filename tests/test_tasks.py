@@ -45,14 +45,14 @@ PLAIN_MAP = {key: value for key, value in TASK_MAP.items() if key != "tasks"}
 
 # The task places of spec 004: id -> (area, column, row, seconds).
 SPEC_TASKS = {
-    "certificate": ("Student Services", 3, 14, 8),
-    "helpdesk": ("Main Entrance", 36, 17, 6),
-    "print": ("Library", 2, 2, 7),
-    "coffee": ("Food Court", 36, 3, 5),
-    "eduroam": ("Courtyard", 15, 12, 6),
-    "socket": ("Auditorium", 24, 2, 5),
-    "gate": ("Main Entrance", 31, 24, 5),
-    "nata": ("Courtyard", 25, 16, 5),
+    "certificate": ("Student Services", 35, 3, 8),  # tiles of the spec 009 campus
+    "helpdesk": ("Main Entrance", 20, 3, 6),
+    "print": ("Library", 37, 20, 7),
+    "coffee": ("Food Court", 37, 12, 5),
+    "eduroam": ("Courtyard", 12, 15, 6),
+    "socket": ("Auditorium", 30, 40, 5),
+    "gate": ("Main Entrance", 24, 6, 5),
+    "nata": ("Courtyard", 19, 23, 5),
 }
 
 

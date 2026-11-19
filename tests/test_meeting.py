@@ -231,12 +231,11 @@ def test_meeting_puts_everyone_on_their_own_auditorium_tile_on_the_campus():
         for other_col, other_row in tiles[index + 1 :]:
             # Not even diagonal neighbours.
             assert max(abs(col - other_col), abs(row - other_row)) >= 2
-    # The Auditorium is columns 15-25, rows 1-8: every second tile of rows 1 and 3.
-    assert tiles == [(15, 1), (17, 1), (19, 1), (21, 1), (23, 1), (25, 1)] + [
-        (15, 3),
-        (17, 3),
-        (19, 3),
-        (21, 3),
+    # The Auditorium is columns 23-35, rows 38-41 (spec 009): every second tile of rows 38 and 40.
+    assert tiles == [(23, 38), (25, 38), (27, 38), (29, 38), (31, 38), (33, 38), (35, 38)] + [
+        (23, 40),
+        (25, 40),
+        (27, 40),
     ]
 
 
