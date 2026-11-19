@@ -157,6 +157,19 @@ If spec 008 uses other key names, its names win and only the tiles come from her
   - a bell sends everyone into the Auditorium, each on their own seat facing the screen;
   - the map looks sharp and runs smoothly on a phone-sized window and a laptop window.
 
+## Changes during implementation
+Spec 008 was merged before this spec was built, so its positions and tests already lived on the old map. The implementation keeps every rule of spec 008 and changes only places:
+
+- **Bell:** tile 24, 21 (spine) became **21, 22** in the south Courtyard. Spec 008 requires the bell in a Courtyard within 3 tiles of the map centre.
+- **Staff doors:** they keep spec 008's ids and names and stand in those rooms: `library` 36, 25 · `food-court` 38, 15 · `student-services` 31, 1 · `main-entrance` 16, 1 (instead of the lecture halls and the plaza), so every door test keeps its meaning.
+- **Light switch:** 38, 5 became **39, 6**. Spec 008 requires the switch more than 3 tiles from every task place (`certificate` is at 35, 3).
+- **Line of sight:** unchanged from spec 008. Furniture, trees and screens are wall tiles, so they also block sight.
+- **Existing tests that name places on the old map** (rules unchanged, only places):
+  - `test_look.py`: the far-away spot moves into the new Library (37.5, 23.5), as planned.
+  - `test_tasks.py`: `SPEC_TASKS` holds the new task tiles of section 4.
+  - `test_meeting.py`: the expected Auditorium seats are those of the new Auditorium.
+  - `test_spec008.py`: the five part 1 walk tests measure corners and doors of the old map, so they now run on a frozen copy of it (`tests/maps/campus_spec008.json`); two tests ring at the bell with `go_to_bell` instead of the old coordinates; the ghost-in-a-wall, vanish-and-appear and next-room tests use places of the new map.
+
 ## Appendix A: `server/campus.json`
 
 ```json

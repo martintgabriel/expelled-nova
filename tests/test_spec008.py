@@ -69,6 +69,9 @@ def test_a_few_ticks_behind_is_caught_up_but_a_long_pause_starts_a_new_timetable
 # These guard the rule the browser repeats. The server's movement does not change in
 # part 1, so they pass before and after it.
 
+# They measure corners and doors of the spec 008 campus map, so they run on a frozen copy
+# of that map (tests/maps/campus_spec008.json): spec 009 replaced the campus, not the rule.
+SPEC008_MAP = load_map(os.path.join(os.path.dirname(__file__), "maps", "campus_spec008.json"))
 LIBRARY_CORNER = (48, 48)  # centre of tile (1, 1): the wall is 6 px to the left and above
 ABOVE_LIBRARY_DOOR = (176, 272)  # centre of tile (5, 8); the door below is columns 5-6
 FLUSH = TILE + PLAYER_HALF  # 42: as close as a player gets to the wall at x or y = 32
@@ -89,7 +92,7 @@ def walk(start, script, others=0):
 
     `script` is a list of (dx, dy, ticks). `others` more players walk around at random.
     """
-    game = Game(load_map())
+    game = Game(SPEC008_MAP)
     player = game.join("Ana")
     player.x, player.y = start
     rng = random.Random(1)
@@ -354,9 +357,9 @@ def test_self_vote_over_websocket_gets_an_error_and_the_player_can_vote_again(fr
                 ids.append(receive_until(ws, lambda m: m["type"] == "welcome")["id"])
             a.send_json({"type": "start"})
             receive_until(a, lambda m: m["type"] == "state" and m["phase"] == "playing")
-            # Next to the middle of the Courtyard, where part 4 puts the bell.
+            # At the bell (part 4).
             ringer = fresh_game.players[ids[0]]
-            ringer.x, ringer.y = 20.5 * TILE, 15.5 * TILE
+            go_to_bell(ringer)
             a.send_json({"type": "bell"})
             receive_until(a, in_meeting)
 
@@ -505,10 +508,10 @@ def test_a_ghost_slides_along_the_map_edge():
 def test_a_ghost_inside_a_wall_is_seated_in_the_auditorium_when_a_meeting_starts():
     game, (examiner,), students = started(5, campus=load_map())
     ghost = make_ghost(game, examiner, students[0])
-    ghost.x, ghost.y = 13.5 * TILE, 1.5 * TILE  # in the wall between Library and Auditorium
+    ghost.x, ghost.y = 27.5 * TILE, 17.5 * TILE  # in the wall between Food Court and Library
     assert game.blocked(ghost.x, ghost.y)
     ringer = students[1]
-    ringer.x, ringer.y = 20.5 * TILE, 15.5 * TILE  # the middle of the Courtyard (part 4: bell)
+    go_to_bell(ringer)  # part 4: the bell
     game.bell(ringer.id)
     assert game.area_at(ghost.x, ghost.y) == "Auditorium"
     assert not game.blocked(ghost.x, ghost.y)
@@ -1077,9 +1080,9 @@ def test_others_see_the_examiner_vanish_and_appear_only_within_their_vision():
     at_origin, at_destination, far_away, ghost = students
     make_ghost(game, examiner, ghost)
     stand_on(examiner, "library")
-    stand_at(at_origin, 9, 1)  # two tiles from the Library door, same room
-    stand_at(at_destination, 36, 1)  # two tiles from the Food Court door, same room
-    stand_at(far_away, 31, 18)  # in the Main Entrance, far from both
+    stand_at(at_origin, 34, 25)  # two tiles from the Library door, same room
+    stand_at(at_destination, 36, 15)  # two tiles from the Food Court door, same room
+    stand_at(far_away, 24, 4)  # in the Main Entrance, far from both
     stand_at(ghost, 20, 22)
 
     before = [sees(game, viewer, examiner) for viewer in students]
@@ -1345,10 +1348,10 @@ def test_a_hidden_player_appears_when_the_viewer_walks_past_the_end_of_the_wall(
 def test_on_the_campus_a_player_in_the_next_room_is_hidden_and_one_in_the_doorway_is_not():
     game, _, students = started(5, campus=load_map())
     viewer, target = students[0], students[1]
-    stand_at(viewer, 10, 4)  # Library, east side
-    stand_at(target, 15, 2)  # Auditorium: 5.4 tiles away, behind the wall between the rooms
+    stand_at(viewer, 29, 21)  # Library, west side
+    stand_at(target, 29, 15)  # Food Court: 6 tiles away, behind the wall between the rooms
     assert target.id not in seen_ids(game, viewer)
-    stand_at(target, 13, 4)  # in the doorway between the two rooms, same row
+    stand_at(target, 27, 21)  # in the Library's doorway to the spine, same row
     assert target.id in seen_ids(game, viewer)
 
 

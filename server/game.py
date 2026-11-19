@@ -120,9 +120,65 @@ class Meeting:
     result_ends: int = 0  # the tick at which play resumes (set together with the result)
 
 
+# Map decor (spec 009): only changes how the map looks, never a rule. Solid kinds must lie
+# on wall tiles ("#"), so furniture, trees and the sea block walking like any wall; floor
+# kinds are painted on the floor tiles of their rectangle.
+SOLID_DECOR = {
+    "sea", "solar", "greenroof", "roof", "glasswall", "counter", "shelf", "desk", "studytable",
+    "table", "cafetable", "woodtable", "shopshelf", "foodcounter", "piano", "screen", "steps",
+    "picnic", "tree",
+}
+FLOOR_DECOR = {"sand", "paving", "grass", "terrace", "pergola", "glassroof", "shopfloor", "seats", "beanbag"}
+LABEL_MAX = 24  # characters of a map label
+
+
 def load_map(path=MAP_PATH):
     with open(path, encoding="utf-8") as file:
-        return json.load(file)
+        campus = json.load(file)
+    validate_campus(campus)
+    return campus
+
+
+def _whole(value):
+    return type(value) is int
+
+
+def validate_campus(campus):
+    """Check the optional "decor" and "labels" lists of a map (spec 009).
+
+    Raises ValueError with a short reason, so a broken map fails at server start and in
+    the tests instead of in the middle of a game. A map without them is valid.
+    """
+    grid = campus["grid"]
+    rows, cols = len(grid), len(grid[0])
+    for entry in campus.get("decor", []):
+        kind = entry.get("kind")
+        if kind not in SOLID_DECOR | FLOOR_DECOR:
+            raise ValueError(f"Unknown decor kind: {kind!r}")
+        for key in ("x", "y", "w", "h"):
+            if key not in entry:
+                raise ValueError(f"Decor {kind} is missing {key}")
+            if not _whole(entry[key]):
+                raise ValueError(f"Decor {kind}: {key} must be a whole number")
+        x, y, w, h = entry["x"], entry["y"], entry["w"], entry["h"]
+        if w < 1 or h < 1:
+            raise ValueError(f"Decor {kind}: w and h must be at least 1")
+        if x < 0 or y < 0 or x + w > cols or y + h > rows:
+            raise ValueError(f"Decor {kind} at {x}, {y} lies outside the grid")
+        if kind in SOLID_DECOR:
+            for row in range(y, y + h):
+                for col in range(x, x + w):
+                    if grid[row][col] != "#":
+                        raise ValueError(f"Decor {kind} covers the floor tile {col}, {row}")
+    for label in campus.get("labels", []):
+        text = label.get("text")
+        if not isinstance(text, str) or not 1 <= len(text) <= LABEL_MAX:
+            raise ValueError(f"A label needs a text of 1 to {LABEL_MAX} characters")
+        x, y = label.get("x"), label.get("y")
+        if not all(type(v) in (int, float) for v in (x, y)):
+            raise ValueError(f"Label {text!r}: x and y must be numbers")
+        if not (0 <= x < cols and 0 <= y < rows):
+            raise ValueError(f"Label {text!r} lies outside the grid")
 
 
 def validate_nickname(raw):
