@@ -129,7 +129,35 @@ SOLID_DECOR = {
     "picnic", "tree",
 }
 FLOOR_DECOR = {"sand", "paving", "grass", "terrace", "pergola", "glassroof", "shopfloor", "seats", "beanbag"}
+# The solid kinds that also block sight (spec 010, part 2): roofs, tall shelves and screens.
+# All other solid kinds (tables, counters, desks, trees, the sea, ...) only block walking.
+SIGHT_DECOR = {"roof", "greenroof", "solar", "shelf", "shopshelf", "screen"}
 LABEL_MAX = 24  # characters of a map label
+
+
+def sight_grid(campus):
+    """The tiles that block sight, in the same form as the map's grid: "#" blocks, "." not.
+
+    A wall tile blocks sight unless low decor stands on it: a solid kind that is not in
+    SIGHT_DECOR. A tile with both low and tall decor blocks. Floor tiles never block.
+    The browser receives this grid in "welcome", so both sides use the same rule.
+    """
+    low, tall = set(), set()
+    for entry in campus.get("decor", []):
+        if entry["kind"] in SOLID_DECOR:
+            tiles = {
+                (col, row)
+                for row in range(entry["y"], entry["y"] + entry["h"])
+                for col in range(entry["x"], entry["x"] + entry["w"])
+            }
+            (tall if entry["kind"] in SIGHT_DECOR else low).update(tiles)
+    return [
+        "".join(
+            "#" if tile == "#" and ((col, row) in tall or (col, row) not in low) else "."
+            for col, tile in enumerate(line)
+        )
+        for row, line in enumerate(campus["grid"])
+    ]
 
 
 def load_map(path=MAP_PATH):
@@ -285,6 +313,7 @@ class Game:
         self.grid = campus["grid"]
         self.tasks = {task["id"]: task for task in campus.get("tasks", [])}  # task places by id
         self.doors = {door["id"]: door for door in campus.get("staff_doors", [])}  # by id
+        self.sight = sight_grid(campus)  # which tiles block sight; walls never change
         self._sight = {}  # (col, row) of a viewer -> the tiles visible from there (see below)
         self.lights_out_radius = LIGHTS_OUT_TILES * self.tile  # px, for students in the dark
         self.lights_on = True
@@ -955,7 +984,8 @@ class Game:
 
     def _in_sight(self, viewer, x, y):
         """True if the viewer sees the point: within the vision radius (a circle around
-        the viewer) and on a tile with no wall between it and the viewer's tile."""
+        the viewer) and on a tile with nothing that blocks sight between it and the
+        viewer's tile."""
         if math.hypot(x - viewer.x, y - viewer.y) > self._vision_radius_for(viewer):
             return False
         target = (math.floor(x / self.tile), math.floor(y / self.tile))
@@ -966,8 +996,9 @@ class Game:
 
     def _visible_tiles(self, col, row):
         """The tiles that can be seen from tile (col, row): those up to VISION_TILES away
-        with no wall tile on the straight line between the two tile centres (spec 008,
-        part 7). The wall that ends a line is itself visible.
+        with no sight-blocking tile on the straight line between the two tile centres
+        (spec 008, part 7; which tiles block sight: spec 010, part 2). The tile that ends
+        a line is itself visible.
 
         Walls never change, so the answer for a tile is worked out once and kept: every
         tick this is one lookup per player.
@@ -978,13 +1009,13 @@ class Game:
                 (col + dc, row + dr)
                 for dr in reach
                 for dc in reach
-                if not any(self._is_wall(*tile) for tile in line_between(col, row, col + dc, row + dr))
+                if not any(self._blocks_sight(*tile) for tile in line_between(col, row, col + dc, row + dr))
             )
         return self._sight[(col, row)]
 
-    def _is_wall(self, col, row):
-        inside = 0 <= row < len(self.grid) and 0 <= col < len(self.grid[row])
-        return inside and self.grid[row][col] == "#"
+    def _blocks_sight(self, col, row):
+        inside = 0 <= row < len(self.sight) and 0 <= col < len(self.sight[row])
+        return inside and self.sight[row][col] == "#"
 
     def snapshot(self, see_ghosts=False, viewer=None):
         """The part players may see: phase, host, names, positions, colours and failed exams.

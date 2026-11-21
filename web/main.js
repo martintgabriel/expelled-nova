@@ -94,8 +94,8 @@ ui.inviteButton.addEventListener("click", () => (ui.inviteScreen.hidden = false)
 ui.inviteClose.addEventListener("click", () => (ui.inviteScreen.hidden = true));
 
 let socket = null;
-// {id, map, speed, tick_rate, step, player_half, expel_range, report_range, bell_range,
-// task_range, switch_range, vision_radius, lights_out_radius} once joined
+// {id, map, sight_grid, speed, tick_rate, step, player_half, expel_range, report_range,
+// bell_range, task_range, switch_range, vision_radius, lights_out_radius} once joined
 let welcome = null;
 // Recent server states: {time, players: Map(id -> {name,x,y}), ghosts: Set(id)}
 let snapshots = [];
@@ -916,13 +916,15 @@ function lineBetween(col0, row0, col1, row1) {
 }
 
 // REPEATS SERVER RULE: Game._visible_tiles() in server/game.py. The tiles up to `reach`
-// away with no wall tile on the line, as a Set of "col,row".
-function visibleTiles(map, col, row, reach) {
-  const isWall = ([c, r]) => r >= 0 && r < map.grid.length && map.grid[r][c] === "#";
+// away with no sight-blocking tile on the line, as a Set of "col,row".
+// `sight` is welcome.sight_grid: the server's own list of the tiles that block sight
+// ("#"), so tables, trees and the sea do not block here either (spec 010, part 2).
+function visibleTiles(sight, col, row, reach) {
+  const blocksSight = ([c, r]) => r >= 0 && r < sight.length && sight[r][c] === "#";
   const visible = new Set();
   for (let dr = -reach; dr <= reach; dr++) {
     for (let dc = -reach; dc <= reach; dc++) {
-      if (!lineBetween(col, row, col + dc, row + dr).some(isWall)) visible.add(`${col + dc},${row + dr}`);
+      if (!lineBetween(col, row, col + dc, row + dr).some(blocksSight)) visible.add(`${col + dc},${row + dr}`);
     }
   }
   return visible;
@@ -1057,7 +1059,7 @@ class CampusScene extends Phaser.Scene {
     const key = `${col},${row},${reach}`;
     if (key === this.litKey) return;
     this.litKey = key;
-    Render.drawLitTiles(this.darkness, welcome.map, visibleTiles(welcome.map, col, row, reach));
+    Render.drawLitTiles(this.darkness, welcome.map, visibleTiles(welcome.sight_grid, col, row, reach));
   }
 
   // One mark per own open task; a finished task (and a new round) removes its mark.
