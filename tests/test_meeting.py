@@ -45,8 +45,7 @@ HALL_MAP = {
 }
 
 # A tiny Auditorium of 3 x 3 tiles (columns 2-4, rows 2-4) with a wall on its middle tile.
-# It has room for 8 players: first every second tile of every second row, then the other
-# floor tiles in reading order. The wall is skipped.
+# It has no meeting point (spec 011: meetings no longer use the Auditorium).
 TINY_MAP = {
     "tile_size": TILE,
     "grid": [
@@ -62,7 +61,6 @@ TINY_MAP = {
     "areas": [{"name": "Auditorium", "x": 2, "y": 2, "w": 3, "h": 3, "color": "#7a4f86"}],
     "spawns": [[7, 6]],
 }
-TINY_AUDITORIUM_ORDER = [(2, 2), (4, 2), (2, 4), (4, 4), (3, 2), (2, 3), (4, 3), (3, 4)]
 
 
 # --- Helpers ----------------------------------------------------------------------
@@ -87,7 +85,7 @@ def playing(count=4, seed=0, campus=HALL_MAP):
 def bell_meeting(count=4, seed=0):
     """A started game in which students[0] has just rung the bell."""
     game, examiners, students = playing(count, seed)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     return game, examiners, students
 
 
@@ -142,8 +140,9 @@ def tile_centre(col, row):
 
 
 def go_to_bell(player):
-    """Put a player on the campus bell: it rings only there (spec 008, part 4)."""
-    player.x, player.y = tile_centre(*load_map()["bell"])
+    """Put a player on the campus meeting table: a meeting is called only there (spec 011,
+    before that at the bell of spec 008, part 4)."""
+    player.x, player.y = tile_centre(*load_map()["meeting_point"])
 
 
 def full_state(game):
@@ -196,19 +195,21 @@ def test_examiner_can_report_their_own_failed_exam():
 def test_bell_rung_anywhere_starts_a_meeting_and_uses_only_that_bell():
     game, _, students = playing(4)
     for player_id in game.players:
-        assert game.snapshot_for(player_id)["bell_used"] is False
+        assert game.snapshot_for(player_id)["meeting_used"] is False
     ringer = students[1]
     ringer.x, ringer.y = tile_centre(26, 13)  # far from everyone else
-    game.bell(ringer.id)
+    game.call_meeting(ringer.id)
     assert game.phase == "meeting"
     for player in game.players.values():
         snapshot = game.snapshot_for(player.id)
-        assert snapshot["meeting"]["reason"] == "bell"
+        assert snapshot["meeting"]["reason"] == "button"
         assert snapshot["meeting"]["called_by"] == ringer.id
-        assert snapshot["bell_used"] is (player is ringer)
+        assert snapshot["meeting_used"] is (player is ringer)
 
 
-def test_meeting_puts_everyone_on_their_own_auditorium_tile_on_the_campus():
+# Spec 011: a meeting places everyone in a circle around the meeting table instead of on
+# their own Auditorium tile.
+def test_meeting_puts_everyone_in_a_circle_around_the_meeting_table_on_the_campus():
     game, examiners, students = playing(MAX_PLAYERS, campus=load_map())
     ghost = students[0]
     expel_now(game, examiners[0], ghost)
@@ -216,27 +217,24 @@ def test_meeting_puts_everyone_on_their_own_auditorium_tile_on_the_campus():
     game.set_input(ghost.id, {"type": "input", "dx": 0, "dy": -1})
     game.step()
     go_to_bell(students[2])
-    game.bell(students[2].id)
+    game.call_meeting(students[2].id)
 
-    tiles = []
+    table_x, table_y = tile_centre(*load_map()["meeting_point"])
+    circle = 64  # px from the table's middle (MEETING_CIRCLE in server/game.py)
+    places = []
     for player in game.players.values():  # join order, the ghost included
-        col, row = math.floor(player.x / TILE), math.floor(player.y / TILE)
-        assert (player.x, player.y) == tile_centre(col, row)
-        assert game.area_at(player.x, player.y) == "Auditorium"
+        assert math.hypot(player.x - table_x, player.y - table_y) == pytest.approx(circle)
+        assert game.area_at(player.x, player.y) != "Auditorium"
         assert not game.blocked(player.x, player.y)
         assert (player.dx, player.dy) == (0, 0)
-        tiles.append((col, row))
-    assert len(set(tiles)) == MAX_PLAYERS
-    for index, (col, row) in enumerate(tiles):
-        for other_col, other_row in tiles[index + 1 :]:
-            # Not even diagonal neighbours.
-            assert max(abs(col - other_col), abs(row - other_row)) >= 2
-    # The Auditorium is columns 23-35, rows 38-41 (spec 009): every second tile of rows 38 and 40.
-    assert tiles == [(23, 38), (25, 38), (27, 38), (29, 38), (31, 38), (33, 38), (35, 38)] + [
-        (23, 40),
-        (25, 40),
-        (27, 40),
-    ]
+        places.append((player.x, player.y))
+    for index, (x, y) in enumerate(places):
+        for other_x, other_y in places[index + 1 :]:
+            # Two 20 px squares that do not overlap are apart in x or in y.
+            assert max(abs(x - other_x), abs(y - other_y)) >= 20
+    # In join order: the first player north of the table, the others clockwise.
+    assert places[0] == pytest.approx((table_x, table_y - circle))
+    assert places[1][0] > table_x and places[1][1] < table_y
 
 
 def test_vote_for_a_living_player_and_a_skip_are_accepted():
@@ -283,7 +281,7 @@ def test_after_the_result_play_resumes_without_failed_exams_and_with_fresh_coold
     expel_now(game, examiners[0], students[0])
     wait_ticks(game, COOLDOWN_TICKS)  # both examiners' cooldowns are over
     assert len(game.failed_exams) == 1
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     for player in [p for p in game.players.values() if p.alive]:
         game.vote(player.id, "skip")
     game.step()  # the voting closes
@@ -327,7 +325,7 @@ def test_with_two_examiners_both_must_be_voted_out_for_the_students_to_win():
     everyone_votes(game, first)
     assert first.alive is False
     assert game.phase == "playing"  # 1 examiner, 5 students
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     everyone_votes(game, second)
     assert game.phase == "ended"
     assert game.snapshot_for(students[0].id)["winner"] == "students"
@@ -336,7 +334,7 @@ def test_with_two_examiners_both_must_be_voted_out_for_the_students_to_win():
 def test_voting_out_a_student_can_give_the_examiners_the_win():
     game, (examiner,), students = playing(4)
     expel_now(game, examiner, students[0])  # 1 examiner, 2 living students
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     everyone_votes(game, students[2])  # 1 examiner, 1 living student
     assert game.phase == "ended"
     assert game.snapshot_for(examiner.id)["winner"] == "examiners"
@@ -346,18 +344,18 @@ def test_a_new_round_gives_everyone_their_bell_back():
     game, (examiner,), students = bell_meeting(4)  # students[0] rang
     everyone_votes(game, examiner)  # students win
     assert game.phase == "ended"
-    assert game.snapshot_for(students[0].id)["bell_used"] is True
+    assert game.snapshot_for(students[0].id)["meeting_used"] is True
     game.restart(game.host_id)
     for player_id in game.players:
-        assert game.snapshot_for(player_id)["bell_used"] is False
+        assert game.snapshot_for(player_id)["meeting_used"] is False
     game.start(game.host_id)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     assert game.phase == "meeting"
 
 
 def test_report_bell_and_vote_messages_are_parsed_after_joining():
     assert parse_message('{"type": "report", "exam": "e1"}', joined=True)["exam"] == "e1"
-    assert parse_message('{"type": "bell"}', joined=True) == {"type": "bell"}
+    assert parse_message('{"type": "meeting"}', joined=True) == {"type": "meeting"}
     assert parse_message('{"type": "vote", "target": "skip"}', joined=True)["target"] == "skip"
 
 
@@ -392,7 +390,7 @@ def report_in_lobby():
 def report_in_meeting():
     game, (examiner,), students = playing(5)
     exam = expel_now(game, examiner, students[0])
-    game.bell(students[2].id)
+    game.call_meeting(students[2].id)
     return game, lambda: game.report(students[1].id, exam.id)  # the exam is still in reach
 
 
@@ -407,7 +405,7 @@ def report_in_ended():
 def report_of_exam_removed_by_previous_meeting():
     game, (examiner,), students = playing(5)
     exam = expel_now(game, examiner, students[0])
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     everyone_votes(game, "skip")
     return game, lambda: game.report(students[2].id, exam.id)
 
@@ -421,35 +419,35 @@ def report_by_unknown_player():
 def bell_rung_a_second_time():
     game, _, students = bell_meeting(4)  # students[0] rang
     everyone_votes(game, "skip")
-    return game, lambda: game.bell(students[0].id)
+    return game, lambda: game.call_meeting(students[0].id)
 
 
 def bell_by_ghost():
     game, (examiner,), students = playing(5)
     expel_now(game, examiner, students[0])
-    return game, lambda: game.bell(students[0].id)
+    return game, lambda: game.call_meeting(students[0].id)
 
 
 def bell_in_lobby():
     game, players = lobby(4)
-    return game, lambda: game.bell(players[0].id)
+    return game, lambda: game.call_meeting(players[0].id)
 
 
 def bell_in_meeting():
     game, _, students = bell_meeting(4)
-    return game, lambda: game.bell(students[1].id)
+    return game, lambda: game.call_meeting(students[1].id)
 
 
 def bell_in_ended():
     game, (examiner,), students = playing(4)
     expel_now(game, examiner, students[0])
     expel_now(game, examiner, students[1])  # examiners win
-    return game, lambda: game.bell(students[2].id)
+    return game, lambda: game.call_meeting(students[2].id)
 
 
 def bell_by_unknown_player():
     game, _, _ = playing(4)
-    return game, lambda: game.bell("nobody")
+    return game, lambda: game.call_meeting("nobody")
 
 
 def vote_in_lobby():
@@ -472,7 +470,7 @@ def vote_in_ended():
 def vote_by_ghost():
     game, (examiner,), students = playing(5)
     expel_now(game, examiner, students[0])
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     return game, lambda: game.vote(students[0].id, students[1].id)
 
 
@@ -491,7 +489,7 @@ def second_vote_other_target():
 def vote_for_ghost():
     game, (examiner,), students = playing(5)
     expel_now(game, examiner, students[0])
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     return game, lambda: game.vote(students[1].id, students[0].id)
 
 
@@ -525,7 +523,7 @@ def move_during_result():
 def expel_during_meeting():
     game, (examiner,), students = playing(4)
     wait_ticks(game, COOLDOWN_TICKS)  # cooldown over, everyone on the same spot
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     return game, lambda: game.expel(examiner.id, students[1].id)
 
 
@@ -555,8 +553,8 @@ def restart_during_meeting():
         (report_in_ended, "Game is over"),
         (report_of_exam_removed_by_previous_meeting, "No failed exam within reach"),
         (report_by_unknown_player, "Unknown player"),
-        (bell_rung_a_second_time, "You have already rung the bell"),
-        (bell_by_ghost, "Ghosts cannot ring the bell"),
+        (bell_rung_a_second_time, "You have already called a meeting"),
+        (bell_by_ghost, "Ghosts cannot call a meeting"),
         (bell_in_lobby, "The game has not started yet"),
         (bell_in_meeting, "A meeting is already running"),
         (bell_in_ended, "Game is over"),
@@ -620,7 +618,7 @@ def test_nobody_moves_during_the_meeting():
     game, _, students = playing(4)
     walker = students[1]
     game.set_input(walker.id, {"type": "input", "dx": 1, "dy": 0})
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     positions = [(p.x, p.y) for p in game.players.values()]
     with pytest.raises(GameError, match="Meeting in progress"):
         game.set_input(walker.id, {"type": "input", "dx": 1, "dy": 0})
@@ -634,7 +632,7 @@ def test_nobody_moves_during_the_meeting():
 
 @pytest.mark.parametrize(
     "raw",
-    ['{"type": "report", "exam": "e1"}', '{"type": "bell"}', '{"type": "vote", "target": "skip"}'],
+    ['{"type": "report", "exam": "e1"}', '{"type": "meeting"}', '{"type": "vote", "target": "skip"}'],
 )
 def test_report_bell_and_vote_before_joining_are_rejected(raw):
     with pytest.raises(GameError, match="Join"):
@@ -649,22 +647,22 @@ def test_report_then_bell_in_the_same_tick_gives_one_meeting_and_keeps_the_bell(
     exam = expel_now(game, examiner, students[0])
     game.report(students[1].id, exam.id)
     with pytest.raises(GameError, match="A meeting is already running"):
-        game.bell(students[2].id)
+        game.call_meeting(students[2].id)
     assert meeting_of(game, students[2])["reason"] == "report"
-    assert game.snapshot_for(students[2].id)["bell_used"] is False
+    assert game.snapshot_for(students[2].id)["meeting_used"] is False
     everyone_votes(game, "skip")
-    game.bell(students[2].id)  # the rejected bell was not used up
-    assert meeting_of(game, students[2])["reason"] == "bell"
+    game.call_meeting(students[2].id)  # the rejected bell was not used up
+    assert meeting_of(game, students[2])["reason"] == "button"
 
 
 def test_bell_then_report_in_the_same_tick_gives_one_meeting():
     game, (examiner,), students = playing(5)
     exam = expel_now(game, examiner, students[0])
-    game.bell(students[2].id)
+    game.call_meeting(students[2].id)
     with pytest.raises(GameError, match="A meeting is already running"):
         game.report(students[1].id, exam.id)
     meeting = meeting_of(game, students[1])
-    assert (meeting["reason"], meeting["called_by"]) == ("bell", students[2].id)
+    assert (meeting["reason"], meeting["called_by"]) == ("button", students[2].id)
 
 
 def test_two_reports_of_the_same_exam_in_one_tick_first_wins():
@@ -678,11 +676,11 @@ def test_two_reports_of_the_same_exam_in_one_tick_first_wins():
 
 def test_two_bells_in_one_tick_first_wins_and_the_second_is_not_used_up():
     game, _, students = playing(4)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     with pytest.raises(GameError, match="A meeting is already running"):
-        game.bell(students[1].id)
+        game.call_meeting(students[1].id)
     assert meeting_of(game, students[1])["called_by"] == students[0].id
-    assert game.snapshot_for(students[1].id)["bell_used"] is False
+    assert game.snapshot_for(students[1].id)["meeting_used"] is False
 
 
 def test_report_then_expel_in_the_same_tick_rejects_the_expel():
@@ -762,7 +760,7 @@ def test_nobody_voting_sends_nobody_surfing_and_the_game_goes_on():
 def test_without_a_clear_majority_nobody_is_sent_surfing(ballots, votes, skips):
     game, players = lobby(4)
     game.start(players[0].id)
-    game.bell(players[0].id)
+    game.call_meeting(players[0].id)
     for voter, ballot in zip(players, ballots):
         if ballot is not None:
             game.vote(voter.id, "skip" if ballot == "skip" else players[ballot].id)
@@ -785,7 +783,7 @@ def test_a_vote_for_yourself_is_rejected():
 def test_voting_closes_at_the_next_tick_once_every_living_player_has_voted():
     game, (examiner,), students = playing(5)
     expel_now(game, examiner, students[0])  # a ghost, who does not vote
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     for player in [examiner, students[1], students[2], students[3]]:
         game.vote(player.id, "skip")
     assert meeting_of(game, students[1])["result"] is None  # not before the tick
@@ -798,7 +796,7 @@ def test_voting_closes_at_the_next_tick_once_every_living_player_has_voted():
 def test_living_lists_the_living_players_in_join_order():
     game, (examiner,), students = playing(5)
     expel_now(game, examiner, students[1])
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     living = [p.id for p in game.players.values() if p.alive]
     assert students[1].id not in living
     for player_id in game.players:  # the ghost too
@@ -857,7 +855,7 @@ def test_only_examiner_leaving_during_the_vote_lets_the_students_win():
 def test_a_student_sent_surfing_is_a_ghost_who_can_no_longer_report_ring_or_vote():
     game, (examiner,), students = playing(5)
     surfer = students[0]
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     for player in game.players.values():
         game.vote(player.id, "skip" if player is surfer else surfer.id)
     game.step()
@@ -868,8 +866,8 @@ def test_a_student_sent_surfing_is_a_ghost_who_can_no_longer_report_ring_or_vote
 
     exam = expel_now(game, examiner, students[1])  # 1 examiner, 2 students; exam in reach
     assert_rejected(game, lambda: game.report(surfer.id, exam.id), "Ghosts cannot report")
-    assert_rejected(game, lambda: game.bell(surfer.id), "Ghosts cannot ring the bell")
-    game.bell(students[2].id)
+    assert_rejected(game, lambda: game.call_meeting(surfer.id), "Ghosts cannot call a meeting")
+    game.call_meeting(students[2].id)
     assert_rejected(game, lambda: game.vote(surfer.id, "skip"), "Ghosts cannot vote")
 
 
@@ -894,7 +892,7 @@ def test_vision_in_a_meeting_has_no_radius_but_ghosts_stay_hidden_from_the_livin
     assert ids_in(playing_view) == [viewer.id]
     assert playing_view["failed_exams"] == []
 
-    game.bell(viewer.id)
+    game.call_meeting(viewer.id)
     view = game.snapshot_for(viewer.id)
     living = sorted(p.id for p in game.players.values() if p.alive)
     assert ids_in(view) == living
@@ -945,7 +943,7 @@ def test_a_students_snapshot_shows_no_other_role_during_or_after_a_meeting():
             assert "examiner" not in json.dumps(snapshot)
             assert all(set(p) == PLAYER_KEYS for p in snapshot["players"])
 
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     assert_no_roles()  # voting
     for player in game.players.values():
         game.vote(player.id, "skip" if player is students[1] else students[1].id)
@@ -962,7 +960,7 @@ def test_a_students_snapshot_shows_no_other_role_during_or_after_a_meeting():
 def test_examiner_cooldown_restarts_in_full_at_the_end_of_the_meeting():
     game, (examiner,), students = playing(4)
     wait_ticks(game, COOLDOWN_TICKS)  # the cooldown is over before the meeting
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     everyone_votes(game, "skip")  # the meeting ends with this tick
     assert game.phase == "playing"
     wait_ticks(game, COOLDOWN_TICKS - 1)
@@ -984,7 +982,7 @@ def test_restart_after_a_game_that_ended_in_a_meeting_clears_meeting_and_bell():
     assert game.meeting is None
     for player_id in game.players:
         snapshot = game.snapshot_for(player_id)
-        assert snapshot["bell_used"] is False
+        assert snapshot["meeting_used"] is False
         assert "meeting" not in snapshot
 
 
@@ -997,22 +995,22 @@ def test_everyone_leaving_during_a_meeting_leaves_a_clean_lobby():
     assert game.meeting is None
     newcomer = game.join("Newcomer")
     snapshot = game.snapshot_for(newcomer.id)
-    assert snapshot["bell_used"] is False
+    assert snapshot["meeting_used"] is False
     assert "meeting" not in snapshot
 
 
-def test_small_auditorium_fills_spaced_tiles_then_other_floor_tiles_then_leaves_the_rest():
+# Spec 011: the Auditorium is no meeting room any more, so its seating order has no rule
+# left to test. On a map with an Auditorium but without a meeting point nobody is moved;
+# tests/test_spec011.py tests the circle around the table and a map too tight for it.
+def test_an_auditorium_without_a_meeting_point_moves_nobody():
     game, players = lobby(MAX_PLAYERS, campus=TINY_MAP)
     game.start(players[0].id)
     players[8].x, players[8].y = 200.0, 100.0
     players[9].x, players[9].y = 250.0, 200.0
     game.set_input(players[9].id, {"type": "input", "dx": -1, "dy": 0})
-    game.bell(players[0].id)
-    for player, (col, row) in zip(players, TINY_AUDITORIUM_ORDER):
-        assert (player.x, player.y) == tile_centre(col, row)
-    # No floor tile left for the last two: they stay where they are, but stand still.
-    assert (players[8].x, players[8].y) == (200.0, 100.0)
-    assert (players[9].x, players[9].y) == (250.0, 200.0)
+    positions = [(p.x, p.y) for p in players]
+    game.call_meeting(players[0].id)
+    assert [(p.x, p.y) for p in players] == positions
     assert all((p.dx, p.dy) == (0, 0) for p in players)
 
 
@@ -1021,7 +1019,7 @@ def test_without_an_auditorium_everyone_stays_where_they_are():
     students[1].x, students[1].y = 300.5, 200.25
     game.set_input(students[1].id, {"type": "input", "dx": 1, "dy": 1})
     positions = [(p.x, p.y) for p in game.players.values()]
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     assert [(p.x, p.y) for p in game.players.values()] == positions
     assert all((p.dx, p.dy) == (0, 0) for p in game.players.values())
 
@@ -1088,10 +1086,10 @@ def test_bell_over_websocket_opens_the_meeting_for_every_client(fresh_game):
             clients = [a, b, c, d]
             ids, _ = start_four(clients, ["Ada", "Bo", "Cy", "Di"])
             go_to_bell(fresh_game.players[ids[1]])
-            b.send_json({"type": "bell"})
+            b.send_json({"type": "meeting"})
             for ws in clients:
                 meeting = receive_until(ws, in_meeting)["meeting"]
-                assert meeting["reason"] == "bell"
+                assert meeting["reason"] == "button"
                 assert meeting["called_by"] == ids[1]
                 assert meeting["living"] == ids
 
@@ -1107,7 +1105,7 @@ def test_second_vote_over_websocket_gets_an_error_and_the_connection_stays_usabl
             clients = [a, b, c, d]
             ids, _ = start_four(clients, ["Eli", "Fay", "Gus", "Hal"])
             go_to_bell(fresh_game.players[ids[0]])
-            a.send_json({"type": "bell"})
+            a.send_json({"type": "meeting"})
             receive_until(a, in_meeting)
             a.send_json({"type": "vote", "target": "skip"})
             a.send_json({"type": "vote", "target": "skip"})
@@ -1129,7 +1127,7 @@ def test_four_votes_over_websocket_send_the_student_surfing(fresh_game):
             ids, roles = start_four(clients, ["Ivy", "Jay", "Kim", "Lou"])
             target = ids[roles.index("student")]
             go_to_bell(fresh_game.players[ids[0]])
-            a.send_json({"type": "bell"})
+            a.send_json({"type": "meeting"})
             for ws in clients:
                 receive_until(ws, in_meeting)
             for ws, player_id in zip(clients, ids):

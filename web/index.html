@@ -88,7 +88,7 @@
   <div id="actions">
     <button id="task-button" type="button" hidden>Do task <span class="key-hint">(F)</span></button>
     <button id="report-button" type="button" hidden>Report failed exam <span class="key-hint">(R)</span></button>
-    <button id="bell-button" type="button" hidden>Ring the bell</button>
+    <button id="meeting-button" type="button" hidden>Call a meeting</button>
     <button id="fix-button" type="button" hidden>Fix the lights <span class="key-hint">(F)</span></button>
     <button id="sabotage-button" type="button" hidden>Lights off</button>
     <span id="door-buttons"></span>
@@ -106,7 +106,7 @@
   </div>
 
   <div id="meeting-screen" class="overlay" hidden>
-    <div class="card meeting-card">
+    <div id="meeting-card" class="card meeting-card">
       <div class="meeting-head">
         <h2 id="meeting-title">Meeting</h2>
         <span id="meeting-timer" class="timer" aria-label="Seconds left"></span>

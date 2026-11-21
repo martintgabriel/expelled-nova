@@ -17,8 +17,10 @@ from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from server.game import (
-    BELL_RANGE,
+    CORNER_SLIDE,
     EXPEL_RANGE,
+    MEETING_RANGE,
+    MEETING_TABLE_RADIUS,
     PLAYER_HALF,
     REPORT_RANGE,
     SPEED,
@@ -146,9 +148,11 @@ async def websocket_endpoint(ws: WebSocket):
                             "tick_rate": TICK_RATE,
                             "step": STEP,
                             "player_half": PLAYER_HALF,
+                            "corner_slide": CORNER_SLIDE,
                             "expel_range": EXPEL_RANGE,
                             "report_range": REPORT_RANGE,
-                            "bell_range": BELL_RANGE,
+                            "meeting_range": MEETING_RANGE,
+                            "meeting_table_radius": MEETING_TABLE_RADIUS,
                             "task_range": TASK_RANGE,
                             "switch_range": SWITCH_RANGE,
                             "lights_out_radius": game.lights_out_radius,
@@ -162,8 +166,8 @@ async def websocket_endpoint(ws: WebSocket):
                     game.expel(player_id, message.get("target"))
                 elif message["type"] == "report":
                     game.report(player_id, message.get("exam"))
-                elif message["type"] == "bell":
-                    game.bell(player_id)
+                elif message["type"] == "meeting":
+                    game.call_meeting(player_id)
                 elif message["type"] == "sabotage":
                     game.sabotage(player_id)
                 elif message["type"] == "fix":
