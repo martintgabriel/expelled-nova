@@ -64,14 +64,12 @@
     {"id": "main-entrance", "name": "Main Entrance", "x": 16, "y": 1}
   ],
   "tasks": [
-    {"id": "certificate", "title": "Submit your Bachelor certificate", "area": "Student Services", "x": 35, "y": 3, "seconds": 8, "joke": "Ticket A-347. Now serving: A-012."},
-    {"id": "helpdesk", "title": "Ask the Helpdesk for help", "area": "Main Entrance", "x": 20, "y": 3, "seconds": 6, "joke": "Olá! Só em português, por favor."},
-    {"id": "print", "title": "Print your assignment", "area": "Library", "x": 37, "y": 20, "seconds": 7, "joke": "PAPER JAM in tray 2. Printed anyway, 1 of 12 pages."},
-    {"id": "coffee", "title": "Grab a coffee before class", "area": "Food Court", "x": 37, "y": 12, "seconds": 5, "joke": "Coffee: 0.80 €. Queue: 40 minutes."},
-    {"id": "eduroam", "title": "Reconnect to eduroam", "area": "Courtyard", "x": 12, "y": 15, "seconds": 6, "joke": "Connected. Disconnected. Connected."},
-    {"id": "socket", "title": "Find a free socket for your laptop", "area": "Auditorium", "x": 30, "y": 40, "seconds": 5, "joke": "All sockets taken. 3 % battery it is."},
-    {"id": "gate", "title": "Tap your student card at the gate", "area": "Main Entrance", "x": 24, "y": 6, "seconds": 5, "joke": "Beep. Red. Beep. Red. Beep. Green."},
-    {"id": "nata", "title": "Eat your pastel de nata in the sun", "area": "Courtyard", "x": 19, "y": 23, "seconds": 5, "joke": "A seagull took it. Task counts anyway."}
+    {"id": "certificate", "title": "Submit your Bachelor certificate", "area": "Student Services", "x": 35, "y": 3, "minigame": "ticket", "joke": "Ticket A-347. Now serving: A-012."},
+    {"id": "helpdesk", "title": "Ask the Helpdesk for help", "area": "Main Entrance", "x": 20, "y": 3, "minigame": "translate", "joke": "Olá! Só em português, por favor."},
+    {"id": "print", "title": "Print your assignment", "area": "Library", "x": 37, "y": 20, "minigame": "paper_jam", "joke": "PAPER JAM in tray 2. Printed anyway, 1 of 12 pages."},
+    {"id": "socket", "title": "Find a free socket for your laptop", "area": "Auditorium", "x": 30, "y": 40, "minigame": "socket", "joke": "All sockets taken. 3 % battery it is."},
+    {"id": "gate", "title": "Tap your student card at the gate", "area": "Main Entrance", "x": 24, "y": 6, "minigame": "card", "joke": "Beep. Red. Beep. Red. Beep. Green."},
+    {"id": "nata", "title": "Eat your pastel de nata in the sun", "area": "Courtyard", "x": 19, "y": 23, "minigame": "seagull", "joke": "A seagull took it. Task counts anyway."}
   ],
   "decor": [
     {"kind": "sea", "x": 0, "y": 0, "w": 1, "h": 43},

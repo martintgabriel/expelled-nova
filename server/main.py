@@ -176,6 +176,10 @@ async def websocket_endpoint(ws: WebSocket):
                     game.use_door(player_id, message.get("to"))
                 elif message["type"] == "task":
                     game.task(player_id, message.get("task"))
+                elif message["type"] == "task_input":
+                    game.task_input(player_id, message.get("task"), message.get("value"))
+                elif message["type"] == "task_cancel":
+                    game.cancel_task(player_id, message.get("task"))
                 elif message["type"] == "vote":
                     game.vote(player_id, message.get("target"))
                 elif message["type"] == "restart":

@@ -152,9 +152,16 @@ This spec **replaces** two rules from spec 004:
     is running. `seconds_left` is the whole seconds (rounded up) left on the time-limit clock.
     `challenge` always has `"kind"` plus the fields below, and never the hidden parts of that
     mini-game.
-  - `task_note`: `null`, or a short string, present only on the tick a wrong answer, a
-    time-out or a `task_cancel` just happened to this player (not held over — the browser
-    shows it as a toast/inline message in the mini-game panel the moment it arrives).
+  - `task_note`: `null`, or a short string, set by a wrong answer, a time-out or a
+    `task_cancel`, and explicitly cleared (back to `null`) by starting a task and by every
+    other way of cancelling one (walking away, being expelled, a meeting starting). It is
+    **not** tick-scoped: an earlier draft of this spec tied it to "the exact tick it
+    happened", but `task_input`/`task_cancel` run between game-loop ticks (inside the
+    WebSocket message handler), not inside `step()`, so the broadcast that follows a
+    message is always for the *next* tick — a same-tick equality check would silently drop
+    the note before any client ever saw it. It simply holds the latest status until the
+    next task event replaces or clears it; the browser decides how long to display it
+    (e.g. a few seconds), the same way it already times out the joke popup.
 - Never another player's `tasks`, `doing`, `challenge` or `task_note`. Player entries stay
   exactly `{id, name, x, y}`.
 

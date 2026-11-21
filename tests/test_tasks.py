@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from server import game as rules
+from server import minigames
 from server.game import TICK_RATE, Game, GameError, load_map, parse_message
 from server.main import app
 
@@ -43,16 +44,16 @@ TASK_MAP = {
 # A map without tasks, like the maps of the earlier specs.
 PLAIN_MAP = {key: value for key, value in TASK_MAP.items() if key != "tasks"}
 
-# The task places of spec 004: id -> (area, column, row, seconds).
+# The task places of spec 012: id -> (area, column, row, mini-game kind). Replaces spec
+# 004's SPEC_TASKS table (which had "coffee" and "eduroam" with a plain "seconds" wait;
+# spec 012 deletes both and gives every remaining task a mini-game instead).
 SPEC_TASKS = {
-    "certificate": ("Student Services", 35, 3, 8),  # tiles of the spec 009 campus
-    "helpdesk": ("Main Entrance", 20, 3, 6),
-    "print": ("Library", 37, 20, 7),
-    "coffee": ("Food Court", 37, 12, 5),
-    "eduroam": ("Courtyard", 12, 15, 6),
-    "socket": ("Auditorium", 30, 40, 5),
-    "gate": ("Main Entrance", 24, 6, 5),
-    "nata": ("Courtyard", 19, 23, 5),
+    "certificate": ("Student Services", 35, 3, "ticket"),  # tiles of the spec 009 campus
+    "helpdesk": ("Main Entrance", 20, 3, "translate"),
+    "print": ("Library", 37, 20, "paper_jam"),
+    "socket": ("Auditorium", 30, 40, "socket"),
+    "gate": ("Main Entrance", 24, 6, "card"),
+    "nata": ("Courtyard", 19, 23, "seagull"),
 }
 
 
@@ -161,21 +162,28 @@ def assert_rejected(game, action, reason):
 # --- Map data ---------------------------------------------------------------------
 
 
-def test_the_campus_has_the_eight_task_places_of_spec_004():
+def test_the_campus_has_the_six_task_places_of_spec_012():
+    # Replaces spec 004's test of the same shape: "coffee" and "eduroam" are gone (no
+    # mini-game fits them), and every remaining task has a "minigame" kind instead of a
+    # plain "seconds" wait (spec 012, part 1).
     tasks = load_map()["tasks"]
-    assert len({task["id"] for task in tasks}) == len(tasks) == 8  # unique ids
-    assert {t["id"]: (t["area"], t["x"], t["y"], t["seconds"]) for t in tasks} == SPEC_TASKS
+    assert len({task["id"] for task in tasks}) == len(tasks) == 6  # unique ids
+    assert {t["id"]: (t["area"], t["x"], t["y"], t["minigame"]) for t in tasks} == SPEC_TASKS
 
 
-def test_every_campus_task_is_on_a_floor_tile_in_its_area_and_takes_5_to_10_seconds():
+def test_no_campus_task_is_a_plain_waiting_task_and_every_station_is_a_floor_tile():
+    # Replaces spec 004's test of the same shape, which checked a "seconds" wait on every
+    # task; spec 012 requires a mini-game kind instead (the engine still accepts a plain
+    # wait, but only test maps use it).
     campus = load_map()
     game = Game(campus)
     for task in campus["tasks"]:
+        assert "seconds" not in task, task["id"]
+        assert task["minigame"] in minigames.KINDS, task["id"]
         x, y = (task["x"] + 0.5) * TILE, (task["y"] + 0.5) * TILE
         assert campus["grid"][task["y"]][task["x"]] == ".", task["id"]
         assert not game.blocked(x, y), task["id"]
         assert game.area_at(x, y) == task["area"], task["id"]
-        assert 5 <= task["seconds"] <= 10, task["id"]
         assert task["title"] and task["joke"], task["id"]
         assert [task["x"], task["y"]] != campus["meeting_point"], task["id"]
 
@@ -209,7 +217,7 @@ def test_the_same_seed_deals_the_same_tasks():
     assert len({json.dumps(dealt(seed)) for seed in range(10)}) > 1  # and it is random
 
 
-def test_on_the_campus_every_student_gets_three_of_the_eight_tasks():
+def test_on_the_campus_every_student_gets_three_of_the_six_tasks():
     game, _, students = new_round(10, campus=load_map())
     for student in students:
         assert len(set(student.tasks)) == TASKS_PER_STUDENT
