@@ -1336,11 +1336,14 @@ def test_the_radius_still_applies_where_no_wall_is_in_the_way():
     assert target.id not in seen_ids(game, viewer)
 
 
+# Changed by spec 010, part 3: the viewer starts one tile higher, on (3, 4) instead of
+# (3, 5). From (3, 5) a corner of the target already shows past the end of the wall, and a
+# visible corner is now enough to be seen.
 def test_a_hidden_player_appears_when_the_viewer_walks_past_the_end_of_the_wall():
-    game, viewer, target = pair_at((3, 5), (7, 6))
+    game, viewer, target = pair_at((3, 4), (7, 6))
     assert target.id not in seen_ids(game, viewer)
     game.set_input(viewer.id, {"type": "input", "dx": 0, "dy": 1})
-    for _ in range(4):  # 32 px down: onto row 6, below the wall
+    for _ in range(8):  # 64 px down: onto row 6, below the wall
         game.step()
     assert target.id in seen_ids(game, viewer)
 
@@ -1355,29 +1358,12 @@ def test_on_the_campus_a_player_in_the_next_room_is_hidden_and_one_in_the_doorwa
     assert target.id in seen_ids(game, viewer)
 
 
-def test_vision_between_tiles_is_the_same_in_both_directions_everywhere_on_the_campus():
-    campus = load_map()
-    game = Game(campus)
-    floor = [
-        (col, row)
-        for row, line in enumerate(campus["grid"])
-        for col, tile in enumerate(line)
-        if tile == "."
-    ]
-    sets = {tile: game._visible_tiles(*tile) for tile in floor}
-    for tile, visible in sets.items():
-        assert tile in visible  # the own tile
-        for other in visible:
-            if other in sets:  # a floor tile (walls can be seen but nobody stands there)
-                assert tile in sets[other], (tile, other)
-
-
-def test_the_visible_tiles_of_a_tile_are_worked_out_only_once():
-    game = Game(SIGHT_MAP)
-    first = game._visible_tiles(3, 4)
-    assert game._visible_tiles(3, 4) is first  # kept: walls never change
-    assert (4, 4) in first and (5, 4) in first  # the floor in front and the wall itself
-    assert (6, 4) not in first and (7, 4) not in first  # what lies behind it
+# Removed by spec 010, part 3 (the rule changed: vision no longer goes from tile to tile):
+# - test_vision_between_tiles_is_the_same_in_both_directions_everywhere_on_the_campus:
+#   there are no sets of visible tiles any more. Its successor in tests/test_spec010.py is
+#   test_centre_lines_between_floor_tiles_are_the_same_in_both_directions_on_the_campus.
+# - test_the_visible_tiles_of_a_tile_are_worked_out_only_once: nothing is kept per tile
+#   any more; every line of sight is worked out when it is needed.
 
 
 # =====================================================================================

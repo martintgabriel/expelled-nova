@@ -129,7 +129,35 @@ SOLID_DECOR = {
     "picnic", "tree",
 }
 FLOOR_DECOR = {"sand", "paving", "grass", "terrace", "pergola", "glassroof", "shopfloor", "seats", "beanbag"}
+# The solid kinds that also block sight (spec 010, part 2): roofs, tall shelves and screens.
+# All other solid kinds (tables, counters, desks, trees, the sea, ...) only block walking.
+SIGHT_DECOR = {"roof", "greenroof", "solar", "shelf", "shopshelf", "screen"}
 LABEL_MAX = 24  # characters of a map label
+
+
+def sight_grid(campus):
+    """The tiles that block sight, in the same form as the map's grid: "#" blocks, "." not.
+
+    A wall tile blocks sight unless low decor stands on it: a solid kind that is not in
+    SIGHT_DECOR. A tile with both low and tall decor blocks. Floor tiles never block.
+    The browser receives this grid in "welcome", so both sides use the same rule.
+    """
+    low, tall = set(), set()
+    for entry in campus.get("decor", []):
+        if entry["kind"] in SOLID_DECOR:
+            tiles = {
+                (col, row)
+                for row in range(entry["y"], entry["y"] + entry["h"])
+                for col in range(entry["x"], entry["x"] + entry["w"])
+            }
+            (tall if entry["kind"] in SIGHT_DECOR else low).update(tiles)
+    return [
+        "".join(
+            "#" if tile == "#" and ((col, row) in tall or (col, row) not in low) else "."
+            for col, tile in enumerate(line)
+        )
+        for row, line in enumerate(campus["grid"])
+    ]
 
 
 def load_map(path=MAP_PATH):
@@ -249,34 +277,6 @@ def is_direction(value):
     return type(value) is int and value in (-1, 0, 1)
 
 
-def line_between(col0, row0, col1, row1):
-    """The tiles strictly between two tiles on the straight line from centre to centre
-    (Bresenham's line algorithm, whole numbers only).
-
-    The line is always traced from the smaller end, so it is the same in both directions:
-    if A sees B, then B sees A.
-    """
-    if (row0, col0) > (row1, col1):
-        col0, row0, col1, row1 = col1, row1, col0, row0
-    width, height = abs(col1 - col0), abs(row1 - row0)
-    step_col = 1 if col1 > col0 else -1
-    step_row = 1 if row1 > row0 else -1
-    error = width - height
-    col, row = col0, row0
-    tiles = []
-    while (col, row) != (col1, row1):
-        twice = 2 * error
-        if twice > -height:  # the line has moved on by a column
-            error -= height
-            col += step_col
-        if twice < width:  # the line has moved on by a row
-            error += width
-            row += step_row
-        if (col, row) != (col1, row1):
-            tiles.append((col, row))
-    return tiles
-
-
 class Game:
     def __init__(self, campus, rng=None):
         self.campus = campus
@@ -285,7 +285,7 @@ class Game:
         self.grid = campus["grid"]
         self.tasks = {task["id"]: task for task in campus.get("tasks", [])}  # task places by id
         self.doors = {door["id"]: door for door in campus.get("staff_doors", [])}  # by id
-        self._sight = {}  # (col, row) of a viewer -> the tiles visible from there (see below)
+        self.sight = sight_grid(campus)  # which tiles block sight; walls never change
         self.lights_out_radius = LIGHTS_OUT_TILES * self.tile  # px, for students in the dark
         self.lights_on = True
         self.next_sabotage_tick = 0  # first tick at which an examiner may turn the lights off
@@ -954,37 +954,58 @@ class Game:
         return None
 
     def _in_sight(self, viewer, x, y):
-        """True if the viewer sees the point: within the vision radius (a circle around
-        the viewer) and on a tile with no wall between it and the viewer's tile."""
+        """True if the viewer sees a player or failed exam at (x, y) (spec 010, part 3).
+
+        Its centre must be within the vision radius, measured between centres. Then one
+        straight line from the viewer's centre must be clear: to its centre or to one of
+        the four corners of its square. So whoever sticks out behind a wall is seen.
+        """
         if math.hypot(x - viewer.x, y - viewer.y) > self._vision_radius_for(viewer):
             return False
-        target = (math.floor(x / self.tile), math.floor(y / self.tile))
-        return target in self._visible_tiles(*self._tile_of(viewer))
+        h = PLAYER_HALF
+        points = ((x, y), (x - h, y - h), (x + h, y - h), (x - h, y + h), (x + h, y + h))
+        return any(self.sight_clear(viewer.x, viewer.y, px, py) for px, py in points)
 
-    def _tile_of(self, player):
-        return math.floor(player.x / self.tile), math.floor(player.y / self.tile)
+    def sight_clear(self, x0, y0, x1, y1):
+        """True if the straight line between two points crosses no sight-blocking tile.
 
-    def _visible_tiles(self, col, row):
-        """The tiles that can be seen from tile (col, row): those up to VISION_TILES away
-        with no wall tile on the straight line between the two tile centres (spec 008,
-        part 7). The wall that ends a line is itself visible.
-
-        Walls never change, so the answer for a tile is worked out once and kept: every
-        tick this is one lookup per player.
+        The line is cut at every grid line it crosses. Each piece then lies inside one
+        tile, and the middle of the piece tells which. A line through the corner of a tile
+        has no piece inside that tile, so only touching a corner does not block.
         """
-        if (col, row) not in self._sight:
-            reach = range(-VISION_TILES, VISION_TILES + 1)
-            self._sight[(col, row)] = frozenset(
-                (col + dc, row + dr)
-                for dr in reach
-                for dc in reach
-                if not any(self._is_wall(*tile) for tile in line_between(col, row, col + dc, row + dr))
-            )
-        return self._sight[(col, row)]
+        t = self.tile
+        dx, dy = x1 - x0, y1 - y0
+        cuts = [0.0, 1.0]  # places along the line, from 0 (its start) to 1 (its end)
+        if dx:
+            low, high = min(x0, x1), max(x0, x1)
+            cuts += [(k * t - x0) / dx for k in range(math.floor(low / t) + 1, math.ceil(high / t))]
+        if dy:
+            low, high = min(y0, y1), max(y0, y1)
+            cuts += [(k * t - y0) / dy for k in range(math.floor(low / t) + 1, math.ceil(high / t))]
+        cuts.sort()
+        for a, b in zip(cuts, cuts[1:]):
+            if b - a > 1e-9:  # two cuts at the same place: the line goes through a corner
+                middle = (a + b) / 2
+                if self._blocks_sight_at(x0 + dx * middle, y0 + dy * middle):
+                    return False
+        return True
 
-    def _is_wall(self, col, row):
-        inside = 0 <= row < len(self.grid) and 0 <= col < len(self.grid[row])
-        return inside and self.grid[row][col] == "#"
+    def _blocks_sight_at(self, x, y):
+        """True if the point lies inside sight-blocking tiles.
+
+        A point exactly on the line between two tiles (a line of sight running along a
+        wall) only counts if the tiles on both sides block: along a wall's face is clear,
+        along the joint between two wall tiles is not.
+        """
+        t = self.tile
+        col, row = math.floor(x / t), math.floor(y / t)
+        cols = (col - 1, col) if x % t == 0 else (col,)
+        rows = (row - 1, row) if y % t == 0 else (row,)
+        return all(self._blocks_sight(c, r) for c in cols for r in rows)
+
+    def _blocks_sight(self, col, row):
+        inside = 0 <= row < len(self.sight) and 0 <= col < len(self.sight[row])
+        return inside and self.sight[row][col] == "#"
 
     def snapshot(self, see_ghosts=False, viewer=None):
         """The part players may see: phase, host, names, positions, colours and failed exams.
@@ -1019,7 +1040,7 @@ class Game:
         """What one player may know: the shared snapshot plus their own role and state.
 
         - While playing, a living player only gets the players and failed exams within
-          the vision radius (spec 005) with no wall in between (spec 008, part 7). In the
+          the vision radius (spec 005) with a clear line of sight (spec 010). In the
           lobby, in a meeting and after the end there is no limit (ghosts stay hidden from
           the living until the end).
         - An examiner also gets the fellow examiners' ids and their own cooldowns

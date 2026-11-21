@@ -94,8 +94,8 @@ ui.inviteButton.addEventListener("click", () => (ui.inviteScreen.hidden = false)
 ui.inviteClose.addEventListener("click", () => (ui.inviteScreen.hidden = true));
 
 let socket = null;
-// {id, map, speed, tick_rate, step, player_half, expel_range, report_range, bell_range,
-// task_range, switch_range, vision_radius, lights_out_radius} once joined
+// {id, map, sight_grid, speed, tick_rate, step, player_half, expel_range, report_range,
+// bell_range, task_range, switch_range, vision_radius, lights_out_radius} once joined
 let welcome = null;
 // Recent server states: {time, players: Map(id -> {name,x,y}), ghosts: Set(id)}
 let snapshots = [];
@@ -882,52 +882,6 @@ function moveAxis(pos, mx, my) {
   }
 }
 
-// --- Vision blocked by walls (spec 008, part 7) ----------------------------------------
-// The server only sends what is in sight. The browser repeats the rule to darken the
-// tiles behind walls, so what is drawn matches what the server sends.
-
-// REPEATS SERVER RULE: line_between() in server/game.py. The tiles strictly between two
-// tiles on the straight line (Bresenham), always traced from the smaller end.
-function lineBetween(col0, row0, col1, row1) {
-  if (row0 > row1 || (row0 === row1 && col0 > col1)) {
-    [col0, row0, col1, row1] = [col1, row1, col0, row0];
-  }
-  const width = Math.abs(col1 - col0);
-  const height = Math.abs(row1 - row0);
-  const stepCol = col1 > col0 ? 1 : -1;
-  const stepRow = row1 > row0 ? 1 : -1;
-  let error = width - height;
-  let col = col0;
-  let row = row0;
-  const tiles = [];
-  while (col !== col1 || row !== row1) {
-    const twice = 2 * error;
-    if (twice > -height) {
-      error -= height;
-      col += stepCol;
-    }
-    if (twice < width) {
-      error += width;
-      row += stepRow;
-    }
-    if (col !== col1 || row !== row1) tiles.push([col, row]);
-  }
-  return tiles;
-}
-
-// REPEATS SERVER RULE: Game._visible_tiles() in server/game.py. The tiles up to `reach`
-// away with no wall tile on the line, as a Set of "col,row".
-function visibleTiles(map, col, row, reach) {
-  const isWall = ([c, r]) => r >= 0 && r < map.grid.length && map.grid[r][c] === "#";
-  const visible = new Set();
-  for (let dr = -reach; dr <= reach; dr++) {
-    for (let dc = -reach; dc <= reach; dc++) {
-      if (!lineBetween(col, row, col + dc, row + dr).some(isWall)) visible.add(`${col + dc},${row + dr}`);
-    }
-  }
-  return visible;
-}
-
 // --- Phaser scene -----------------------------------------------------------------
 
 class CampusScene extends Phaser.Scene {
@@ -936,7 +890,6 @@ class CampusScene extends Phaser.Scene {
     this.sprites = new Map(); // id -> character from Render.makeCharacter()
     this.exams = new Map(); // failed exam id -> sheet from Render.makeExam()
     this.taskMarkers = new Map(); // own open task id -> mark from Render.makeTaskMarker()
-    this.shadowKey = ""; // the tile the darkness behind walls was last drawn for
     this.lastSent = { dx: 0, dy: 0 };
     // The own character, predicted in whole server ticks (see updateOwn).
     this.predicted = null; // position after the newest predicted tick
@@ -947,17 +900,15 @@ class CampusScene extends Phaser.Scene {
   }
 
   create() {
-    // The map is drawn from the server's data; the darkness covers it outside the
-    // vision radius (which the server sent in "welcome").
+    // The map is drawn from the server's data; the darkness covers what the own character
+    // has no line of sight to. The vision radius and the tiles that block sight come from
+    // the server ("welcome"), so the lit area matches what the server sends.
     const { width, height } = Render.drawMap(this, welcome.map);
     if (welcome.map.bell) Render.makeBell(this, welcome.map);
     for (const door of welcome.map.staff_doors || []) Render.makeDoor(this, welcome.map, door);
     this.taskRing = Render.makeTaskRing(this);
-    this.fog = Render.makeFog(this, welcome.vision_radius, Math.max(width, height));
-    // A second, much smaller clear circle for a student while the lights are off.
-    this.darkFog = Render.makeFog(this, welcome.lights_out_radius, Math.max(width, height), "fog-dark");
+    this.darkness = Render.makeDarkness(this, welcome.map, welcome.sight_grid, welcome.vision_radius);
     this.switchMark = welcome.map.light_switch ? Render.makeSwitch(this, welcome.map) : null;
-    this.shadows = Render.makeShadows(this);
 
     const camera = this.cameras.main;
     camera.setBounds(0, 0, width, height);
@@ -1016,9 +967,8 @@ class CampusScene extends Phaser.Scene {
     const own = this.sprites.get(welcome.id);
     const limited = lastPhase === "playing" && latestState.alive;
     // The server says how far this player sees right now: less for a student in the dark.
-    const dark = limited && latestState.vision_radius < welcome.vision_radius;
-    if (own) Render.updateFog(this.fog, own.x, own.y, limited && !dark);
-    if (own) Render.updateFog(this.darkFog, own.x, own.y, dark);
+    const radius = limited ? latestState.vision_radius : welcome.vision_radius;
+    if (own) Render.updateDarkness(this.darkness, own.x, own.y, radius, limited);
     if (this.switchMark) {
       const off = lastPhase === "playing" && latestState.lights_on === false;
       const t = welcome.map.tile_size;
@@ -1026,7 +976,6 @@ class CampusScene extends Phaser.Scene {
       const near = own && Math.hypot((col + 0.5) * t - own.x, (row + 0.5) * t - own.y) <= welcome.switch_range;
       Render.updateSwitch(this.switchMark, off, time, near);
     }
-    this.updateShadows(latest.get(welcome.id), limited);
 
     // Tasks: marks on the own open task places and the ring while one runs. The ring
     // moves smoothly from the time the task was first seen; the seconds are the server's.
@@ -1043,20 +992,6 @@ class CampusScene extends Phaser.Scene {
     } else {
       Render.updateTaskRing(this.taskRing, 0, 0, null);
     }
-  }
-
-  // The darkness behind walls, for the tile the server has the own character on (that is
-  // the tile the server's vision uses). Redrawn only when that tile changes.
-  updateShadows(server, limited) {
-    const t = welcome.map.tile_size;
-    const col = server ? Math.floor(server.x / t) : 0;
-    const row = server ? Math.floor(server.y / t) : 0;
-    const key = server && limited ? `${col},${row}` : "";
-    if (key === this.shadowKey) return;
-    this.shadowKey = key;
-    const reach = Math.round(welcome.vision_radius / t);
-    const visible = key ? visibleTiles(welcome.map, col, row, reach) : null;
-    Render.drawShadows(this.shadows, welcome.map, col, row, reach, visible);
   }
 
   // One mark per own open task; a finished task (and a new round) removes its mark.

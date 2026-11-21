@@ -141,6 +141,7 @@ async def websocket_endpoint(ws: WebSocket):
                             "type": "welcome",
                             "id": player.id,
                             "map": game.campus,
+                            "sight_grid": game.sight,
                             "speed": SPEED,
                             "tick_rate": TICK_RATE,
                             "step": STEP,
