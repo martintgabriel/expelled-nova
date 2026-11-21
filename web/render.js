@@ -42,7 +42,9 @@ const Render = (() => {
   const FOG_CLEAR = 0.7;
   const FOG_FULL = 1.02;
   const FOG_ALPHA = 0.86;
-  const FOG_TEXTURE_SIZE = 1024;
+  const FOG_COLOR = 0x080a0e;
+  const RIM_REACH = 2.5; // the rim picture reaches this many radii from the own character
+  const RIM_TEXTURE_SIZE = 512;
 
   // --- Colours -----------------------------------------------------------------------
 
@@ -706,62 +708,70 @@ const Render = (() => {
     label.setText(`${secondsLeft} s`);
   }
 
-  // --- Darkness outside the vision radius ----------------------------------------------
+  // --- Darkness outside the lit area (spec 005; one layer since spec 010, part 1) ---------
+  // This is only the look: the server does not even send what the player cannot see.
+  //
+  // The darkness has ONE strength everywhere and is made of two parts that never overlap:
+  //   dark: a plain dark sheet over the whole map, with the lit shape cut out of it;
+  //   rim:  a round picture, clear in the middle and just as dark as the sheet from the
+  //         vision radius on. It follows the own character and is drawn only inside the
+  //         lit shape, so it gives the vision circle its soft edge.
+  // The camera never shows more than the map, so the sheet covers every window size.
+  // `lit` is the lit shape. It is never drawn itself: it only cuts the two parts.
+  function makeDarkness(scene, mapWidth, mapHeight, radius) {
+    const lit = scene.make.graphics({}, false);
+    const dark = scene.add.rectangle(0, 0, mapWidth, mapHeight, FOG_COLOR, FOG_ALPHA);
+    dark.setOrigin(0).setDepth(10).setAlpha(0);
+    dark.setMask(lit.createGeometryMask().setInvertAlpha(true)); // everywhere but the lit shape
 
-  // One big square picture that is clear in the middle and dark everywhere else. It is
-  // painted once with a canvas gradient and then follows the own character.
-  // `reach` is how far it must extend from the player to cover the whole map.
-  // This is only the look: the server does not even send what is outside the radius.
-  // `key` names the picture: there is one for the normal radius and one for lights out.
-  function makeFog(scene, radius, reach, key = "fog") {
-    const size = FOG_TEXTURE_SIZE;
-    const texture = scene.textures.createCanvas(key, size, size);
+    // The rim picture is painted once for a radius of 1 and stretched to the radius in use.
+    const size = RIM_TEXTURE_SIZE;
+    const texture = scene.textures.createCanvas("rim", size, size);
     const context = texture.getContext();
     const centre = size / 2;
-    const scale = centre / reach; // texture pixels per map pixel
+    const scale = centre / RIM_REACH; // texture pixels per vision radius
     const gradient = context.createRadialGradient(
-      centre, centre, radius * FOG_CLEAR * scale,
-      centre, centre, radius * FOG_FULL * scale,
+      centre, centre, FOG_CLEAR * scale,
+      centre, centre, FOG_FULL * scale,
     );
-    gradient.addColorStop(0, "rgba(8, 10, 14, 0)");
-    gradient.addColorStop(0.55, `rgba(8, 10, 14, ${FOG_ALPHA * 0.45})`);
-    gradient.addColorStop(1, `rgba(8, 10, 14, ${FOG_ALPHA})`);
+    const [red, green, blue] = [FOG_COLOR >> 16, (FOG_COLOR >> 8) & 255, FOG_COLOR & 255];
+    gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, 0)`);
+    gradient.addColorStop(0.55, `rgba(${red}, ${green}, ${blue}, ${FOG_ALPHA * 0.45})`);
+    gradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, ${FOG_ALPHA})`);
     context.fillStyle = gradient;
     context.fillRect(0, 0, size, size);
     texture.refresh();
-    return scene.add.image(0, 0, key).setDisplaySize(reach * 2, reach * 2).setDepth(10).setAlpha(0);
+    const rim = scene.add.image(0, 0, "rim").setDepth(10).setAlpha(0);
+    rim.setMask(lit.createGeometryMask()); // only inside the lit shape
+
+    // `radius` is the radius shown right now: it glides to the one the server sends.
+    return { lit, dark, rim, radius };
   }
 
-  // --- Darkness behind walls (spec 008, part 7) ------------------------------------------
-
-  const SHADOW_ALPHA = 0.72;
-
-  // One drawing layer for the tiles the own character cannot see. It lies on the floor,
-  // over the bell and the hatches and under the players (the server only sends players
-  // who stand on visible tiles).
-  function makeShadows(scene) {
-    return scene.add.graphics().setDepth(0.9);
-  }
-
-  // Darkens every tile around (col, row) that is not in `visible`, a Set of "col,row"
-  // worked out by main.js with the server's rule. `visible` = null: no darkness at all.
-  function drawShadows(shadows, map, col, row, reach, visible) {
-    shadows.clear();
-    if (!visible) return;
+  // The lit shape as tiles: `visible` is a Set of "col,row" worked out by main.js with the
+  // server's rule. The shape must stay within RIM_REACH radii of the own character.
+  function drawLitTiles(darkness, map, visible) {
     const t = map.tile_size;
-    shadows.fillStyle(0x080a0e, SHADOW_ALPHA);
-    for (let r = row - reach - 1; r <= row + reach + 1; r++) {
-      for (let c = col - reach - 1; c <= col + reach + 1; c++) {
-        if (!visible.has(`${c},${r}`)) shadows.fillRect(c * t, r * t, t, t);
-      }
+    darkness.lit.clear().fillStyle(0xffffff);
+    for (const tile of visible) {
+      const [col, row] = tile.split(",").map(Number);
+      darkness.lit.fillRect(col * t, row * t, t, t);
     }
   }
 
-  // Call every frame: keeps the darkness centred on (x, y) and fades it in or out.
-  function updateFog(fog, x, y, on) {
-    fog.setPosition(x, y);
-    const alpha = fog.alpha + ((on ? 1 : 0) - fog.alpha) * 0.12;
-    fog.setAlpha(Math.abs(alpha - (on ? 1 : 0)) < 0.01 ? (on ? 1 : 0) : alpha);
+  // Call every frame: keeps the rim centred on (x, y), lets the shown radius glide to
+  // `radius` (lights out and back on) and fades the whole darkness in or out.
+  function updateDarkness(darkness, x, y, radius, on) {
+    const { dark, rim } = darkness;
+    const gap = radius - darkness.radius;
+    darkness.radius = Math.abs(gap) < 0.5 ? radius : darkness.radius + gap * 0.12;
+    const side = darkness.radius * RIM_REACH * 2;
+    rim.setPosition(x, y).setDisplaySize(side, side);
+    const target = on ? 1 : 0;
+    const alpha = rim.alpha + (target - rim.alpha) * 0.12;
+    const shown = Math.abs(alpha - target) < 0.01 ? target : alpha;
+    rim.setAlpha(shown);
+    dark.setAlpha(shown);
   }
 
   return {
@@ -780,9 +790,8 @@ const Render = (() => {
     makeTaskMarker,
     makeTaskRing,
     updateTaskRing,
-    makeFog,
-    updateFog,
-    makeShadows,
-    drawShadows,
+    makeDarkness,
+    drawLitTiles,
+    updateDarkness,
   };
 })();
