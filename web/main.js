@@ -63,10 +63,11 @@ const ui = {
   jokeTitle: document.getElementById("joke-title"),
   jokeText: document.getElementById("joke-text"),
   reportButton: document.getElementById("report-button"),
-  bellButton: document.getElementById("bell-button"),
+  meetingButton: document.getElementById("meeting-button"),
   ghostBanner: document.getElementById("ghost-banner"),
   ghostTitle: document.getElementById("ghost-title"),
   meetingScreen: document.getElementById("meeting-screen"),
+  meetingCard: document.getElementById("meeting-card"),
   meetingTitle: document.getElementById("meeting-title"),
   meetingTimer: document.getElementById("meeting-timer"),
   meetingReason: document.getElementById("meeting-reason"),
@@ -94,8 +95,9 @@ ui.inviteButton.addEventListener("click", () => (ui.inviteScreen.hidden = false)
 ui.inviteClose.addEventListener("click", () => (ui.inviteScreen.hidden = true));
 
 let socket = null;
-// {id, map, sight_grid, speed, tick_rate, step, player_half, expel_range, report_range,
-// bell_range, task_range, switch_range, vision_radius, lights_out_radius} once joined
+// {id, map, sight_grid, speed, tick_rate, step, player_half, corner_slide, expel_range, report_range,
+// meeting_range, meeting_table_radius, task_range, switch_range, vision_radius,
+// lights_out_radius} once joined
 let welcome = null;
 // Recent server states: {time, players: Map(id -> {name,x,y}), ghosts: Set(id)}
 let snapshots = [];
@@ -223,7 +225,7 @@ function updatePhase(state) {
   ui.ghostBanner.hidden = !(state.phase === "playing" && !state.alive);
   setText(ui.ghostTitle, sentSurfing ? "You have been sent surfing" : "You have been expelled");
   updateExpelButton(state);
-  updateReportAndBell(state);
+  updateReportAndMeeting(state);
   updateTasks(state);
   updateDoors(state);
   updateLights(state);
@@ -414,8 +416,8 @@ ui.restartButton.addEventListener("click", () => {
   ui.restartButton.blur();
 });
 
-// --- Report, bell, meeting and vote (spec 006) --------------------------------------
-// The buttons are only a convenience: the server checks phase, range, bell and votes again.
+// --- Report, meeting table, meeting and vote (spec 006, spec 011) --------------------
+// The buttons are only a convenience: the server checks phase, range and votes again.
 
 function isLivingAndPlaying(state) {
   return state.phase === "playing" && state.alive;
@@ -438,22 +440,31 @@ function reportTarget(state) {
   return best;
 }
 
-// The bell rings only next to it (spec 008, part 4): is the latest server position within
-// bell_range of the bell's tile? A map without a bell place rings anywhere.
-function nearBell(state) {
-  const place = welcome.map.bell;
-  if (!place) return true;
-  const me = state.players.find((p) => p.id === welcome.id);
-  if (!me) return false;
+// The middle of the meeting table in map pixels, or null on a map without one.
+function meetingTable() {
+  const place = welcome.map.meeting_point;
+  if (!place) return null;
   const t = welcome.map.tile_size;
-  return Math.hypot((place[0] + 0.5) * t - me.x, (place[1] + 0.5) * t - me.y) <= welcome.bell_range;
+  return { x: (place[0] + 0.5) * t, y: (place[1] + 0.5) * t };
 }
 
-function updateReportAndBell(state) {
+// A meeting is called only at the meeting table (spec 011): is the latest server position
+// within meeting_range of the table's edge? A map without a table calls from anywhere.
+// REPEATS SERVER RULE: Game.call_meeting() in server/game.py. Only for the button.
+function nearMeetingTable(state) {
+  const table = meetingTable();
+  if (!table) return true;
+  const me = state.players.find((p) => p.id === welcome.id);
+  if (!me) return false;
+  const reach = welcome.meeting_table_radius + welcome.meeting_range;
+  return Math.hypot(table.x - me.x, table.y - me.y) <= reach;
+}
+
+function updateReportAndMeeting(state) {
   ui.reportButton.hidden = !reportTarget(state);
-  ui.bellButton.hidden = !(isLivingAndPlaying(state) && nearBell(state));
-  ui.bellButton.disabled = state.bell_used;
-  setText(ui.bellButton, state.bell_used ? "Bell used" : "Ring the bell");
+  ui.meetingButton.hidden = !(isLivingAndPlaying(state) && nearMeetingTable(state));
+  ui.meetingButton.disabled = state.meeting_used;
+  setText(ui.meetingButton, state.meeting_used ? "Meeting already called" : "Call a meeting");
 }
 
 function tryReport() {
@@ -471,9 +482,9 @@ ui.reportButton.addEventListener("click", () => {
   ui.reportButton.blur();
 });
 
-ui.bellButton.addEventListener("click", () => {
-  send({ type: "bell" });
-  ui.bellButton.blur();
+ui.meetingButton.addEventListener("click", () => {
+  send({ type: "meeting" });
+  ui.meetingButton.blur();
 });
 
 function renderMeeting(state) {
@@ -488,7 +499,7 @@ function renderMeeting(state) {
 
   const caller = nameOf(meeting.called_by); // added as text: never read as HTML
   ui.meetingReason.textContent =
-    meeting.reason === "report" ? `${caller} found a failed exam` : `${caller} rang the bell`;
+    meeting.reason === "report" ? `${caller} found a failed exam` : `${caller} called a meeting`;
   if (result) renderResult(state, result);
   else renderVoting(state, meeting);
 }
@@ -864,8 +875,9 @@ function blocked(map, half, x, y, walls = true) {
 }
 
 // REPEATS SERVER RULE: same as Game._move_axis() in server/game.py
-// (move in pieces of at most 1 px, stop at the first piece that hits a wall). The own
-// character ignores walls as a ghost; the server sends `alive` with every state.
+// (move in pieces of at most 1 px, stop at the first piece that hits a wall; returns the
+// distance that was not walked). The own character ignores walls as a ghost; the server
+// sends `alive` with every state.
 function moveAxis(pos, mx, my) {
   const walls = latestState.alive;
   let remaining = Math.abs(mx) + Math.abs(my);
@@ -875,10 +887,43 @@ function moveAxis(pos, mx, my) {
     const part = Math.min(1, remaining);
     const nx = pos.x + sx * part;
     const ny = pos.y + sy * part;
-    if (blocked(welcome.map, welcome.player_half, nx, ny, walls)) return;
+    if (blocked(welcome.map, welcome.player_half, nx, ny, walls)) return remaining;
     pos.x = nx;
     pos.y = ny;
     remaining -= part;
+  }
+  return 0;
+}
+
+// REPEATS SERVER RULE: same as Game._walk() in server/game.py: one fixed step per tick,
+// diagonal normalised, first the x axis and then the y axis; a straight walk that a wall
+// stops slides round the wall's corner.
+function walk(pos, dx, dy) {
+  const length = Math.hypot(dx, dy);
+  const leftX = moveAxis(pos, (dx / length) * welcome.step, 0);
+  const leftY = moveAxis(pos, 0, (dy / length) * welcome.step);
+  if (dy === 0 && leftX > 0) slide(pos, dx, 0, leftX);
+  else if (dx === 0 && leftY > 0) slide(pos, 0, dy, leftY);
+}
+
+// REPEATS SERVER RULE: same as Game._slide() in server/game.py (spec 011): if the way
+// ahead is free at most welcome.corner_slide px to one side, move there with what is left
+// of the step and walk on. The nearest free side wins.
+function slide(pos, dx, dy, distance) {
+  const walls = latestState.alive;
+  for (let offset = 1; offset <= welcome.corner_slide; offset++) {
+    for (const side of [-1, 1]) {
+      const sideX = side * Math.abs(dy);
+      const sideY = side * Math.abs(dx);
+      const aheadX = pos.x + dx + sideX * offset;
+      const aheadY = pos.y + dy + sideY * offset;
+      if (!blocked(welcome.map, welcome.player_half, aheadX, aheadY, walls)) {
+        const slid = Math.min(distance, offset);
+        moveAxis(pos, sideX * slid, sideY * slid);
+        moveAxis(pos, dx * (distance - slid), dy * (distance - slid));
+        return;
+      }
+    }
   }
 }
 
@@ -903,8 +948,8 @@ class CampusScene extends Phaser.Scene {
     // The map is drawn from the server's data; the darkness covers what the own character
     // has no line of sight to. The vision radius and the tiles that block sight come from
     // the server ("welcome"), so the lit area matches what the server sends.
-    const { width, height } = Render.drawMap(this, welcome.map);
-    if (welcome.map.bell) Render.makeBell(this, welcome.map);
+    const { width, height } = Render.drawMap(this, welcome.map, welcome.sight_grid);
+    if (welcome.map.meeting_point) Render.makeMeetingPoint(this, welcome.map, welcome.meeting_table_radius);
     for (const door of welcome.map.staff_doors || []) Render.makeDoor(this, welcome.map, door);
     this.taskRing = Render.makeTaskRing(this);
     this.darkness = Render.makeDarkness(this, welcome.map, welcome.sight_grid, welcome.vision_radius);
@@ -958,9 +1003,13 @@ class CampusScene extends Phaser.Scene {
     this.syncExams(latestState.failed_exams);
     this.updateOwn(latest.get(welcome.id), deltaMs / 1000);
     this.updateOthers(latest);
+    // In a meeting everyone looks at the meeting table (spec 011).
+    const table = lastPhase === "meeting" ? meetingTable() : null;
     for (const [id, sprite] of this.sprites) {
-      Render.animateCharacter(sprite, { ...sprite.walk, ghost: newest.ghosts.has(id) }, time);
+      const lookAt = table ? { x: table.x - sprite.x, y: table.y - sprite.y } : null;
+      Render.animateCharacter(sprite, { ...sprite.walk, ghost: newest.ghosts.has(id), lookAt }, time);
     }
+    this.frameMeeting(table, this.sprites.get(welcome.id));
 
     // Darkness only for the living while playing: ghosts, the lobby and the end screen
     // show the whole map (the server sends them everything as well).
@@ -992,6 +1041,27 @@ class CampusScene extends Phaser.Scene {
     } else {
       Render.updateTaskRing(this.taskRing, 0, 0, null);
     }
+  }
+
+  // In a meeting the card covers part of the window. The camera then shows the meeting
+  // table in the middle of the part that stays free: left of the card, or above it on a
+  // window higher than wide (style.css). Outside a meeting it follows the own character.
+  frameMeeting(table, own) {
+    const camera = this.cameras.main;
+    if (!table || !own) {
+      camera.setFollowOffset(0, 0);
+      return;
+    }
+    const card = ui.meetingCard.getBoundingClientRect();
+    const upright = window.innerHeight > window.innerWidth;
+    const freeX = upright ? window.innerWidth / 2 : card.left / 2;
+    const freeY = upright ? card.top / 2 : window.innerHeight / 2;
+    // From window pixels to map pixels: the canvas has pixelRatio times the window's pixels.
+    const scale = Render.pixelRatio / camera.zoom;
+    const shiftX = (window.innerWidth / 2 - freeX) * scale;
+    const shiftY = (window.innerHeight / 2 - freeY) * scale;
+    // The camera looks at (own - offset): that is the table, moved by the shift.
+    camera.setFollowOffset(own.x - table.x - shiftX, own.y - table.y - shiftY);
   }
 
   // One mark per own open task; a finished task (and a new round) removes its mark.
@@ -1088,13 +1158,7 @@ class CampusScene extends Phaser.Scene {
       this.sendDirection(dx, dy);
     }
     this.previous = { ...this.predicted };
-    if (dx !== 0 || dy !== 0) {
-      // REPEATS SERVER RULE: Game.step() in server/game.py: one fixed step per tick,
-      // diagonal normalised, first the x axis and then the y axis.
-      const length = Math.hypot(dx, dy);
-      moveAxis(this.predicted, (dx / length) * welcome.step, 0);
-      moveAxis(this.predicted, 0, (dy / length) * welcome.step);
-    }
+    if (dx !== 0 || dy !== 0) walk(this.predicted, dx, dy);
     this.trail.push({ ...this.predicted });
     if (this.trail.length > TRAIL_TICKS) this.trail.shift();
   }

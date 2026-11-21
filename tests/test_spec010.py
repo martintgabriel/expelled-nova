@@ -22,12 +22,11 @@ WEB = Path(__file__).resolve().parents[1] / "web"
 # =====================================================================================
 
 # The two lists of the spec. Every solid decor kind blocks walking; only these block sight:
-SIGHT_BLOCKING = ["roof", "greenroof", "solar", "shelf", "shopshelf", "screen"]
+# (Spec 011: furniture, shelves included, is floor decor now. It blocks neither walking nor
+# sight, so it left both lists; tests/test_spec011.py checks it on floor tiles.)
+SIGHT_BLOCKING = ["roof", "greenroof", "solar", "screen"]
 # ... and these do not:
-SEE_THROUGH = [
-    "sea", "glasswall", "counter", "foodcounter", "desk", "studytable", "table", "cafetable",
-    "woodtable", "piano", "steps", "picnic", "tree",
-]
+SEE_THROUGH = ["sea", "glasswall"]
 
 # A corridor with something in its middle. The viewer stands on (3, 2), the target behind
 # the obstacle on the same row. Everyone spawns on (1, 1).
@@ -101,8 +100,8 @@ def test_a_player_behind_low_decor_is_sent(kind):
     assert viewer.id in seen_ids(game, target)  # in both directions
 
 
-def test_a_failed_exam_behind_a_table_is_sent():
-    game, viewer = exam_behind("table")
+def test_a_failed_exam_behind_a_glass_pane_is_sent():
+    game, viewer = exam_behind("glasswall")  # spec 011: was a table, which is floor decor now
     assert len(game.snapshot_for(viewer.id)["failed_exams"]) == 1
 
 
@@ -169,8 +168,10 @@ def test_a_failed_exam_behind_a_roof_is_not_sent():
     "viewer_tile, target_tile, between",
     [
         ((30, 36), (30, 38), "the Auditorium screen in its front wall"),
-        ((27, 3), (29, 3), "the standing screen in the Main Entrance"),
-        ((32, 18), (32, 20), "a bookshelf in the Library"),
+        # Spec 011: the Library's bookshelf is furniture now and hides nobody. The standing
+        # screen of the Main Entrance moved onto the wall (map review), so the roof of the
+        # Gym stands in for it.
+        ((30, 29), (33, 31), "the roof of the Gym"),
     ],
 )
 def test_on_the_campus_screens_and_shelves_hide_players(viewer_tile, target_tile, between):
@@ -216,7 +217,8 @@ def test_on_a_map_without_decor_every_wall_blocks_sight():
 
 
 def test_a_tile_with_low_and_tall_decor_blocks_sight():
-    for kinds in (("table", "roof"), ("roof", "table")):
+    # Spec 011: glass instead of a table, which is no solid kind any more.
+    for kinds in (("glasswall", "roof"), ("roof", "glasswall")):
         game, viewer, target = pair_in(room(decor=[on_tile(kind) for kind in kinds]))
         assert target.id not in seen_ids(game, viewer), kinds
 
@@ -226,8 +228,9 @@ def test_floor_decor_painted_around_a_wall_tile_does_not_open_it():
     assert target.id not in seen_ids(game, viewer)
 
 
-def test_a_wall_behind_a_table_still_blocks_sight():
-    campus = room("#....##...#", decor=[on_tile("table")])  # table on (5, 2), wall on (6, 2)
+def test_a_wall_behind_a_glass_pane_still_blocks_sight():
+    # Spec 011: glass instead of a table, which is no solid kind any more.
+    campus = room("#....##...#", decor=[on_tile("glasswall")])  # glass on (5, 2), wall on (6, 2)
     game, viewer, target = pair_in(campus, target_tile=(8, 2))
     assert target.id not in seen_ids(game, viewer)
 
@@ -240,8 +243,9 @@ def test_the_campus_sight_grid_marks_walls_roofs_shelves_and_screens_only():
         for col, tile in enumerate(line):
             assert tile in "#."
             assert tile == "." or grid[row][col] == "#", (col, row)  # only walls block sight
-    blocks = {(2, 0): "plain wall", (31, 28): "Gym roof", (30, 19): "bookshelf", (27, 37): "screen"}
-    opens = {(0, 0): "sea", (23, 2): "tree", (10, 23): "table", (13, 17): "glass wall", (24, 4): "floor"}
+    # Spec 011: the bookshelf stands on a floor tile now and moved to the open ones.
+    blocks = {(2, 0): "plain wall", (31, 28): "Gym roof", (27, 37): "screen"}
+    opens = {(0, 0): "sea", (23, 2): "tree", (10, 23): "table", (13, 17): "glass wall", (24, 4): "floor", (30, 19): "bookshelf"}
     for (col, row), what in blocks.items():
         assert sight[row][col] == "#", what
     for (col, row), what in opens.items():
@@ -424,7 +428,7 @@ def test_a_ghost_sees_everyone_and_every_failed_exam_through_walls_and_at_any_di
 def test_during_a_meeting_everyone_sees_everyone_through_walls():
     game, viewer, target = pair_in(WALL_ROOM, (3, 4), (7, 4))
     assert target.id not in seen_ids(game, viewer)
-    game.bell(viewer.id)  # WALL_ROOM has no Auditorium and no bell place: nobody is moved
+    game.call_meeting(viewer.id)  # WALL_ROOM has no Auditorium and no bell place: nobody is moved
     assert game.phase == "meeting"
     for player in game.players.values():
         assert seen_ids(game, player) == set(game.players)
