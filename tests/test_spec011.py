@@ -941,7 +941,11 @@ def test_the_meeting_table_does_not_cover_furniture_or_a_task_place():
     campus = load_map()
     cx, cy = table_centre()
     occupied = [(c, r) for _, c, r in decor_tiles(campus, FURNITURE + ["beanbag"])]
-    occupied += [(task["x"], task["y"]) for task in campus["tasks"]]
+    occupied += [
+        (station["x"], station["y"])
+        for task in campus["tasks"]
+        for station in task.get("steps", [task])
+    ]
     occupied += [(door["x"], door["y"]) for door in campus["staff_doors"]] + [tuple(campus["light_switch"])]
     for col, row in occupied:
         x, y = centre(col, row)

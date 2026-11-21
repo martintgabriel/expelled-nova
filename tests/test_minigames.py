@@ -133,9 +133,13 @@ def expel(game, examiner, student):
 
 
 def test_no_campus_task_is_a_plain_waiting_task():
+    # "certificate" has two stations now (spec 012, part 4), so every station of every
+    # task is checked, not just the (no longer always present) top-level fields.
     for task in load_map()["tasks"]:
-        assert "seconds" not in task
-        assert task["minigame"] in minigames.KINDS
+        stations = task["steps"] if "steps" in task else [task]
+        for station in stations:
+            assert "seconds" not in station
+            assert station["minigame"] in minigames.KINDS
 
 
 def test_a_station_without_a_minigame_still_works_hold_still_as_before():
@@ -569,19 +573,20 @@ def test_task_input_and_task_cancel_messages_are_parsed_after_joining_and_reject
 
 
 def test_no_snapshot_contains_another_players_challenge():
+    # Examiners have real (fake) tasks and challenges of their own now (spec 012, part
+    # 3): nobody but `student` is doing anything in this round, so everyone else's
+    # "doing" (student and examiner alike) must be None, never a glimpse of this
+    # challenge.
     game, examiners, students = round_with("paper_jam", count=7)
     student = students[0]
     start_task(game, student, "paper_jam")
     for other_id, other in game.players.items():
         snapshot = game.snapshot_for(other_id)
-        assert all("challenge" not in task for task in snapshot.get("tasks", []))
+        assert all("challenge" not in task for task in snapshot["tasks"])
         if other is student:
             assert snapshot["doing"]["task"] == "paper_jam"
         else:
-            # Examiners don't have tasks yet (part 3 lands separately), so their
-            # snapshot has no "doing" key at all — that's an even stronger secrecy
-            # guarantee than an empty one.
-            assert snapshot.get("doing") is None or snapshot["doing"]["task"] == other.doing
+            assert snapshot["doing"] is None
 
 
 # --- WebSocket -----------------------------------------------------------------------
@@ -619,6 +624,7 @@ def test_a_student_solves_a_minigame_over_the_websocket_and_another_player_sees_
             ]
             assert [state["role"] for state in states] == ["student", "examiner", "student", "student"]
             ws, other, player = a, b, fresh_game.players[ids[0]]
+            other_player = fresh_game.players[ids[1]]
             task = states[0]["tasks"][0]
             assert task["id"] == "gate"
 
@@ -644,4 +650,5 @@ def test_a_student_solves_a_minigame_over_the_websocket_and_another_player_sees_
                 other, lambda m: m["type"] == "state" and m["task_progress"]["done"] == 1
             )
             assert seen["task_progress"]["done"] == 1
-            assert "tasks" not in seen
+            # The examiner's own (fake) tasks, never the student's.
+            assert [t["id"] for t in seen["tasks"]] == other_player.tasks

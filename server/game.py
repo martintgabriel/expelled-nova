@@ -395,10 +395,11 @@ class Game:
         for player in self.players.values():
             player.role = EXAMINER if player.id in examiners else STUDENT
             player.next_expel_tick = self.tick + EXPEL_COOLDOWN_TICKS  # first cooldown
-            if player.role == STUDENT:
-                # Different tasks for each student; a map with fewer tasks deals what it has.
-                count = min(TASKS_PER_STUDENT, len(self.tasks))
-                player.tasks = self.rng.sample(list(self.tasks), count)
+            # Different tasks for each player; a map with fewer tasks deals what it has.
+            # Examiners get the same count from the same pool as fake tasks (spec 012,
+            # part 3), which never count towards the task win (see _task_progress).
+            count = min(TASKS_PER_STUDENT, len(self.tasks))
+            player.tasks = self.rng.sample(list(self.tasks), count)
         self.next_sabotage_tick = self.tick + SABOTAGE_COOLDOWN_TICKS  # first cooldown
         self.phase = PLAYING
 
@@ -754,10 +755,13 @@ class Game:
         """A student or a living examiner starts one of their own open tasks at its
         current station's place (spec 012, part 4: a multi-step task has more than one).
 
-        A station with a mini-game creates a challenge (see server/minigames.py); a
-        station without one (test maps only) runs for its seconds, as spec 004 built it.
-        The sender is checked before the task: an unknown task and another player's task
-        get the same reason, so a browser cannot find out other players' tasks by trying.
+        A living examiner has fake tasks exactly like a student's real ones (spec 012,
+        part 3), except a ghost examiner cannot start one; a ghost student still can,
+        unchanged (R4). A station with a mini-game creates a challenge (see
+        server/minigames.py); a station without one (test maps only) runs for its
+        seconds, as spec 004 built it. The sender is checked before the task: an unknown
+        task and another player's task get the same reason, so a browser cannot find out
+        other players' tasks by trying.
         """
         player = self.players.get(player_id)
         if player is None:
@@ -768,8 +772,8 @@ class Game:
             raise GameError("Meeting in progress")
         if self.phase != PLAYING:
             raise GameError("The game has not started yet")
-        if player.role != STUDENT:
-            raise GameError("Only students have tasks")
+        if player.role == EXAMINER and not player.alive:
+            raise GameError("Ghosts cannot do tasks")
         if not isinstance(task_id, str):
             raise GameError("Task must be a task id")
         if task_id not in player.tasks:
@@ -1231,8 +1235,9 @@ class Game:
           (expel and staff door).
         - A ghost (and everyone once the game has ended) sees all players and who is a ghost.
         - Only in ENDED does anyone get other players' roles, together with the winner.
-        - From the start on, everyone gets the shared task progress. A student also gets
-          their own tasks and the one they are doing; never another player's (spec 004).
+        - From the start on, everyone gets the shared task progress (students only, spec
+          004) and their own tasks and the one they are doing, student or examiner alike
+          (spec 012, part 3: an examiner's are fake); never another player's.
         - From the start on, everyone gets whether the lights are on and how far they
           themselves see. A student also gets their own fixing, an examiner the cooldown.
         """
@@ -1259,20 +1264,22 @@ class Game:
                 state["sabotage_cooldown"] = self._seconds_until(self.next_sabotage_tick)
             done, total = self._task_progress()
             state["task_progress"] = {"done": done, "total": total}
-            if me.role == STUDENT:
-                state["tasks"] = [self._task_for(me, task_id) for task_id in me.tasks]
-                state["doing"] = None
-                state["task_note"] = me.task_note
-                if me.doing is not None:
-                    if me.challenge is not None:
-                        state["doing"] = {
-                            "task": me.doing,
-                            "seconds_left": self._seconds_until(me.challenge["deadline_tick"]),
-                            "challenge": minigames.public_view(me.challenge, self.tick, TICK_RATE),
-                        }
-                    else:
-                        seconds_left = self._seconds_until(me.doing_done_tick)
-                        state["doing"] = {"task": me.doing, "seconds_left": seconds_left}
+            # Every player has tasks from here on, student or examiner (spec 012, part
+            # 3): an examiner's are fake and never count in task_progress above, but the
+            # shape of what they receive is exactly a student's.
+            state["tasks"] = [self._task_for(me, task_id) for task_id in me.tasks]
+            state["doing"] = None
+            state["task_note"] = me.task_note
+            if me.doing is not None:
+                if me.challenge is not None:
+                    state["doing"] = {
+                        "task": me.doing,
+                        "seconds_left": self._seconds_until(me.challenge["deadline_tick"]),
+                        "challenge": minigames.public_view(me.challenge, self.tick, TICK_RATE),
+                    }
+                else:
+                    seconds_left = self._seconds_until(me.doing_done_tick)
+                    state["doing"] = {"task": me.doing, "seconds_left": seconds_left}
         if see_ghosts:
             state["ghosts"] = [p.id for p in self.players.values() if not p.alive]
         if me.role == EXAMINER:
