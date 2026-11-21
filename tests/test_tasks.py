@@ -177,7 +177,7 @@ def test_every_campus_task_is_on_a_floor_tile_in_its_area_and_takes_5_to_10_seco
         assert game.area_at(x, y) == task["area"], task["id"]
         assert 5 <= task["seconds"] <= 10, task["id"]
         assert task["title"] and task["joke"], task["id"]
-        assert [task["x"], task["y"]] != campus["bell"], task["id"]
+        assert [task["x"], task["y"]] != campus["meeting_point"], task["id"]
 
 
 def test_the_task_constants():
@@ -352,7 +352,7 @@ def test_the_lobby_has_no_task_fields_and_every_later_phase_has_the_progress():
     for player in players:
         assert progress(game, player) == {"done": 0, "total": 9}  # playing
     student = next(p for p in players if p.role == "student")
-    game.bell(student.id)
+    game.call_meeting(student.id)
     for player in players:
         assert progress(game, player) == {"done": 0, "total": 9}  # meeting
     examiner = next(p for p in players if p.role == "examiner")
@@ -373,7 +373,7 @@ def task_in_the_lobby():
 
 def task_in_a_meeting():
     game, _, students = new_round(4)
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     go_to(game, students[0], students[0].tasks[0])
     return game, lambda: game.task(students[0].id, students[0].tasks[0])
 
@@ -553,7 +553,7 @@ def test_reliability_a_meeting_cancels_every_running_task_and_none_finishes_in_i
         go_to(game, student, student.tasks[0])
         game.task(student.id, student.tasks[0])
     wait(game, 40)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     assert all(doing(game, student) is None for student in students)
     for student in students:
         go_to(game, student, student.tasks[0])  # even standing on the task place
@@ -589,7 +589,7 @@ def test_reliability_a_bell_in_the_tick_before_a_task_would_finish_wins():
     go_to(game, student, task_id)
     game.task(student.id, task_id)
     wait(game, ticks_of(game, task_id) - 1)
-    game.bell(students[1].id)  # processed before the tick that would finish the task
+    game.call_meeting(students[1].id)  # processed before the tick that would finish the task
     game.step()
     assert game.phase == "meeting"
     assert entry(game, student, task_id)["done"] is False
@@ -749,7 +749,7 @@ def test_no_snapshot_contains_another_players_tasks_in_any_phase():
     go_to(game, students[1], students[1].tasks[0])
     game.task(students[1].id, students[1].tasks[0])
     check()  # one task done, one running
-    game.bell(students[2].id)
+    game.call_meeting(students[2].id)
     check()  # meeting
     for examiner in examiners:
         game.leave(examiner.id)

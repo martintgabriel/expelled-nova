@@ -226,7 +226,7 @@ def meeting_of(game, player):
 
 def test_a_student_voting_for_themself_is_rejected_and_nothing_changes():
     game, _, students = started(4)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     me = students[1]
     assert_rejected(game, lambda: game.vote(me.id, me.id), SELF_VOTE)
     assert meeting_of(game, me)["my_vote"] is None
@@ -235,13 +235,13 @@ def test_a_student_voting_for_themself_is_rejected_and_nothing_changes():
 
 def test_an_examiner_voting_for_themself_is_rejected_and_nothing_changes():
     game, (examiner,), students = started(4)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     assert_rejected(game, lambda: game.vote(examiner.id, examiner.id), SELF_VOTE)
 
 
 def test_a_self_vote_after_other_votes_does_not_touch_them():
     game, (examiner,), students = started(4)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     game.vote(students[0].id, students[1].id)
     game.vote(examiner.id, "skip")
     assert_rejected(game, lambda: game.vote(students[1].id, students[1].id), SELF_VOTE)
@@ -254,7 +254,7 @@ def test_a_self_vote_after_other_votes_does_not_touch_them():
 @pytest.mark.parametrize("choice", ["another player", "skip"])
 def test_after_a_rejected_self_vote_the_player_can_still_vote(choice):
     game, (examiner,), students = started(4)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     me = students[1]
     with pytest.raises(GameError, match=SELF_VOTE):
         game.vote(me.id, me.id)
@@ -266,7 +266,7 @@ def test_after_a_rejected_self_vote_the_player_can_still_vote(choice):
 
 def test_everyone_else_can_still_vote_a_player_out():
     game, (examiner,), students = started(4)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     for student in students:
         game.vote(student.id, examiner.id)
     with pytest.raises(GameError, match=SELF_VOTE):
@@ -288,13 +288,13 @@ def test_a_ghost_voting_for_itself_is_told_that_ghosts_cannot_vote():
     for _ in range(examiner.next_expel_tick - game.tick):
         game.step()
     game.expel(examiner.id, ghost.id)
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     assert_rejected(game, lambda: game.vote(ghost.id, ghost.id), "Ghosts cannot vote")
 
 
 def test_a_self_vote_during_the_result_is_told_that_voting_has_closed():
     game, _, students = started(4)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     for player in list(game.players.values()):
         game.vote(player.id, "skip")
     game.step()  # the voting closes
@@ -303,14 +303,14 @@ def test_a_self_vote_during_the_result_is_told_that_voting_has_closed():
 
 def test_a_self_vote_after_having_voted_is_told_that_the_vote_is_cast():
     game, (examiner,), students = started(4)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     game.vote(students[1].id, examiner.id)
     assert_rejected(game, lambda: game.vote(students[1].id, students[1].id), "You have already voted")
 
 
 def test_a_rejected_self_vote_does_not_close_the_voting():
     game, (examiner,), students = started(4)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     me = students[1]
     for voter in [examiner, students[0], students[2]]:
         game.vote(voter.id, "skip")
@@ -360,7 +360,7 @@ def test_self_vote_over_websocket_gets_an_error_and_the_player_can_vote_again(fr
             # At the bell (part 4).
             ringer = fresh_game.players[ids[0]]
             go_to_bell(ringer)
-            a.send_json({"type": "bell"})
+            a.send_json({"type": "meeting"})
             receive_until(a, in_meeting)
 
             a.send_json({"type": "vote", "target": ids[0]})
@@ -505,15 +505,18 @@ def test_a_ghost_slides_along_the_map_edge():
     assert path[-1][0] == pytest.approx(80 + 5 * STEP / 2**0.5)  # the free axis moves
 
 
-def test_a_ghost_inside_a_wall_is_seated_in_the_auditorium_when_a_meeting_starts():
+# Spec 011: a meeting places everyone around the meeting table, not in the Auditorium.
+def test_a_ghost_inside_a_wall_is_placed_at_the_meeting_table_when_a_meeting_starts():
     game, (examiner,), students = started(5, campus=load_map())
     ghost = make_ghost(game, examiner, students[0])
     ghost.x, ghost.y = 27.5 * TILE, 17.5 * TILE  # in the wall between Food Court and Library
     assert game.blocked(ghost.x, ghost.y)
     ringer = students[1]
     go_to_bell(ringer)  # part 4: the bell
-    game.bell(ringer.id)
-    assert game.area_at(ghost.x, ghost.y) == "Auditorium"
+    game.call_meeting(ringer.id)
+    table_x, table_y = bell_centre()
+    distance = ((ghost.x - table_x) ** 2 + (ghost.y - table_y) ** 2) ** 0.5
+    assert distance == pytest.approx(game_rules.MEETING_CIRCLE)
     assert not game.blocked(ghost.x, ghost.y)
 
 
@@ -533,13 +536,16 @@ def test_after_a_new_round_the_former_ghost_is_blocked_by_walls_again():
 # Part 4: the bell rings only at one place
 # =====================================================================================
 
-BELL_RANGE = 48  # px from the player's centre to the bell's tile centre, about 1.5 tiles
-TOO_FAR = "Too far from the bell"
+# Spec 011: the bell became the meeting table. The helpers below keep their names; the
+# range is now measured from the table's edge instead of from the middle of the bell's tile.
+BELL_RANGE = 48  # px from the player's centre to the table's edge, about 1.5 tiles
+TABLE_REACH = game_rules.MEETING_TABLE_RADIUS + BELL_RANGE  # px from the table's middle
+TOO_FAR = "Too far from the meeting table"
 
 
 def bell_centre():
     """The centre of the campus bell's tile, in pixels."""
-    col, row = load_map()["bell"]
+    col, row = load_map()["meeting_point"]
     return (col + 0.5) * TILE, (row + 0.5) * TILE
 
 
@@ -565,25 +571,25 @@ def test_ringing_next_to_the_bell_starts_a_meeting():
     game, _, students = started(5, campus=load_map())
     ringer = students[0]
     go_to_bell(ringer)
-    game.bell(ringer.id)
+    game.call_meeting(ringer.id)
     assert game.phase == "meeting"
     meeting = meeting_of(game, students[1])
-    assert (meeting["reason"], meeting["called_by"]) == ("bell", ringer.id)
-    assert game.snapshot_for(ringer.id)["bell_used"] is True
+    assert (meeting["reason"], meeting["called_by"]) == ("button", ringer.id)
+    assert game.snapshot_for(ringer.id)["meeting_used"] is True
 
 
-@pytest.mark.parametrize("dx, dy", [(BELL_RANGE, 0), (-BELL_RANGE, 0), (0, BELL_RANGE), (0, -BELL_RANGE)])
+@pytest.mark.parametrize("dx, dy", [(TABLE_REACH, 0), (-TABLE_REACH, 0), (0, TABLE_REACH), (0, -TABLE_REACH)])
 def test_ringing_from_exactly_the_bell_range_is_accepted(dx, dy):
     game, _, students = started(5, campus=load_map())
     go_to_bell(students[0], dx, dy)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     assert game.phase == "meeting"
 
 
 def test_an_examiner_can_ring_the_bell_too():
     game, (examiner,), _ = started(5, campus=load_map())
     go_to_bell(examiner)
-    game.bell(examiner.id)
+    game.call_meeting(examiner.id)
     assert game.phase == "meeting"
 
 
@@ -591,10 +597,10 @@ def test_a_bell_rejected_for_distance_is_not_used_up():
     game, _, students = started(5, campus=load_map())
     ringer = students[0]
     with pytest.raises(GameError, match=TOO_FAR):
-        game.bell(ringer.id)  # still on the spawn in the Main Entrance
-    assert game.snapshot_for(ringer.id)["bell_used"] is False
+        game.call_meeting(ringer.id)  # still on the spawn in the Main Entrance
+    assert game.snapshot_for(ringer.id)["meeting_used"] is False
     go_to_bell(ringer)
-    game.bell(ringer.id)
+    game.call_meeting(ringer.id)
     assert game.phase == "meeting"
 
 
@@ -603,59 +609,60 @@ def test_a_bell_rejected_for_distance_is_not_used_up():
 
 def bell_from_the_spawn():
     game, _, students = started(5, campus=load_map())
-    return game, lambda: game.bell(students[0].id)
+    return game, lambda: game.call_meeting(students[0].id)
 
 
 def bell_one_pixel_beyond_the_range():
     game, _, students = started(5, campus=load_map())
-    go_to_bell(students[0], dx=BELL_RANGE + 1)
-    return game, lambda: game.bell(students[0].id)
+    go_to_bell(students[0], dx=TABLE_REACH + 1)
+    return game, lambda: game.call_meeting(students[0].id)
 
 
 def bell_from_a_corner_of_the_square_around_it():
-    # 34 px right and 34 px down is about 48.1 px away: the range is a circle.
+    # 63 px right and 63 px down is about 89.1 px away (the reach is 88): the range is a circle.
     game, _, students = started(5, campus=load_map())
-    go_to_bell(students[0], dx=34, dy=34)
-    return game, lambda: game.bell(students[0].id)
+    go_to_bell(students[0], dx=63, dy=63)
+    return game, lambda: game.call_meeting(students[0].id)
 
 
 def ghost_at_the_bell():
     game, (examiner,), students = started(5, campus=load_map())
     ghost = make_ghost(game, examiner, students[0])
     go_to_bell(ghost)
-    return game, lambda: game.bell(ghost.id)
+    return game, lambda: game.call_meeting(ghost.id)
 
 
 def second_time_at_the_bell():
     game, _, students = started(5, campus=load_map())
     go_to_bell(students[0])
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     skip_meeting(game)
     go_to_bell(students[0])
-    return game, lambda: game.bell(students[0].id)
+    return game, lambda: game.call_meeting(students[0].id)
 
 
 def second_time_far_from_the_bell():
     game, _, students = started(5, campus=load_map())
     go_to_bell(students[0])
-    game.bell(students[0].id)
-    skip_meeting(game)  # everyone is in the Auditorium now, far from the bell
-    return game, lambda: game.bell(students[0].id)
+    game.call_meeting(students[0].id)
+    skip_meeting(game)
+    go_to_bell(students[0], dy=-10 * TILE)  # spec 011: walked away, far from the table
+    return game, lambda: game.call_meeting(students[0].id)
 
 
 def at_the_bell_in_the_lobby():
     game = Game(load_map())
     players = [game.join(f"Player {i}") for i in range(4)]
     go_to_bell(players[0])
-    return game, lambda: game.bell(players[0].id)
+    return game, lambda: game.call_meeting(players[0].id)
 
 
 def at_the_bell_during_a_meeting():
     game, _, students = started(5, campus=load_map())
     go_to_bell(students[0])
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     go_to_bell(students[1])
-    return game, lambda: game.bell(students[1].id)
+    return game, lambda: game.call_meeting(students[1].id)
 
 
 def at_the_bell_after_the_end():
@@ -663,7 +670,7 @@ def at_the_bell_after_the_end():
     make_ghost(game, examiner, students[0])
     make_ghost(game, examiner, students[1])  # the examiners win
     go_to_bell(students[2])
-    return game, lambda: game.bell(students[2].id)
+    return game, lambda: game.call_meeting(students[2].id)
 
 
 @pytest.mark.parametrize(
@@ -672,9 +679,9 @@ def at_the_bell_after_the_end():
         (bell_from_the_spawn, TOO_FAR),
         (bell_one_pixel_beyond_the_range, TOO_FAR),
         (bell_from_a_corner_of_the_square_around_it, TOO_FAR),
-        (ghost_at_the_bell, "Ghosts cannot ring the bell"),
-        (second_time_at_the_bell, "You have already rung the bell"),
-        (second_time_far_from_the_bell, "You have already rung the bell"),
+        (ghost_at_the_bell, "Ghosts cannot call a meeting"),
+        (second_time_at_the_bell, "You have already called a meeting"),
+        (second_time_far_from_the_bell, "You have already called a meeting"),
         (at_the_bell_in_the_lobby, "The game has not started yet"),
         (at_the_bell_during_a_meeting, "A meeting is already running"),
         (at_the_bell_after_the_end, "Game is over"),
@@ -690,17 +697,17 @@ def test_rejected_bell_changes_nothing(case, reason):
 
 
 def test_the_bell_range_is_about_one_and_a_half_tiles():
-    assert game_rules.BELL_RANGE == BELL_RANGE == 1.5 * TILE
+    assert game_rules.MEETING_RANGE == BELL_RANGE == 1.5 * TILE
 
 
 def test_the_campus_bell_is_a_floor_tile_in_the_middle_of_the_map():
     campus = load_map()
     game = Game(campus)
-    col, row = campus["bell"]
+    col, row = campus["meeting_point"]
     assert type(col) is int and type(row) is int
     assert campus["grid"][row][col] == "."
     assert not game.blocked(*bell_centre())
-    assert game.area_at(*bell_centre()) == "Courtyard"
+    assert game.area_at(*bell_centre()) is None  # spec 011: in the spine, where all routes cross
     assert abs(col - len(campus["grid"][0]) / 2) <= 3
     assert abs(row - len(campus["grid"]) / 2) <= 3
 
@@ -715,14 +722,14 @@ def test_the_campus_bell_can_be_reached_from_the_first_spawn():
             continue
         seen.add((col, row))
         todo += [(col + 1, row), (col - 1, row), (col, row + 1), (col, row - 1)]
-    assert tuple(campus["bell"]) in seen
+    assert tuple(campus["meeting_point"]) in seen
 
 
 def test_a_map_without_a_bell_place_rings_anywhere():
     # The small test maps have no "bell": like a map without an Auditorium, they still work.
     game, _, students = started(4)  # HALL_MAP
     students[0].x, students[0].y = 26.5 * TILE, 13.5 * TILE
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     assert game.phase == "meeting"
 
 
@@ -738,21 +745,21 @@ def test_bell_over_websocket_is_rejected_far_away_and_accepted_at_the_bell(fresh
             for ws, name in zip([a, b, c, d], ["Ada", "Bo", "Cy", "Di"]):
                 ws.send_json({"type": "join", "name": name})
                 welcome = receive_until(ws, lambda m: m["type"] == "welcome")
-                assert welcome["bell_range"] == BELL_RANGE
-                assert welcome["map"]["bell"] == load_map()["bell"]
+                assert welcome["meeting_range"] == BELL_RANGE
+                assert welcome["map"]["meeting_point"] == load_map()["meeting_point"]
                 ids.append(welcome["id"])
             a.send_json({"type": "start"})
             receive_until(a, lambda m: m["type"] == "state" and m["phase"] == "playing")
 
-            a.send_json({"type": "bell"})  # from the spawn in the Main Entrance
+            a.send_json({"type": "meeting"})  # from the spawn in the Main Entrance
             assert receive_until(a, lambda m: m["type"] == "error")["reason"] == TOO_FAR
             state = receive_until(a, lambda m: m["type"] == "state")
-            assert (state["phase"], state["bell_used"]) == ("playing", False)
+            assert (state["phase"], state["meeting_used"]) == ("playing", False)
 
             go_to_bell(fresh_game.players[ids[0]])
-            a.send_json({"type": "bell"})
+            a.send_json({"type": "meeting"})
             meeting = receive_until(b, in_meeting)["meeting"]
-            assert (meeting["reason"], meeting["called_by"]) == ("bell", ids[0])
+            assert (meeting["reason"], meeting["called_by"]) == ("button", ids[0])
 
 
 # =====================================================================================
@@ -802,11 +809,11 @@ def test_a_changed_file_is_sent_again_in_full(tmp_path):
     old = client.get("/render.js")
     assert old.text == "const Render = 1;"
 
-    script.write_text("const Render = 2; // with makeBell")  # a deploy changes the file
+    script.write_text("const Render = 2; // with makeMeetingPoint")  # a deploy changes the file
     os.utime(script, (2_000, 2_000))
     new = client.get("/render.js", headers={"If-None-Match": old.headers["etag"]})
     assert new.status_code == 200
-    assert new.text == "const Render = 2; // with makeBell"
+    assert new.text == "const Render = 2; // with makeMeetingPoint"
     assert new.headers["etag"] != old.headers["etag"]
     assert new.headers["cache-control"] == "no-cache"
 
@@ -839,7 +846,7 @@ def test_an_etag_from_another_file_does_not_count_as_unchanged():
         other = client.get("/main.js").headers["etag"]
         response = client.get("/render.js", headers={"If-None-Match": other})
     assert response.status_code == 200
-    assert "makeBell" in response.text
+    assert "makeMeetingPoint" in response.text
 
 
 # =====================================================================================
@@ -874,7 +881,7 @@ def stand_at(player, col, row):
 def vote_out(game, ringer, target):
     """A meeting in which everyone else votes for `target`; it runs to its end."""
     go_to_bell(ringer)
-    game.bell(ringer.id)
+    game.call_meeting(ringer.id)
     for player in [p for p in game.players.values() if p.alive]:
         game.vote(player.id, "skip" if player is target else target.id)
     game.step()
@@ -958,7 +965,7 @@ def door_by_a_ghost_examiner():
 def door_during_a_meeting():
     game, (examiner,), students = started(5, campus=load_map())
     go_to_bell(students[0])
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     stand_on(examiner, "library")
     return game, lambda: game.use_door(examiner.id, "food-court")
 
@@ -1120,7 +1127,7 @@ def test_the_campus_has_three_or_four_staff_doors_on_reachable_floor_tiles():
             continue
         seen.add((col, row))
         todo += [(col + 1, row), (col - 1, row), (col, row + 1), (col, row - 1)]
-    taken = [campus["bell"]] + campus["spawns"] + [[t["x"], t["y"]] for t in campus["tasks"]]
+    taken = [campus["meeting_point"]] + campus["spawns"] + [[t["x"], t["y"]] for t in campus["tasks"]]
     for door in staff_doors:
         assert set(door) == {"id", "name", "x", "y"}
         assert door["id"] and door["name"]
@@ -1253,7 +1260,7 @@ def test_a_ghost_sees_through_walls():
 def test_in_a_meeting_everyone_sees_everyone_through_walls():
     game, viewer, target = pair_at((3, 4), (7, 4))
     assert target.id not in seen_ids(game, viewer)
-    game.bell(viewer.id)  # SIGHT_MAP has no Auditorium: nobody is moved
+    game.call_meeting(viewer.id)  # SIGHT_MAP has no Auditorium: nobody is moved
     assert seen_ids(game, viewer) == seen_ids(game, target) == set(game.players)
 
 
@@ -1505,7 +1512,7 @@ def sabotage_by_a_student():
 
 def sabotage_by_a_ghost_examiner():
     game, (first, second), students = started(7, campus=LIGHT_MAP)
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     for player in list(game.players.values()):
         game.vote(player.id, "skip" if player is first else first.id)
     game.step()
@@ -1522,7 +1529,7 @@ def sabotage_during_the_first_cooldown():
 
 def sabotage_during_a_meeting():
     game, (examiner,), students = lights_round()
-    game.bell(students[0].id)
+    game.call_meeting(students[0].id)
     return game, lambda: game.sabotage(examiner.id)
 
 
@@ -1616,7 +1623,7 @@ def task_while_fixing():
 
 def fix_during_a_meeting():
     game, _, students = dark_round()
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     go_to_switch(students[0])
     return game, lambda: game.fix(students[0].id)
 
@@ -1817,7 +1824,7 @@ def test_a_meeting_turns_the_lights_back_on_and_cancels_a_running_fix():
     game.fix(students[0].id)
     for _ in range(20):
         game.step()
-    game.bell(students[1].id)
+    game.call_meeting(students[1].id)
     assert lights(game) is True
     assert fixing(game, students[0]) is None
     skip_meeting(game)
@@ -1864,7 +1871,7 @@ def test_the_campus_light_switch_is_a_free_floor_tile_in_student_services():
     assert type(col) is int and type(row) is int
     assert campus["grid"][row][col] == "."
     assert game.area_at((col + 0.5) * TILE, (row + 0.5) * TILE) == "Student Services"
-    taken = [campus["bell"]] + campus["spawns"]
+    taken = [campus["meeting_point"]] + campus["spawns"]
     taken += [[t["x"], t["y"]] for t in campus["tasks"]] + [[d["x"], d["y"]] for d in campus["staff_doors"]]
     assert [col, row] not in taken
     # No task place is within reach of the switch, so one key can serve both.

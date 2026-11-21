@@ -18,12 +18,14 @@ from server.main import app
 
 TILE = 32
 AREA_NAMES = {"Main Entrance", "Library", "Food Court", "Auditorium", "Student Services", "Courtyard"}
-SOLID_KINDS = {
-    "sea", "solar", "greenroof", "roof", "glasswall", "counter", "shelf", "desk", "studytable",
-    "table", "cafetable", "woodtable", "shopshelf", "foodcounter", "piano", "screen", "steps",
-    "picnic", "tree",
+# Spec 011: furniture and plants no longer block walking, so they moved from the solid
+# kinds to the floor kinds.
+SOLID_KINDS = {"sea", "solar", "greenroof", "roof", "glasswall", "screen"}
+FLOOR_KINDS = {
+    "sand", "paving", "grass", "terrace", "pergola", "glassroof", "shopfloor", "seats", "beanbag",
+    "counter", "shelf", "desk", "studytable", "table", "cafetable", "woodtable", "shopshelf",
+    "foodcounter", "piano", "steps", "picnic", "tree",
 }
-FLOOR_KINDS = {"sand", "paving", "grass", "terrace", "pergola", "glassroof", "shopfloor", "seats", "beanbag"}
 
 # A small valid map: a 6 x 5 room with walls all around (columns/rows 0 and the last).
 SMALL = {
@@ -125,18 +127,20 @@ def test_each_courtyard_is_a_courtyard_and_spine_beach_and_plaza_are_corridors()
         assert game.area_at(*centre(col, row)) is None
 
 
-def test_the_auditorium_seats_ten_players_who_are_never_neighbours():
+# Spec 011: a meeting no longer seats the players in the Auditorium. Everyone stands in a
+# circle around the meeting table, so this test checks the circle instead of the seats.
+def test_the_meeting_table_has_a_free_place_for_ten_players_who_do_not_overlap():
     game = Game(load_map())
-    seats = game._meeting_tiles()
-    assert len(set(seats)) >= MAX_PLAYERS
-    first = seats[:MAX_PLAYERS]
-    for col, row in first:
-        assert not game.blocked(*centre(col, row))
-        assert game.area_at(*centre(col, row)) == "Auditorium"
-    for (c1, r1) in first:
-        for (c2, r2) in first:
-            if (c1, r1) != (c2, r2):
-                assert abs(c1 - c2) + abs(r1 - r2) > 1
+    for index in range(MAX_PLAYERS):
+        game.join(f"Player {index}")
+    spots = game._meeting_spots()
+    assert len(spots) == MAX_PLAYERS
+    for x, y in spots:
+        assert not game.blocked(x, y)
+        assert game.area_at(x, y) != "Auditorium"
+    for index, (x1, y1) in enumerate(spots):
+        for x2, y2 in spots[index + 1 :]:
+            assert max(abs(x1 - x2), abs(y1 - y2)) >= 2 * game_rules.PLAYER_HALF
 
 
 def test_the_longest_walk_from_the_first_spawn_is_at_most_60_tiles():
@@ -152,7 +156,7 @@ def test_bell_staff_doors_and_light_switch_are_free_reachable_floor_tiles():
     reachable = walk_distances(campus, campus["spawns"][0])
     spawns = {tuple(s) for s in campus["spawns"]}
     tasks = {(t["x"], t["y"]) for t in campus["tasks"]}
-    places = [tuple(campus["bell"]), tuple(campus["light_switch"])]
+    places = [tuple(campus["meeting_point"]), tuple(campus["light_switch"])]
     places += [(d["x"], d["y"]) for d in campus["staff_doors"]]
     for place in places:
         assert place in reachable, place
@@ -202,7 +206,9 @@ def test_the_campus_labels_name_the_halls_and_the_beach():
         ({"kind": "sea", "x": 5, "y": 0, "w": 2, "h": 1}, "outside"),  # past the right edge
         ({"kind": "sea", "x": 0, "y": 4, "w": 1, "h": 2}, "outside"),  # past the bottom edge
         ({"kind": "sea", "x": -1, "y": 0, "w": 1, "h": 1}, "outside"),
-        ({"kind": "tree", "x": 2, "y": 2, "w": 1, "h": 1}, "floor"),  # a solid kind on a floor tile
+        # Spec 011: a tree is furniture now and belongs on a floor tile; a roof is still solid.
+        ({"kind": "roof", "x": 2, "y": 2, "w": 1, "h": 1}, "floor"),  # a solid kind on a floor tile
+        ({"kind": "tree", "x": 0, "y": 0, "w": 1, "h": 1}, "wall"),  # furniture on a wall tile
     ],
 )
 def test_a_broken_decor_entry_is_rejected(entry, reason):

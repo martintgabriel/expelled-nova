@@ -232,7 +232,7 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
 
 /* --- Meetings and votes (spec 006) --- */
 
-/* Report, Bell and Expel share the corner (the Expel button sat there alone before). */
+/* Report, Call a meeting and Expel share the corner (the Expel button sat there alone before). */
 #actions {
   position: fixed;
   right: calc(16px + env(safe-area-inset-right));
@@ -245,13 +245,27 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   z-index: 6;
 }
 #report-button { background: #9fd3ff; }
-#bell-button:disabled { opacity: 0.55; cursor: not-allowed; }
+#meeting-button { background: #ff8a80; }
+#meeting-button:disabled { opacity: 0.55; cursor: not-allowed; }
 /* At least 56 px high everywhere: a comfortable thumb target on a phone (spec 007). */
 #actions button { min-height: 56px; min-width: 56px; }
 
-/* Lighter than the other overlays, so the Auditorium stays visible behind the card. */
-#meeting-screen { background: rgba(20, 22, 26, 0.55); }
-.meeting-card { max-width: 420px; max-height: calc(100vh - 32px); overflow-y: auto; }
+/* Much lighter than the other overlays and with the card at the right side, so everyone
+   standing around the meeting table stays visible (spec 011). main.js moves the camera
+   so the table shows in the part of the window the card leaves free. */
+#meeting-screen { background: rgba(20, 22, 26, 0.3); justify-content: flex-end; }
+.meeting-card {
+  max-width: min(420px, 50vw);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #4a4e57 transparent;
+}
+/* A window higher than wide (a phone held upright): the card at the bottom instead. */
+@media (orientation: portrait) {
+  #meeting-screen { justify-content: center; align-items: flex-end; }
+  .meeting-card { max-width: 420px; max-height: 60vh; }
+}
 .meeting-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .timer {
   flex-shrink: 0;

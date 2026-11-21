@@ -1,4 +1,4 @@
-// All drawing code (spec 005): the map, the characters, the failed exams, the bell, the staff
+// All drawing code (spec 005): the map, the characters, the failed exams, the meeting table, the staff
 // doors, the light switch, the task markers and the darkness.
 // Everything is drawn here from simple shapes and text: there are no image files.
 // main.js decides WHAT to draw from the server's state; this file decides HOW it looks.
@@ -82,22 +82,27 @@ const Render = (() => {
   }
 
   // --- Map ---------------------------------------------------------------------------
-  // Spec 009: the Nova campus. The grid says where one can walk; the optional "decor" list
-  // says how tiles look (solid kinds sit on wall tiles, floor kinds are painted on floor
-  // tiles) and "labels" name places that are not areas. Drawn once when the scene starts.
+  // Spec 009: the Nova campus. The grid says where one can walk. The optional "decor" list
+  // says how tiles look and "labels" name places that are not areas. Spec 011 sorts the
+  // decor into three groups (the same as in server/game.py):
+  //   solid kinds lie on wall tiles: the sea, glass, roofs and screens;
+  //   ground kinds colour the floor: grass, paving, sand, ...;
+  //   furniture stands on floor tiles and is walked over: tables, desks, trees, ...
+  // A wall tile that blocks sight (the server's sight grid) is drawn as a flat block with a
+  // sharp edge line; glass is a thin pane on the floor. Drawn once when the scene starts.
 
   const FLOOR_A = 0xf0f1f2; // polished concrete, two shades for a tiled look
   const FLOOR_B = 0xe8eaec;
-  const OUTSIDE = 0x2f3439; // around the campus: not part of the game
-  const ROOF = 0xc3c6c8; // a building wall seen from above
-  const GLASS = 0x9cc3d6;
-  const GLASS_EDGE = 0xc9dde7;
-  const SOLID_ORDER = [
-    "sea", "solar", "greenroof", "roof", "glasswall", "counter", "shelf", "desk", "studytable",
-    "table", "cafetable", "woodtable", "shopshelf", "foodcounter", "piano", "screen", "steps",
-    "picnic", "tree",
+  const WALL_TOP = 0x343a46; // an opaque wall seen from above: one flat colour
+  const WALL_EDGE = 0x5d6679; // the line along every side where a wall ends
+  const GLASS = 0xa6dcf7;
+  const GLASS_LINE = 0x3f8fb8;
+  const SOLID_ORDER = ["sea", "solar", "greenroof", "roof", "glasswall", "screen"];
+  const GROUND_ORDER = ["shopfloor", "sand", "paving", "grass", "terrace", "pergola", "glassroof", "seats"];
+  const FURNITURE_ORDER = [
+    "beanbag", "steps", "counter", "shelf", "desk", "studytable", "table", "cafetable", "woodtable",
+    "shopshelf", "foodcounter", "piano", "picnic", "tree",
   ];
-  const FLOOR_ORDER = ["shopfloor", "sand", "paving", "grass", "terrace", "pergola", "glassroof", "seats", "beanbag"];
   const OUTDOOR_FLOOR = { paving: [0xd2c4aa, 0xcabb9f], grass: [0x86b45a, 0x86b45a], terrace: [0xe9e6df, 0xe1ddd4] };
   const BEANBAG_COLORS = [0xd9412e, 0xf2b632, 0x4caf50, 0xd9412e, 0x2f80c3];
   const PRODUCT_COLORS = [0xe53935, 0x43a047, 0xfdd835, 0x1e88e5, 0xfb8c00, 0x8e24aa];
@@ -116,11 +121,14 @@ const Render = (() => {
   }
 
   // Draws the campus from the server's map data and returns its size in pixels.
-  function drawMap(scene, map) {
+  // `sight` is the server's sight grid from "welcome": "#" marks a tile that blocks sight.
+  function drawMap(scene, map, sight) {
     const t = map.tile_size;
     const rows = map.grid.length;
     const cols = map.grid[0].length;
-    const isFloor = (col, row) => row >= 0 && row < rows && col >= 0 && col < cols && map.grid[row][col] === ".";
+    const inside = (col, row) => row >= 0 && row < rows && col >= 0 && col < cols;
+    const isFloor = (col, row) => inside(col, row) && map.grid[row][col] === ".";
+    const isOpaque = (col, row) => inside(col, row) && sight[row][col] === "#";
     const random = seeded(7);
     const pick = (list) => list[Math.floor(random() * list.length)];
     const g = scene.add.graphics();
@@ -135,7 +143,7 @@ const Render = (() => {
       const solid = SOLID_ORDER.includes(entry.kind);
       for (let row = entry.y; row < entry.y + entry.h; row++) {
         for (let col = entry.x; col < entry.x + entry.w; col++) {
-          if (solid === isFloor(col, row)) continue; // solid on walls, floor kinds on floor
+          if (solid === isFloor(col, row)) continue; // solid on walls, the other kinds on floor
           const key = col + "," + row;
           if (!kinds.has(key)) kinds.set(key, []);
           kinds.get(key).push(entry.kind);
@@ -150,36 +158,26 @@ const Render = (() => {
       const area = areaAt(col, row);
       if (area && area.name !== "Courtyard") rect(col, row, Phaser.Display.Color.HexStringToColor(area.color).color, 0.31);
     };
-    // The ground under a tree or table outdoors: the paving, grass or terrace next to it.
-    const groundNear = (col, row) => {
-      for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        for (const kind of ["paving", "grass", "terrace"]) if (has(col + dc, row + dr, kind)) return kind;
-      }
-      return null;
+    // Calls draw(col, row, x, y) for every tile, row by row.
+    const eachTile = (draw) => {
+      for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) draw(col, row, col * t, row * t);
     };
 
     g.fillStyle(BACKDROP).fillRect(0, 0, cols * t, rows * t);
 
-    // 1. Floor: polished concrete, the area's tint, then the floor decor.
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        if (!isFloor(col, row)) continue;
-        const x = col * t;
-        const y = row * t;
-        rect(col, row, (col + row) % 2 ? FLOOR_A : FLOOR_B);
-        if ((col * 7 + row * 3) % 5 === 0) {
-          g.lineStyle(3 * u, 0xffffff, 0.5).lineBetween(x + 6 * u, y + t - 8 * u, x + t - 10 * u, y + 8 * u);
-        }
-        tint(col, row);
-        const here = kindsAt(col, row);
-        for (const kind of FLOOR_ORDER) {
-          if (!here.includes(kind)) continue;
-          drawFloorDecor(kind, col, row, x, y);
-        }
+    // 1. Floor: polished concrete, the area's tint, then the ground decor.
+    eachTile((col, row, x, y) => {
+      if (!isFloor(col, row)) return;
+      rect(col, row, (col + row) % 2 ? FLOOR_A : FLOOR_B);
+      if ((col * 7 + row * 3) % 5 === 0) {
+        g.lineStyle(3 * u, 0xffffff, 0.5).lineBetween(x + 6 * u, y + t - 8 * u, x + t - 10 * u, y + 8 * u);
       }
-    }
+      tint(col, row);
+      const here = kindsAt(col, row);
+      for (const kind of GROUND_ORDER) if (here.includes(kind)) drawGround(kind, col, row, x, y);
+    });
 
-    function drawFloorDecor(kind, col, row, x, y) {
+    function drawGround(kind, col, row, x, y) {
       if (kind === "shopfloor") {
         rect(col, row, 0xc42828, 0.27);
         g.lineStyle(1, 0xa01e1e, 0.35).strokeRect(x, y, t, t);
@@ -214,111 +212,106 @@ const Render = (() => {
           g.fillStyle(0x5f8a4a).fillRect(x + 6 * u, y + 6 * u, t - 12 * u, t - 20 * u);
           g.fillStyle(0x3f6331).fillRect(x + 6 * u, y + t - 16 * u, t - 12 * u, 10 * u);
         }
-      } else if (kind === "beanbag") {
+      }
+    }
+
+    // 2. The sea and the glass panes: wall tiles one can look across.
+    eachTile((col, row, x, y) => {
+      if (isFloor(col, row) || isOpaque(col, row)) return;
+      if (has(col, row, "glasswall")) drawGlassPane(col, row, x, y);
+      else drawSea(col, row, x, y);
+    });
+
+    function drawSea(col, row, x, y) {
+      rect(col, row, 0x2f6f9f);
+      g.lineStyle(2 * u, 0x7fb3d8);
+      for (let i = 0; i < 2; i++) {
+        const wy = y + (14 + i * 22 + (random() * 6 - 3)) * u;
+        g.beginPath();
+        g.arc(x + 14 * u, wy + 5 * u, 10 * u, Phaser.Math.DegToRad(200), Phaser.Math.DegToRad(340));
+        g.strokePath();
+      }
+      if (isFloor(col + 1, row)) {
+        // Foam where the water meets the beach.
+        g.fillStyle(0x4f8fbf).fillRect(x + t - 10 * u, y, 10 * u, t);
+        g.fillStyle(0xe9f3f8);
+        for (let o = 0; o < 52; o += 12) g.fillEllipse(x + t - 8 * u, y + (o + 5) * u, 12 * u, 10 * u);
+      }
+    }
+
+    // The ground of the floor tile (col, row), painted into the rectangle x, y, w, h.
+    function paintGround(col, row, x, y, w, h) {
+      const outdoor = ["grass", "terrace", "paving"].find((kind) => has(col, row, kind));
+      g.fillStyle(outdoor ? OUTDOOR_FLOOR[outdoor][0] : FLOOR_A).fillRect(x, y, w, h);
+      const area = areaAt(col, row);
+      if (!outdoor && area && area.name !== "Courtyard") {
+        g.fillStyle(Phaser.Display.Color.HexStringToColor(area.color).color, 0.31).fillRect(x, y, w, h);
+      }
+    }
+
+    // A glass pane (spec 011): thin and clearly see-through. The grounds of the two sides
+    // meet under it; the pane is a light blue line with a white highlight along the middle
+    // of the tile and a slim post where the pane ends. It still blocks the whole tile.
+    function drawGlassPane(col, row, x, y) {
+      // Floor above and below: the pane runs from left to right. Otherwise from top to bottom.
+      const level = isFloor(col, row - 1) && isFloor(col, row + 1);
+      const half = t / 2;
+      if (level) {
+        paintGround(col, row - 1, x, y, t, half);
+        paintGround(col, row + 1, x, y + half, t, half);
+      } else {
+        paintGround(col - 1, row, x, y, half, t);
+        paintGround(col + 1, row, x + half, y, half, t);
+      }
+      // bar(along, across, length, thickness): a rectangle along the pane's direction.
+      const bar = (along, across, length, thickness) =>
+        level ? g.fillRect(x + along, y + across, length, thickness) : g.fillRect(x + across, y + along, thickness, length);
+      const thick = 6;
+      const top = half - thick / 2;
+      g.fillStyle(0x000000, 0.14);
+      bar(0, top + thick + 1, t, 2); // a faint shadow
+      g.fillStyle(GLASS, 0.6);
+      bar(0, top, t, thick); // the glass: the ground shows through
+      g.fillStyle(GLASS_LINE);
+      bar(0, top - 1, t, 1);
+      bar(0, top + thick, t, 1);
+      g.fillStyle(0xffffff, 0.95);
+      bar(0, top + 1, t, 1.5); // the highlight
+      const before = level ? has(col - 1, row, "glasswall") : has(col, row - 1, "glasswall");
+      const after = level ? has(col + 1, row, "glasswall") : has(col, row + 1, "glasswall");
+      for (const [end, at] of [[!before, 0], [!after, t - 4]]) {
+        if (!end) continue;
+        g.fillStyle(GLASS_LINE);
+        bar(at, top - 3, 4, thick + 6);
+        g.fillStyle(0xf4f8fb);
+        bar(at + 1, top - 2, 2, thick + 4); // the post at the end of the pane
+      }
+    }
+
+    // 3. Furniture and plants on the floor: players walk over them (spec 011).
+    eachTile((col, row, x, y) => {
+      if (!isFloor(col, row)) return;
+      const here = kindsAt(col, row);
+      for (const kind of FURNITURE_ORDER) if (here.includes(kind)) drawFurniture(kind, col, row, x, y);
+    });
+
+    function drawFurniture(kind, col, row, x, y) {
+      if (kind === "beanbag") {
         g.fillStyle(0x000000, 0.2).fillEllipse(x + 28 * u, y + 30 * u, 38 * u, 36 * u);
         g.fillStyle(BEANBAG_COLORS[(col * 3 + row) % 5]).fillEllipse(x + 25 * u, y + 25 * u, 38 * u, 36 * u);
         g.fillStyle(0xffffff, 0.27).fillEllipse(x + 22 * u, y + 22 * u, 14 * u, 12 * u);
-      }
-    }
-
-    // 2. Walls: building walls with glass facades, the outside, and the solid decor.
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        if (isFloor(col, row)) continue;
-        const x = col * t;
-        const y = row * t;
-        const kind = SOLID_ORDER.find((k) => has(col, row, k));
-        if (kind) {
-          drawSolidDecor(kind, col, row, x, y);
-          continue;
-        }
-        let near = false;
-        for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) near = near || isFloor(col + dc, row + dr);
-        if (!near) {
-          rect(col, row, OUTSIDE);
-          continue;
-        }
-        rect(col, row, ROOF);
-        if (isFloor(col, row + 1)) {
-          // A glass facade facing the floor below, with slim white columns and a shadow.
-          const top = y + t * 0.55;
-          g.fillStyle(GLASS).fillRect(x, top, t, y + t - top);
-          g.fillStyle(0xffffff).fillRect(x, top - 1, t, 3 * u);
-          g.fillRect(x + 6 * u, top, 3 * u, y + t - top);
-          g.fillRect(x + t - 8 * u, top, 3 * u, y + t - top);
-          g.fillStyle(0x000000, 0.12).fillRect(x, y + t, t, 9 * u);
-        }
-        g.fillStyle(GLASS_EDGE);
-        if (isFloor(col, row - 1)) g.fillRect(x, y, t, 4 * u);
-        if (isFloor(col - 1, row)) g.fillRect(x, y, 4 * u, t);
-        if (isFloor(col + 1, row)) g.fillRect(x + t - 5 * u, y, 5 * u, t);
-      }
-    }
-
-    function drawSolidDecor(kind, col, row, x, y) {
-      const furniture = () => {
-        // Furniture stands on the room's floor.
-        rect(col, row, FLOOR_A);
-        tint(col, row);
-      };
-      const outdoor = () => {
-        const ground = groundNear(col, row);
-        if (ground) rect(col, row, OUTDOOR_FLOOR[ground][0]);
-        else furniture();
-      };
-      if (kind === "sea") {
-        rect(col, row, 0x2f6f9f);
-        g.lineStyle(2 * u, 0x7fb3d8);
-        for (let i = 0; i < 2; i++) {
-          const wy = y + (14 + i * 22 + (random() * 6 - 3)) * u;
-          g.beginPath();
-          g.arc(x + 14 * u, wy + 5 * u, 10 * u, Phaser.Math.DegToRad(200), Phaser.Math.DegToRad(340));
-          g.strokePath();
-        }
-        if (isFloor(col + 1, row)) {
-          // Foam where the water meets the beach.
-          g.fillStyle(0x4f8fbf).fillRect(x + t - 10 * u, y, 10 * u, t);
-          g.fillStyle(0xe9f3f8);
-          for (let o = 0; o < 52; o += 12) g.fillEllipse(x + t - 8 * u, y + (o + 5) * u, 12 * u, 10 * u);
-        }
-      } else if (kind === "solar") {
-        rect(col, row, 0x9aa0a8);
-        g.fillStyle(0x253a66).fillRect(x + 3 * u, y + 3 * u, t - 6 * u, t - 6 * u);
-        g.lineStyle(2 * u, 0x5b7cbf).lineBetween(x + t / 2, y + 3 * u, x + t / 2, y + t - 3 * u);
-        g.lineBetween(x + 3 * u, y + t / 2, x + t - 3 * u, y + t / 2);
-      } else if (kind === "greenroof") {
-        rect(col, row, 0x7da35a);
-        g.fillStyle(0x6a9149);
-        for (let i = 0; i < 4; i++) g.fillCircle(x + (6 + random() * 40) * u, y + (6 + random() * 40) * u, 3 * u);
-        g.lineStyle(2 * u, 0xd8dcdf);
-        for (let o = 0; o < 52; o += 9) g.lineBetween(x + o * u, y + t - 2 * u, x + (o + 6) * u, y + t - 10 * u);
-        g.lineBetween(x, y + t - 10 * u, x + t, y + t - 10 * u);
-      } else if (kind === "roof") {
-        rect(col, row, 0xecebe6);
-        g.fillStyle(0xd6d4cd).fillRect(x, y, t, 3 * u);
-      } else if (kind === "glasswall") {
-        rect(col, row, 0xeef2f4);
-        g.fillStyle(0xa9d3e6).fillRect(x, y + 14 * u, t, t - 29 * u);
-        g.fillStyle(0xffffff).fillRect(x, y + 13 * u, t, 3 * u);
-        g.fillRect(x, y + t - 16 * u, t, 3 * u);
-        g.fillRect(x + t / 2 - 2 * u, y + 12 * u, 3 * u, t - 25 * u);
-        g.lineStyle(2 * u, 0xffffff, 0.7).lineBetween(x + 6 * u, y + t - 18 * u, x + 16 * u, y + 17 * u);
       } else if (kind === "counter") {
-        furniture();
         g.fillStyle(0xd8c49a).fillRect(x, y + 8 * u, t, t - 16 * u);
         g.fillStyle(0xa88c5c).fillRect(x, y + t - 14 * u, t, 6 * u);
       } else if (kind === "shelf") {
-        furniture();
         g.fillStyle(0x5b3b22).fillRect(x + 2 * u, y + 6 * u, t - 4 * u, t - 12 * u);
         for (let i = 0; i < 6; i++) g.fillStyle(pick(BOOK_COLORS)).fillRect(x + (5 + i * 7) * u, y + 10 * u, 4 * u, t - 20 * u);
       } else if (kind === "desk") {
-        furniture();
         g.fillStyle(0xf5f3ee).fillRect(x, y + 10 * u, t, t - 24 * u);
         g.lineStyle(2 * u, 0xb9b3a6).strokeRect(x, y + 10 * u, t, t - 24 * u);
         g.fillStyle(0x6e6e6e);
         for (let i = 0; i < 2; i++) g.fillCircle(x + (13 + i * 22) * u, y + t - 7 * u, 5 * u);
       } else if (kind === "studytable") {
-        furniture();
         const top = !has(col, row - 1, "studytable");
         const bottom = !has(col, row + 1, "studytable");
         g.fillStyle(0x6b7078);
@@ -333,8 +326,6 @@ const Render = (() => {
         g.fillStyle(0xd9dde2).fillRect(x + 10 * u, y + 12 * u, 10 * u, 8 * u); // laptop
         g.fillStyle(0xf5e6a8).fillRect(x + 28 * u, y + 30 * u, 8 * u, 8 * u); // notes
       } else if (kind === "table" || kind === "cafetable") {
-        if (kind === "table") outdoor();
-        else furniture();
         if (kind === "cafetable") {
           g.fillStyle(0xe07b39);
           for (const [cx, cy] of [[26, 5], [26, 47], [5, 26], [47, 26]]) g.fillCircle(x + cx * u, y + cy * u, 6 * u);
@@ -343,7 +334,6 @@ const Render = (() => {
         g.fillStyle(0xfafafa).fillCircle(x + t / 2, y + t / 2, 16 * u);
         g.lineStyle(2 * u, 0xb8b1a3).strokeCircle(x + t / 2, y + t / 2, 16 * u);
       } else if (kind === "woodtable") {
-        outdoor();
         g.fillStyle(0x8a5a33);
         g.fillRoundedRect(x + 19 * u, y, 14 * u, 9 * u, 2 * u);
         g.fillRoundedRect(x + 19 * u, y + t - 9 * u, 14 * u, 9 * u, 2 * u);
@@ -353,15 +343,12 @@ const Render = (() => {
         g.fillStyle(0xb07a45).fillRect(x + 9 * u, y + 9 * u, t - 19 * u, t - 19 * u);
         g.lineStyle(2 * u, 0x7a4f2a).strokeRect(x + 9 * u, y + 9 * u, t - 19 * u, t - 19 * u);
       } else if (kind === "shopshelf") {
-        furniture();
-        rect(col, row, 0xc42828, 0.27);
         g.fillStyle(0xe9e6e0).fillRect(x + 2 * u, y + 8 * u, t - 4 * u, t - 16 * u);
         g.lineStyle(2 * u, 0x9a9690).strokeRect(x + 2 * u, y + 8 * u, t - 4 * u, t - 16 * u);
         for (let i = 0; i < 5; i++) {
           for (let j = 0; j < 2; j++) g.fillStyle(pick(PRODUCT_COLORS)).fillRect(x + (6 + i * 9) * u, y + (12 + j * 14) * u, 6 * u, 10 * u);
         }
       } else if (kind === "foodcounter") {
-        furniture();
         g.fillStyle(0xd8c49a).fillRect(x + 6 * u, y, t - 6 * u, t);
         g.fillStyle(0xa88c5c).fillRect(x + 6 * u, y, 6 * u, t);
         for (let j = 0; j < 2; j++) {
@@ -371,44 +358,81 @@ const Render = (() => {
           g.fillStyle(0xf2c94c).fillCircle(x + 36 * u, ty + 9 * u, 4 * u);
         }
       } else if (kind === "piano") {
-        furniture();
         g.fillStyle(0x141414).fillRoundedRect(x + 4 * u, y + 4 * u, t - 9 * u, t - 9 * u, 8 * u);
         g.fillStyle(0xf2f2f2).fillRect(x + 6 * u, y + t - 14 * u, t - 13 * u, 6 * u);
-      } else if (kind === "screen") {
-        const horizontal = has(col - 1, row, "screen") || has(col + 1, row, "screen");
-        if (horizontal) {
-          // The big screen on the Auditorium's front wall, glowing onto the aisle.
-          rect(col, row, ROOF);
-          const left = has(col - 1, row, "screen") ? 0 : 6 * u;
-          const right = has(col + 1, row, "screen") ? 0 : 6 * u;
-          g.fillStyle(0x1e2228).fillRect(x + left, y + t - 20 * u, t - left - right, 14 * u);
-          g.fillStyle(0x3d8bd4).fillRect(x + left * 1.6, y + t - 16 * u, t - (left + right) * 1.6, 10 * u);
-          g.fillStyle(0x78b4f0, 0.18).fillRect(x, y + t - 6 * u, t, 16 * u);
-        } else {
-          furniture();
-          const top = has(col, row - 1, "screen") ? 0 : 6 * u;
-          const bottom = has(col, row + 1, "screen") ? 0 : 6 * u;
-          g.fillStyle(0x1e2228).fillRect(x + 12 * u, y + top, t - 24 * u, t - top - bottom);
-          g.fillStyle(0x3d8bd4).fillRect(x + 16 * u, y + top * 1.6, t - 32 * u, t - (top + bottom) * 1.6);
-        }
       } else if (kind === "steps") {
         rect(col, row, 0xcabb9f);
         const colors = [0xb5543c, 0xc8664b, 0xd97a5c];
         for (let i = 0; i < 3; i++) g.fillStyle(colors[i]).fillRect(x, y + (i * t) / 3, t, t / 3 - 2 * u);
       } else if (kind === "picnic") {
-        rect(col, row, 0xcabb9f);
         g.fillStyle(0x8a5a33).fillRect(x + 4 * u, y + 14 * u, t - 9 * u, t - 28 * u);
         g.fillStyle(0x6e4628).fillRect(x + 4 * u, y + 6 * u, t - 9 * u, 4 * u);
         g.fillRect(x + 4 * u, y + t - 10 * u, t - 9 * u, 4 * u);
       } else if (kind === "tree") {
-        outdoor();
         g.fillStyle(0x000000, 0.24).fillEllipse(x + 31 * u, y + 32 * u, 46 * u, 44 * u);
         g.fillStyle(0x3f7d34).fillCircle(x + 24 * u, y + 24 * u, 22 * u);
         g.fillStyle(0x5c9c48).fillCircle(x + 18 * u, y + 15 * u, 8 * u);
       }
     }
 
-    // 3. Names: the areas (from "areas") and other places (from "labels").
+    // 4. Opaque walls (spec 011): every tile that blocks sight is one flat block in one
+    // colour. Roofs and screens only add a faint mark on top. The darkness leaves these
+    // tiles out (see wallRects), so a wall looks the same in light and in darkness.
+    eachTile((col, row, x, y) => {
+      if (!isOpaque(col, row)) return;
+      rect(col, row, WALL_TOP);
+      if (has(col, row, "solar")) {
+        g.fillStyle(0x27467c, 0.4).fillRect(x + 3 * u, y + 3 * u, t - 6 * u, t - 6 * u);
+        g.lineStyle(1, 0x6f8fc7, 0.35).lineBetween(x + t / 2, y + 3 * u, x + t / 2, y + t - 3 * u);
+        g.lineBetween(x + 3 * u, y + t / 2, x + t - 3 * u, y + t / 2);
+      } else if (has(col, row, "greenroof")) {
+        rect(col, row, 0x4f8a3c, 0.22);
+        g.fillStyle(0x6faa55, 0.35);
+        for (let i = 0; i < 3; i++) g.fillCircle(x + (8 + random() * 36) * u, y + (8 + random() * 36) * u, 3 * u);
+      } else if (has(col, row, "screen")) {
+        drawScreen(col, row, x, y);
+      }
+    });
+
+    function drawScreen(col, row, x, y) {
+      if (has(col - 1, row, "screen") || has(col + 1, row, "screen")) {
+        // The big screen on the Auditorium's front wall, glowing onto the aisle.
+        const left = has(col - 1, row, "screen") ? 0 : 6 * u;
+        const right = has(col + 1, row, "screen") ? 0 : 6 * u;
+        g.fillStyle(0x12151a).fillRect(x + left, y + t - 20 * u, t - left - right, 14 * u);
+        g.fillStyle(0x3d8bd4).fillRect(x + left * 1.6, y + t - 16 * u, t - (left + right) * 1.6, 10 * u);
+        g.fillStyle(0x78b4f0, 0.18).fillRect(x, y + t, t, 10 * u);
+      } else {
+        // A screen hanging on a wall that runs from top to bottom (Main Entrance).
+        const top = has(col, row - 1, "screen") ? 0 : 6 * u;
+        const bottom = has(col, row + 1, "screen") ? 0 : 6 * u;
+        g.fillStyle(0x12151a).fillRect(x + 12 * u, y + top, t - 24 * u, t - top - bottom);
+        g.fillStyle(0x3d8bd4).fillRect(x + 16 * u, y + top * 1.6, t - 32 * u, t - (top + bottom) * 1.6);
+      }
+    }
+
+    // The edge line: a dark line exactly where the wall ends and a lighter one just inside
+    // it, on every side that meets floor, glass or the sea. Drawn after all the tops.
+    const edge = 2;
+    eachTile((col, row, x, y) => {
+      if (!isOpaque(col, row)) return;
+      const open = (dc, dr) => inside(col + dc, row + dr) && !isOpaque(col + dc, row + dr);
+      for (const [color, from, size] of [[WALL_EDGE, 0, edge + 1], [OUTLINE, 0, 1]]) {
+        g.fillStyle(color);
+        if (open(0, -1)) g.fillRect(x, y + from, t, size);
+        if (open(0, 1)) g.fillRect(x, y + t - from - size, t, size);
+        if (open(-1, 0)) g.fillRect(x + from, y, size, t);
+        if (open(1, 0)) g.fillRect(x + t - from - size, y, size, t);
+        // Where two walls meet in an inside corner, the line turns the corner.
+        for (const [dc, dr] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+          if (open(dc, dr) && !open(dc, 0) && !open(0, dr)) {
+            g.fillRect(dc < 0 ? x : x + t - size, dr < 0 ? y : y + t - size, size, size);
+          }
+        }
+      }
+    });
+
+    // 5. Names: the areas (from "areas") and other places (from "labels").
     const nameStyle = (size) => ({
       fontFamily: FONT,
       fontSize: size,
@@ -505,15 +529,23 @@ const Render = (() => {
   }
 
   // Call every frame. dx and dy are the walking direction (-1, 0 or 1 each);
-  // `time` is the game time in milliseconds.
-  function animateCharacter(sprite, { dx, dy, ghost }, time) {
+  // `time` is the game time in milliseconds. `lookAt` is optional: a direction {x, y}
+  // of any length the eyes turn to instead (in a meeting: towards the meeting table).
+  function animateCharacter(sprite, { dx, dy, ghost, lookAt }, time) {
     const look = sprite.look;
     const walking = dx !== 0 || dy !== 0;
 
     // Eyes turn smoothly towards the walking direction and stay there when standing.
-    if (walking) {
-      look.faceX += (dx - look.faceX) * 0.25;
-      look.faceY += (dy - look.faceY) * 0.25;
+    let faceX = dx;
+    let faceY = dy;
+    if (lookAt) {
+      const length = Math.hypot(lookAt.x, lookAt.y) || 1;
+      faceX = lookAt.x / length;
+      faceY = lookAt.y / length;
+    }
+    if (walking || lookAt) {
+      look.faceX += (faceX - look.faceX) * 0.25;
+      look.faceY += (faceY - look.faceY) * 0.25;
     }
     look.eyes.forEach((eye, i) => eye.setPosition((i ? 1 : -1) * 3.7 + look.faceX * 1.6, -1 + look.faceY));
     look.pupils.forEach((pupil, i) =>
@@ -562,41 +594,40 @@ const Render = (() => {
     return container.setAngle(-10).setDepth(0.5); // on the floor, under the players
   }
 
-  // --- Emergency bell (spec 008, part 4) -------------------------------------------------
+  // --- Meeting point (spec 011) -----------------------------------------------------------
 
-  // A brass bell on the tile the server's map names ("bell": [col, row]).
-  function makeBell(scene, map) {
+  // A round meeting table with a red emergency button on the tile the server's map names
+  // ("meeting_point": [col, row]). `radius` is the table's radius on the server
+  // (welcome.meeting_table_radius). It lies on the floor: players walk over it.
+  function makeMeetingPoint(scene, map, radius) {
     const t = map.tile_size;
-    const [col, row] = map.bell;
-    const brass = 0xf2b33d;
-    const darkBrass = 0xc98a17;
-    const body = (grow) => [
-      { x: -8 - grow, y: -3 },
-      { x: 8 + grow, y: -3 },
-      { x: 11 + grow, y: 7 + grow },
-      { x: -11 - grow, y: 7 + grow },
-    ];
+    const [col, row] = map.meeting_point;
     const g = scene.add.graphics();
-    g.fillStyle(0x000000, 0.28).fillEllipse(1, 11, 28, 8); // shadow on the floor
+    g.fillStyle(0x000000, 0.22).fillEllipse(3, 5, radius * 2 + 4, radius * 2 + 2); // shadow
     // Outlines are dark shapes behind slightly smaller coloured ones, as for the characters.
-    g.fillStyle(OUTLINE).fillCircle(0, -12, 3.5).fillCircle(0, -3, 9.5).fillPoints(body(1.5), true);
-    g.fillCircle(0, 9.5, 3.8);
-    g.fillStyle(darkBrass).fillCircle(0, -12, 2); // the knob it hangs from
-    g.fillStyle(brass).fillCircle(0, -3, 8).fillPoints(body(0), true);
-    g.fillStyle(darkBrass).fillRect(-11, 4.5, 22, 2.5); // rim
-    g.fillStyle(0xffffff, 0.4).fillEllipse(-3.5, -3, 3, 8); // shine
-    g.fillStyle(darkBrass).fillCircle(0, 9.5, 2.3); // clapper
+    g.fillStyle(OUTLINE).fillCircle(0, 0, radius);
+    g.fillStyle(0xaab4c2).fillCircle(0, 0, radius - 1.5); // the rim
+    g.fillStyle(0xe6ebf1).fillCircle(0, 0, radius - 5); // the table top
+    g.fillStyle(0xffffff, 0.55).fillEllipse(-radius * 0.35, -radius * 0.45, radius * 0.7, radius * 0.3);
+    // The emergency button: a yellow and black base with a red dome.
+    g.fillStyle(OUTLINE).fillCircle(0, -4, 14.5);
+    g.fillStyle(0xf5d547).fillCircle(0, -4, 13);
+    g.fillStyle(OUTLINE);
+    for (let i = 0; i < 8; i += 2) g.slice(0, -4, 13, (i * Math.PI) / 4, ((i + 1) * Math.PI) / 4).fillPath();
+    g.fillStyle(OUTLINE).fillCircle(0, -4, 9.5);
+    g.fillStyle(0xd62828).fillCircle(0, -4, 8);
+    g.fillStyle(0xff7a6b).fillCircle(0, -5, 5.5);
+    g.fillStyle(0xffffff, 0.6).fillEllipse(-2.5, -7.5, 5, 2.5);
     const label = scene.add
-      .text(0, 14, "BELL", {
+      .text(0, 14, "MEETING", {
         fontFamily: FONT,
-        fontSize: "8px",
+        fontSize: "9px",
         fontStyle: "bold",
-        color: "#ffffff",
+        color: "#23262e",
         resolution: TEXT_RESOLUTION,
       })
       .setLetterSpacing(1.5)
-      .setOrigin(0.5, 0)
-      .setAlpha(0.75);
+      .setOrigin(0.5, 0);
     // On the floor: over a failed exam, under the players.
     return scene.add.container((col + 0.5) * t, (row + 0.5) * t, [g, label]).setDepth(0.6);
   }
@@ -712,26 +743,34 @@ const Render = (() => {
     label.setText(`${secondsLeft} s`);
   }
 
-  // --- Darkness outside the lit area (spec 005, spec 010) ----------------------------------
+  // --- Darkness outside the lit area (spec 005, spec 010, spec 011) -------------------------
   // This is only the look: the server does not even send what the player cannot see.
   //
   // The darkness has ONE strength everywhere and is made of two parts that never overlap:
-  //   dark: a plain dark sheet over the whole map, with the lit area cut out of it;
+  //   dark: a plain dark sheet over the whole map, with the lit area and the walls cut
+  //         out of it;
   //   rim:  a round picture, clear in the middle and just as dark as the sheet from the
   //         vision radius on. It follows the own character and is drawn only inside the
   //         lit area, so it gives the vision circle its soft edge.
   // The camera never shows more than the map, so the sheet covers every window size.
   //
   // The lit area is what the own character has a straight line of sight to: a shape with
-  // straight shadow edges behind walls (see castRays). `lit` holds that shape. It is never
-  // drawn itself: it only cuts the two parts.
+  // straight shadow edges behind walls (see castRays). It ends at the face of a wall: no
+  // light shines into a wall (spec 011). Glass and the sea do not block sight, so the light
+  // goes through them. `lit` holds that shape. It is never drawn itself: it only cuts.
+  //
+  // Walls are neither lit nor darkened (spec 011): `cut` holds the lit area plus every
+  // wall tile that blocks sight, and the dark sheet is drawn everywhere but there. So a
+  // wall looks the same in light and in darkness, and never hides the cap or the name of
+  // a character standing right below it.
   // `sight` is the server's sight grid from "welcome": "#" marks a tile that blocks sight.
   function makeDarkness(scene, map, sight, radius) {
     const t = map.tile_size;
     const lit = scene.make.graphics({}, false);
+    const cut = scene.make.graphics({}, false);
     const dark = scene.add.rectangle(0, 0, sight[0].length * t, sight.length * t, FOG_COLOR, FOG_ALPHA);
     dark.setOrigin(0).setDepth(10).setAlpha(0);
-    dark.setMask(lit.createGeometryMask().setInvertAlpha(true)); // everywhere but the lit area
+    dark.setMask(cut.createGeometryMask().setInvertAlpha(true)); // everywhere but the cut
 
     // The rim picture is painted once for a radius of 1 and stretched to the radius in use.
     const size = RIM_TEXTURE_SIZE;
@@ -755,7 +794,26 @@ const Render = (() => {
 
     // `radius` is the radius shown right now: it glides to the one the server sends.
     // `drawnFor` remembers the place and radius the lit area was last worked out for.
-    return { lit, dark, rim, radius, tile: t, edges: sightEdges(sight, t), drawnFor: "" };
+    const edges = sightEdges(sight, t);
+    return { lit, cut, dark, rim, radius, edges, walls: wallRects(sight, t), drawnFor: "" };
+  }
+
+  // The wall tiles that block sight as rectangles {x, y, width, height} in map pixels, one
+  // per unbroken run of tiles in a row. Worked out once per map.
+  function wallRects(sight, t) {
+    const rects = [];
+    sight.forEach((line, row) => {
+      let start = null;
+      for (let col = 0; col <= line.length; col++) {
+        const wall = col < line.length && line[col] === "#";
+        if (wall && start === null) start = col;
+        if (!wall && start !== null) {
+          rects.push({ x: start * t, y: row * t, width: (col - start) * t, height: t });
+          start = null;
+        }
+      }
+    });
+    return rects;
   }
 
   // The straight edges that stop sight: every side on which a sight-blocking tile meets a
@@ -796,7 +854,7 @@ const Render = (() => {
   // both ends of every nearby edge, one straight at the end and one just left and right of
   // it (the last two decide whether the light stops at the corner or passes it). Each ray
   // ends at the nearest edge it hits, or after `reach` pixels. Returns where the rays end,
-  // in order around the circle, as {x, y, edge} (edge: the edge that was hit, or null).
+  // in order around the circle, as {x, y}.
   function castRays(edges, x, y, reach) {
     const near = edges.filter(
       (e) => e.x2 >= x - reach && e.x1 <= x + reach && e.y2 >= y - reach && e.y1 <= y + reach,
@@ -817,43 +875,37 @@ const Render = (() => {
       const dx = Math.cos(angle);
       const dy = Math.sin(angle);
       let distance = reach;
-      let hit = null;
       for (const e of near) {
         // Edges are horizontal or vertical, so a ray meets one where it crosses its line.
         if (e.y1 === e.y2) {
           const d = (e.y1 - y) / dy;
           const at = x + dx * d;
-          if (d > 0 && d < distance && at >= e.x1 && at <= e.x2) [distance, hit] = [d, e];
+          if (d > 0 && d < distance && at >= e.x1 && at <= e.x2) distance = d;
         } else {
           const d = (e.x1 - x) / dx;
           const at = y + dy * d;
-          if (d > 0 && d < distance && at >= e.y1 && at <= e.y2) [distance, hit] = [d, e];
+          if (d > 0 && d < distance && at >= e.y1 && at <= e.y2) distance = d;
         }
       }
-      return { x: x + dx * distance, y: y + dy * distance, edge: hit };
+      return { x: x + dx * distance, y: y + dy * distance };
     });
   }
 
-  // Works out the lit area around (x, y) and draws it into `lit`:
-  // - a triangle from (x, y) to every two neighbouring ray ends: together they are the
-  //   visibility polygon, with straight shadow edges where a ray passes a wall corner;
-  // - where two neighbouring rays end on the same edge, the wall behind that stretch is
-  //   lit one tile deep, so walls show their face and do not cut into the own character.
+  // Works out the lit area around (x, y): a triangle from (x, y) to every two neighbouring
+  // ray ends. Together they are the visibility polygon, with straight shadow edges where a
+  // ray passes a wall corner, ending exactly at the faces of the walls. It is drawn into
+  // `lit` (for the rim) and, together with the wall tiles, into `cut` (for the dark sheet).
   function drawLitArea(darkness, x, y) {
-    const { lit, tile } = darkness;
+    const { lit, cut } = darkness;
     const ends = castRays(darkness.edges, x, y, darkness.radius * LIT_REACH);
     lit.clear().fillStyle(0xffffff);
+    cut.clear().fillStyle(0xffffff);
     ends.forEach((a, i) => {
       const b = ends[(i + 1) % ends.length];
       lit.fillTriangle(x, y, a.x, a.y, b.x, b.y);
-      const e = a.edge;
-      if (!e || e !== b.edge) return;
-      if (e.y1 === e.y2) {
-        lit.fillRect(Math.min(a.x, b.x), y < e.y1 ? e.y1 : e.y1 - tile, Math.abs(b.x - a.x), tile);
-      } else {
-        lit.fillRect(x < e.x1 ? e.x1 : e.x1 - tile, Math.min(a.y, b.y), tile, Math.abs(b.y - a.y));
-      }
+      cut.fillTriangle(x, y, a.x, a.y, b.x, b.y);
     });
+    for (const wall of darkness.walls) cut.fillRect(wall.x, wall.y, wall.width, wall.height);
   }
 
   // Call every frame with the own character's place: keeps the rim centred on it, lets
@@ -888,7 +940,7 @@ const Render = (() => {
     makeCharacter,
     animateCharacter,
     makeExam,
-    makeBell,
+    makeMeetingPoint,
     makeDoor,
     makeSwitch,
     updateSwitch,

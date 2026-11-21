@@ -3,7 +3,7 @@ votes, tasks, staff doors, the lights, the end of a round, player colours and vi
 Plain Python, no network code, so it can be tested directly.
 
 The server owns the truth: browsers only send a direction (dx, dy), "start", "expel",
-"report", "bell", "vote", "task", "door", "sabotage", "fix" or "restart". Every tick the server moves each player a fixed
+"report", "meeting", "vote", "task", "door", "sabotage", "fix" or "restart". Every tick the server moves each player a fixed
 distance and blocks walls. Time is counted in ticks (not the wall clock), so tests can
 advance it with step().
 """
@@ -20,20 +20,27 @@ TICK_RATE = 20  # server updates per second
 SPEED = 160.0  # pixels per second
 STEP = SPEED / TICK_RATE  # pixels per tick (8)
 PLAYER_HALF = 10  # a player is a 20 x 20 px square; this is half its side
+# How far a straight walk slides sideways round the corner of a wall (spec 011): half a
+# player, so whoever is at least half in front of a gap slips into it.
+CORNER_SLIDE = PLAYER_HALF
 MIN_PLAYERS = 4  # needed to start a game
 MAX_PLAYERS = 10
 NAME_MAX = 16
 MAX_MESSAGE_BYTES = 512
 RATE_LIMIT = 30  # messages per second per connection
 MESSAGE_TYPES = {"join", "input", "start", "restart"}  # joining, walking and the round
-MESSAGE_TYPES |= {"expel", "report", "bell", "vote", "task", "door"}  # actions in a round
+MESSAGE_TYPES |= {"expel", "report", "meeting", "vote", "task", "door"}  # actions in a round
 MESSAGE_TYPES |= {"sabotage", "fix"}  # the lights
 EXPEL_RANGE = 48  # px between centres, about 1.5 tiles
 EXPEL_COOLDOWN = 20  # seconds between two expels by the same examiner
 EXPEL_COOLDOWN_TICKS = EXPEL_COOLDOWN * TICK_RATE  # 400
 VISION_TILES = 6  # how far a living player sees while playing, in tiles
 REPORT_RANGE = 48  # px from a player's centre to a failed exam, about 1.5 tiles
-BELL_RANGE = 48  # px from a player's centre to the centre of the bell's tile, about 1.5 tiles
+# The meeting point (spec 011): a round table with an emergency button. It is drawn on the
+# floor and blocks nobody.
+MEETING_TABLE_RADIUS = 40  # px from the table's middle to its edge
+MEETING_RANGE = 48  # px from a player's centre to the table's edge, about 1.5 tiles
+MEETING_CIRCLE = 64  # px from the table's middle to each player's place at a meeting
 DOOR_COOLDOWN = 3  # seconds between two staff door journeys of the same examiner
 DOOR_COOLDOWN_TICKS = DOOR_COOLDOWN * TICK_RATE  # 60
 SABOTAGE_COOLDOWN = 30  # seconds before the lights can be turned off (again)
@@ -48,14 +55,13 @@ MEETING_SECONDS = 60  # voting time
 RESULT_SECONDS = 5  # how long the result is shown before play resumes
 MEETING_TICKS = MEETING_SECONDS * TICK_RATE  # 1200
 RESULT_TICKS = RESULT_SECONDS * TICK_RATE  # 100
-MEETING_ROOM = "Auditorium"  # the map area where everyone gathers for a meeting
 # Colour numbers 0-9, one per player. Which number is which colour is drawing (web/render.js).
 PLAYER_COLORS = range(MAX_PLAYERS)
 
 # Game phases.
 LOBBY = "lobby"  # before the start: players join and walk around
 PLAYING = "playing"
-MEETING = "meeting"  # everyone in the Auditorium: voting, then the result; nobody moves
+MEETING = "meeting"  # everyone around the meeting table: voting, then the result; nobody moves
 ENDED = "ended"  # a side has won; all roles are revealed until the host restarts
 
 # Roles. Secret: a player only ever receives their own (see Game.snapshot_for).
@@ -64,7 +70,7 @@ EXAMINER = "examiner"
 
 # Why a meeting was called, and the vote for nobody.
 REPORT = "report"
-BELL = "bell"
+BUTTON = "button"  # the emergency button on the meeting table
 SKIP = "skip"
 
 # Winners, shown on the end screen.
@@ -91,7 +97,7 @@ class Player:
     color: int = 0  # colour number, unique in the game, kept until the player leaves
     next_expel_tick: int = 0  # first tick at which this player may expel (again)
     next_door_tick: int = 0  # first tick at which this player may use a staff door (again)
-    bell_used: bool = False  # one bell per player per round
+    meeting_used: bool = False  # one call at the meeting table per player per round
     tasks: list = field(default_factory=list)  # ids of this student's tasks (examiners: none)
     tasks_done: list = field(default_factory=list)  # ids of the finished ones
     doing: str | None = None  # id of the task this player is doing right now
@@ -112,7 +118,7 @@ class FailedExam:
 class Meeting:
     """A running meeting. The votes stay on the server: players only learn who has voted."""
 
-    reason: str  # REPORT or BELL
+    reason: str  # REPORT or BUTTON
     called_by: str  # player id
     voting_ends: int  # the tick at which the voting closes at the latest
     votes: dict = field(default_factory=dict)  # voter id -> target id or SKIP
@@ -121,25 +127,28 @@ class Meeting:
 
 
 # Map decor (spec 009): only changes how the map looks, never a rule. Solid kinds must lie
-# on wall tiles ("#"), so furniture, trees and the sea block walking like any wall; floor
-# kinds are painted on the floor tiles of their rectangle.
-SOLID_DECOR = {
-    "sea", "solar", "greenroof", "roof", "glasswall", "counter", "shelf", "desk", "studytable",
-    "table", "cafetable", "woodtable", "shopshelf", "foodcounter", "piano", "screen", "steps",
-    "picnic", "tree",
+# on wall tiles ("#"): the sea, roofs, glass and screens block walking like any wall. Floor
+# kinds are painted on the floor tiles of their rectangle. Furniture and plants are floor
+# kinds (spec 011): players walk over them.
+SOLID_DECOR = {"sea", "solar", "greenroof", "roof", "glasswall", "screen"}
+GROUND_DECOR = {"sand", "paving", "grass", "terrace", "pergola", "glassroof", "shopfloor", "seats"}
+FURNITURE_DECOR = {
+    "beanbag", "counter", "shelf", "desk", "studytable", "table", "cafetable", "woodtable",
+    "shopshelf", "foodcounter", "piano", "steps", "picnic", "tree",
 }
-FLOOR_DECOR = {"sand", "paving", "grass", "terrace", "pergola", "glassroof", "shopfloor", "seats", "beanbag"}
-# The solid kinds that also block sight (spec 010, part 2): roofs, tall shelves and screens.
-# All other solid kinds (tables, counters, desks, trees, the sea, ...) only block walking.
-SIGHT_DECOR = {"roof", "greenroof", "solar", "shelf", "shopshelf", "screen"}
+FLOOR_DECOR = GROUND_DECOR | FURNITURE_DECOR
+# The solid kinds that also block sight (spec 010, part 2), like every plain wall tile:
+# roofs and screens. Glass and the sea only block walking.
+SIGHT_DECOR = {"roof", "greenroof", "solar", "screen"}
 LABEL_MAX = 24  # characters of a map label
 
 
 def sight_grid(campus):
     """The tiles that block sight, in the same form as the map's grid: "#" blocks, "." not.
 
-    A wall tile blocks sight unless low decor stands on it: a solid kind that is not in
-    SIGHT_DECOR. A tile with both low and tall decor blocks. Floor tiles never block.
+    A wall tile blocks sight unless it is glass or sea: a solid kind that is not in
+    SIGHT_DECOR. A tile with both kinds of decor blocks. Floor tiles never block, whatever
+    furniture stands on them.
     The browser receives this grid in "welcome", so both sides use the same rule.
     """
     low, tall = set(), set()
@@ -174,6 +183,9 @@ def _whole(value):
 def validate_campus(campus):
     """Check the optional "decor" and "labels" lists of a map (spec 009).
 
+    Solid kinds must lie on wall tiles and furniture on floor tiles (spec 011); the
+    ground kinds (grass, paving, ...) may span both and are painted on the floor tiles.
+
     Raises ValueError with a short reason, so a broken map fails at server start and in
     the tests instead of in the middle of a game. A map without them is valid.
     """
@@ -193,11 +205,12 @@ def validate_campus(campus):
             raise ValueError(f"Decor {kind}: w and h must be at least 1")
         if x < 0 or y < 0 or x + w > cols or y + h > rows:
             raise ValueError(f"Decor {kind} at {x}, {y} lies outside the grid")
-        if kind in SOLID_DECOR:
-            for row in range(y, y + h):
-                for col in range(x, x + w):
-                    if grid[row][col] != "#":
-                        raise ValueError(f"Decor {kind} covers the floor tile {col}, {row}")
+        for row in range(y, y + h):
+            for col in range(x, x + w):
+                if kind in SOLID_DECOR and grid[row][col] != "#":
+                    raise ValueError(f"Decor {kind} covers the floor tile {col}, {row}")
+                if kind in FURNITURE_DECOR and grid[row][col] != ".":
+                    raise ValueError(f"Decor {kind} stands on the wall tile {col}, {row}")
     for label in campus.get("labels", []):
         text = label.get("text")
         if not isinstance(text, str) or not 1 <= len(text) <= LABEL_MAX:
@@ -480,10 +493,11 @@ class Game:
                 return door["id"]
         return None
 
-    # --- Meetings: report, bell and vote -----------------------------------------------
+    # --- Meetings: report, meeting table and vote ---------------------------------------
 
     def report(self, player_id, exam_id):
-        """A living player reports a failed exam within reach, and a meeting starts.
+        """A living player reports a failed exam within reach, anywhere on the map, and a
+        meeting starts.
 
         An unknown exam and an exam out of reach get the same reason, so a browser cannot
         find out about failed exams it cannot see by trying ids.
@@ -496,28 +510,28 @@ class Game:
             raise GameError("No failed exam within reach")
         self._start_meeting(REPORT, player)
 
-    def bell(self, player_id):
-        """A living player standing next to the bell rings it, once per round.
+    def call_meeting(self, player_id):
+        """A living player at the meeting table presses its button, once per round.
 
-        The bell's tile comes from the map ("bell": [col, row]), so a new map can move it
-        (spec 008, part 4). A map without one has no bell place and rings anywhere: only
-        the small test maps, like a map without an Auditorium. A rejected bell is not used up.
+        The table's tile comes from the map ("meeting_point": [col, row]). The player
+        must stand at most MEETING_RANGE from the table's edge. A map without a meeting
+        point (only the small test maps) calls from anywhere. A rejected call is not used up.
         """
-        player = self._check_meeting_caller(player_id, "Ghosts cannot ring the bell")
-        if player.bell_used:
-            raise GameError("You have already rung the bell")
-        place = self.campus.get("bell")
+        player = self._check_meeting_caller(player_id, "Ghosts cannot call a meeting")
+        if player.meeting_used:
+            raise GameError("You have already called a meeting")
+        place = self.campus.get("meeting_point")
         if place is not None:
             x, y = self._tile_centre(*place)
-            if math.hypot(x - player.x, y - player.y) > BELL_RANGE:
-                raise GameError("Too far from the bell")
-        player.bell_used = True
-        self._start_meeting(BELL, player)
+            if math.hypot(x - player.x, y - player.y) > MEETING_TABLE_RADIUS + MEETING_RANGE:
+                raise GameError("Too far from the meeting table")
+        player.meeting_used = True
+        self._start_meeting(BUTTON, player)
 
     def _check_meeting_caller(self, player_id, ghost_reason):
-        """The checks report and bell share. Returns the player.
+        """The checks report and call_meeting share. Returns the player.
 
-        Only while playing: a second report or bell before the next tick finds the
+        Only while playing: a second report or call before the next tick finds the
         meeting already running, so the first one the server processes wins (R7).
         """
         player = self.players.get(player_id)
@@ -534,39 +548,38 @@ class Game:
         return player
 
     def _start_meeting(self, reason, caller):
-        """Everyone, ghosts too, goes to their own Auditorium tile and stands still."""
+        """Everyone, ghosts too, goes to their place around the meeting table and stands still."""
         self.phase = MEETING
         self.meeting = Meeting(reason, caller.id, voting_ends=self.tick + MEETING_TICKS)
-        # zip() stops at the shorter list: players without a tile stay where they are.
-        for player, (col, row) in zip(self.players.values(), self._meeting_tiles()):
-            player.x, player.y = self._tile_centre(col, row)
+        for player, spot in zip(self.players.values(), self._meeting_spots()):
+            if spot is not None:
+                player.x, player.y = spot
         for player in self.players.values():
             player.dx = player.dy = 0
             player.doing = None  # no task runs or finishes during a meeting
             player.fix_done_tick = None
         self.lights_on = True  # a meeting turns the lights back on
 
-    def _meeting_tiles(self):
-        """The Auditorium's floor tiles in the order players are seated (join order).
+    def _meeting_spots(self):
+        """One place (x, y) per player, in join order, on a circle around the meeting table.
 
-        First every second tile of every second row, in reading order, so no two players
-        stand on neighbouring tiles; then the other floor tiles. Empty without an Auditorium.
+        The places are evenly spaced: the first one north of the table, the others
+        clockwise. With MEETING_CIRCLE px to the table's middle, 10 players do not overlap.
+        A place that is not free floor is None: that player stays where they are (only on
+        a map too tight for the circle; the campus has room, see the tests). Empty without
+        a meeting point.
         """
-        area = next((a for a in self.campus["areas"] if a["name"] == MEETING_ROOM), None)
-        if area is None:
+        place = self.campus.get("meeting_point")
+        if place is None:
             return []
-        floor = [
-            (col, row)
-            for row in range(area["y"], area["y"] + area["h"])
-            for col in range(area["x"], area["x"] + area["w"])
-            if not self.blocked(*self._tile_centre(col, row))
-        ]
-        spaced = [
-            (col, row)
-            for col, row in floor
-            if (col - area["x"]) % 2 == 0 and (row - area["y"]) % 2 == 0
-        ]
-        return spaced + [tile for tile in floor if tile not in spaced]
+        centre_x, centre_y = self._tile_centre(*place)
+        spots = []
+        for index in range(len(self.players)):
+            angle = 2 * math.pi * index / len(self.players) - math.pi / 2  # -90 degrees: north
+            x = centre_x + MEETING_CIRCLE * math.cos(angle)
+            y = centre_y + MEETING_CIRCLE * math.sin(angle)
+            spots.append(None if self.blocked(x, y) else (x, y))
+        return spots
 
     def vote(self, player_id, target):
         """A living player votes for another living player or skips, once.
@@ -681,7 +694,7 @@ class Game:
 
     def _reset_round(self):
         """Back to the lobby: no roles, no tasks, no failed exams, no meeting, everyone
-        alive, with their bell back and on a spawn point."""
+        alive, with their meeting call back and on a spawn point."""
         self.phase = LOBBY
         self.winner = None
         self.failed_exams = []
@@ -696,7 +709,7 @@ class Game:
             player.alive = True
             player.next_expel_tick = 0
             player.next_door_tick = 0
-            player.bell_used = False
+            player.meeting_used = False
             player.tasks = []
             player.tasks_done = []
             player.doing = None
@@ -898,16 +911,29 @@ class Game:
         for player in self.players.values():
             if player.dx == 0 and player.dy == 0:
                 continue
-            length = math.hypot(player.dx, player.dy)  # 1 straight, about 1.41 diagonal
-            self._move_axis(player, player.dx / length * STEP, 0)
-            self._move_axis(player, 0, player.dy / length * STEP)
+            self._walk(player)
         if self.phase == PLAYING:
             self._step_tasks()
         if self.phase == PLAYING:  # the last task may just have ended the game
             self._step_lights()
 
+    def _walk(self, player):
+        """One tick of walking: one fixed step, first along x and then along y.
+
+        Each axis moves on its own, so a diagonal walk into a wall slides along it. A
+        straight walk that a wall stops slides round the wall's corner (see _slide).
+        """
+        length = math.hypot(player.dx, player.dy)  # 1 straight, about 1.41 diagonal
+        left_x = self._move_axis(player, player.dx / length * STEP, 0)
+        left_y = self._move_axis(player, 0, player.dy / length * STEP)
+        if player.dy == 0 and left_x > 0:
+            self._slide(player, player.dx, 0, left_x)
+        elif player.dx == 0 and left_y > 0:
+            self._slide(player, 0, player.dy, left_y)
+
     def _move_axis(self, player, mx, my):
         """Move in small pieces of at most 1 px and stop at the first piece that hits a wall.
+        Returns the distance that was not walked (0 if nothing was in the way).
 
         So a player walks up to a wall (to within 1 px) but never into it, and a move
         straight into a wall leaves the position unchanged. A ghost ignores walls and is
@@ -920,9 +946,31 @@ class Game:
             part = min(1.0, remaining)
             nx, ny = player.x + sign_x * part, player.y + sign_y * part
             if self.blocked(nx, ny, walls=player.alive):
-                return
+                return remaining
             player.x, player.y = nx, ny
             remaining -= part
+        return 0
+
+    def _slide(self, player, dx, dy, distance):
+        """Slide round a corner (spec 011): a wall stopped a straight walk in direction
+        (dx, dy) with `distance` px of the step left.
+
+        If the way ahead is free at most CORNER_SLIDE px to one side, the player moves
+        there with what is left of the step and then walks on. So a doorway or a gap of
+        one tile needs no precise aiming. In front of a plain wall no side is free and
+        nothing moves. The nearest free side wins; a step never gets longer than STEP.
+        """
+        for offset in range(1, CORNER_SLIDE + 1):
+            for side in (-1, 1):
+                # Sideways is along y for a walk along x, and the other way round.
+                side_x, side_y = side * abs(dy), side * abs(dx)
+                ahead_x = player.x + dx + side_x * offset
+                ahead_y = player.y + dy + side_y * offset
+                if not self.blocked(ahead_x, ahead_y, walls=player.alive):
+                    slid = min(distance, offset)
+                    self._move_axis(player, side_x * slid, side_y * slid)
+                    self._move_axis(player, dx * (distance - slid), dy * (distance - slid))
+                    return
 
     def blocked(self, x, y, walls=True):
         """True if a player square centred at (x, y) overlaps a wall or leaves the map.
@@ -1061,7 +1109,7 @@ class Game:
         state["area"] = self.area_at(me.x, me.y)
         state["role"] = me.role
         state["alive"] = me.alive
-        state["bell_used"] = me.bell_used
+        state["meeting_used"] = me.meeting_used
         if self.phase == MEETING:
             state["meeting"] = self._meeting_for(me)
         if self.phase != LOBBY:
