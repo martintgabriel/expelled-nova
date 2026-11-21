@@ -45,6 +45,10 @@ const Render = (() => {
   const FOG_COLOR = 0x080a0e;
   const RIM_REACH = 2.5; // the rim picture reaches this many radii from the own character
   const RIM_TEXTURE_SIZE = 512;
+  // The lit area (spec 010, part 3): rays from the own character to the corners of walls.
+  const LIT_REACH = 1.1; // rays end this many radii out, where the rim is fully dark already
+  const FAN_RAYS = 48; // evenly spread rays, so the lit area is round where no wall is near
+  const RAY_NUDGE = 0.0001; // radians: one more ray just left and right of every wall corner
 
   // --- Colours -----------------------------------------------------------------------
 
@@ -708,21 +712,26 @@ const Render = (() => {
     label.setText(`${secondsLeft} s`);
   }
 
-  // --- Darkness outside the lit area (spec 005; one layer since spec 010, part 1) ---------
+  // --- Darkness outside the lit area (spec 005, spec 010) ----------------------------------
   // This is only the look: the server does not even send what the player cannot see.
   //
   // The darkness has ONE strength everywhere and is made of two parts that never overlap:
-  //   dark: a plain dark sheet over the whole map, with the lit shape cut out of it;
+  //   dark: a plain dark sheet over the whole map, with the lit area cut out of it;
   //   rim:  a round picture, clear in the middle and just as dark as the sheet from the
   //         vision radius on. It follows the own character and is drawn only inside the
-  //         lit shape, so it gives the vision circle its soft edge.
+  //         lit area, so it gives the vision circle its soft edge.
   // The camera never shows more than the map, so the sheet covers every window size.
-  // `lit` is the lit shape. It is never drawn itself: it only cuts the two parts.
-  function makeDarkness(scene, mapWidth, mapHeight, radius) {
+  //
+  // The lit area is what the own character has a straight line of sight to: a shape with
+  // straight shadow edges behind walls (see castRays). `lit` holds that shape. It is never
+  // drawn itself: it only cuts the two parts.
+  // `sight` is the server's sight grid from "welcome": "#" marks a tile that blocks sight.
+  function makeDarkness(scene, map, sight, radius) {
+    const t = map.tile_size;
     const lit = scene.make.graphics({}, false);
-    const dark = scene.add.rectangle(0, 0, mapWidth, mapHeight, FOG_COLOR, FOG_ALPHA);
+    const dark = scene.add.rectangle(0, 0, sight[0].length * t, sight.length * t, FOG_COLOR, FOG_ALPHA);
     dark.setOrigin(0).setDepth(10).setAlpha(0);
-    dark.setMask(lit.createGeometryMask().setInvertAlpha(true)); // everywhere but the lit shape
+    dark.setMask(lit.createGeometryMask().setInvertAlpha(true)); // everywhere but the lit area
 
     // The rim picture is painted once for a radius of 1 and stretched to the radius in use.
     const size = RIM_TEXTURE_SIZE;
@@ -742,25 +751,116 @@ const Render = (() => {
     context.fillRect(0, 0, size, size);
     texture.refresh();
     const rim = scene.add.image(0, 0, "rim").setDepth(10).setAlpha(0);
-    rim.setMask(lit.createGeometryMask()); // only inside the lit shape
+    rim.setMask(lit.createGeometryMask()); // only inside the lit area
 
     // `radius` is the radius shown right now: it glides to the one the server sends.
-    return { lit, dark, rim, radius };
+    // `drawnFor` remembers the place and radius the lit area was last worked out for.
+    return { lit, dark, rim, radius, tile: t, edges: sightEdges(sight, t), drawnFor: "" };
   }
 
-  // The lit shape as tiles: `visible` is a Set of "col,row" worked out by main.js with the
-  // server's rule. The shape must stay within RIM_REACH radii of the own character.
-  function drawLitTiles(darkness, map, visible) {
-    const t = map.tile_size;
-    darkness.lit.clear().fillStyle(0xffffff);
-    for (const tile of visible) {
-      const [col, row] = tile.split(",").map(Number);
-      darkness.lit.fillRect(col * t, row * t, t, t);
+  // The straight edges that stop sight: every side on which a sight-blocking tile meets a
+  // tile that does not block. Sides that continue each other are merged into one long edge
+  // {x1, y1, x2, y2} (in map pixels, x1 <= x2 and y1 <= y2). Worked out once per map.
+  function sightEdges(sight, t) {
+    const rows = sight.length;
+    const cols = sight[0].length;
+    const blocks = (col, row) => row >= 0 && row < rows && col >= 0 && col < cols && sight[row][col] === "#";
+    const edges = [];
+    // Horizontal edges lie on the grid line above row `row`, vertical ones left of `col`.
+    for (let row = 0; row <= rows; row++) {
+      let start = null;
+      for (let col = 0; col <= cols; col++) {
+        const isEdge = col < cols && blocks(col, row - 1) !== blocks(col, row);
+        if (isEdge && start === null) start = col;
+        if (!isEdge && start !== null) {
+          edges.push({ x1: start * t, y1: row * t, x2: col * t, y2: row * t });
+          start = null;
+        }
+      }
     }
+    for (let col = 0; col <= cols; col++) {
+      let start = null;
+      for (let row = 0; row <= rows; row++) {
+        const isEdge = row < rows && blocks(col - 1, row) !== blocks(col, row);
+        if (isEdge && start === null) start = row;
+        if (!isEdge && start !== null) {
+          edges.push({ x1: col * t, y1: start * t, x2: col * t, y2: row * t });
+          start = null;
+        }
+      }
+    }
+    return edges;
   }
 
-  // Call every frame: keeps the rim centred on (x, y), lets the shown radius glide to
-  // `radius` (lights out and back on) and fades the whole darkness in or out.
+  // Rays from (x, y) in all directions that matter: FAN_RAYS evenly spread ones and, for
+  // both ends of every nearby edge, one straight at the end and one just left and right of
+  // it (the last two decide whether the light stops at the corner or passes it). Each ray
+  // ends at the nearest edge it hits, or after `reach` pixels. Returns where the rays end,
+  // in order around the circle, as {x, y, edge} (edge: the edge that was hit, or null).
+  function castRays(edges, x, y, reach) {
+    const near = edges.filter(
+      (e) => e.x2 >= x - reach && e.x1 <= x + reach && e.y2 >= y - reach && e.y1 <= y + reach,
+    );
+    const angles = [];
+    for (let i = 0; i < FAN_RAYS; i++) angles.push((i / FAN_RAYS) * 2 * Math.PI - Math.PI);
+    for (const e of near) {
+      for (const [cornerX, cornerY] of [[e.x1, e.y1], [e.x2, e.y2]]) {
+        const angle = Math.atan2(cornerY - y, cornerX - x);
+        for (const nudged of [angle - RAY_NUDGE, angle, angle + RAY_NUDGE]) {
+          // Kept between -PI and PI, so sorting puts the rays in order around the circle.
+          angles.push(Math.atan2(Math.sin(nudged), Math.cos(nudged)));
+        }
+      }
+    }
+    angles.sort((a, b) => a - b);
+    return angles.map((angle) => {
+      const dx = Math.cos(angle);
+      const dy = Math.sin(angle);
+      let distance = reach;
+      let hit = null;
+      for (const e of near) {
+        // Edges are horizontal or vertical, so a ray meets one where it crosses its line.
+        if (e.y1 === e.y2) {
+          const d = (e.y1 - y) / dy;
+          const at = x + dx * d;
+          if (d > 0 && d < distance && at >= e.x1 && at <= e.x2) [distance, hit] = [d, e];
+        } else {
+          const d = (e.x1 - x) / dx;
+          const at = y + dy * d;
+          if (d > 0 && d < distance && at >= e.y1 && at <= e.y2) [distance, hit] = [d, e];
+        }
+      }
+      return { x: x + dx * distance, y: y + dy * distance, edge: hit };
+    });
+  }
+
+  // Works out the lit area around (x, y) and draws it into `lit`:
+  // - a triangle from (x, y) to every two neighbouring ray ends: together they are the
+  //   visibility polygon, with straight shadow edges where a ray passes a wall corner;
+  // - where two neighbouring rays end on the same edge, the wall behind that stretch is
+  //   lit one tile deep, so walls show their face and do not cut into the own character.
+  function drawLitArea(darkness, x, y) {
+    const { lit, tile } = darkness;
+    const ends = castRays(darkness.edges, x, y, darkness.radius * LIT_REACH);
+    lit.clear().fillStyle(0xffffff);
+    ends.forEach((a, i) => {
+      const b = ends[(i + 1) % ends.length];
+      lit.fillTriangle(x, y, a.x, a.y, b.x, b.y);
+      const e = a.edge;
+      if (!e || e !== b.edge) return;
+      if (e.y1 === e.y2) {
+        lit.fillRect(Math.min(a.x, b.x), y < e.y1 ? e.y1 : e.y1 - tile, Math.abs(b.x - a.x), tile);
+      } else {
+        lit.fillRect(x < e.x1 ? e.x1 : e.x1 - tile, Math.min(a.y, b.y), tile, Math.abs(b.y - a.y));
+      }
+    });
+  }
+
+  // Call every frame with the own character's place: keeps the rim centred on it, lets
+  // the shown radius glide to `radius` (lights out and back on) and fades the whole
+  // darkness in or out. The lit area is only worked out again when the own character has
+  // moved or the shown radius has changed. Without darkness (ghost, lobby, end) the last
+  // lit area stays, so the darkness can fade out.
   function updateDarkness(darkness, x, y, radius, on) {
     const { dark, rim } = darkness;
     const gap = radius - darkness.radius;
@@ -772,6 +872,11 @@ const Render = (() => {
     const shown = Math.abs(alpha - target) < 0.01 ? target : alpha;
     rim.setAlpha(shown);
     dark.setAlpha(shown);
+    const drawnFor = `${x},${y},${darkness.radius}`;
+    if (on && drawnFor !== darkness.drawnFor) {
+      darkness.drawnFor = drawnFor;
+      drawLitArea(darkness, x, y);
+    }
   }
 
   return {
@@ -791,7 +896,6 @@ const Render = (() => {
     makeTaskRing,
     updateTaskRing,
     makeDarkness,
-    drawLitTiles,
     updateDarkness,
   };
 })();

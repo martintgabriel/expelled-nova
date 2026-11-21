@@ -882,54 +882,6 @@ function moveAxis(pos, mx, my) {
   }
 }
 
-// --- Vision blocked by walls (spec 008, part 7) ----------------------------------------
-// The server only sends what is in sight. The browser repeats the rule to light only the
-// tiles in sight, so what is drawn matches what the server sends.
-
-// REPEATS SERVER RULE: line_between() in server/game.py. The tiles strictly between two
-// tiles on the straight line (Bresenham), always traced from the smaller end.
-function lineBetween(col0, row0, col1, row1) {
-  if (row0 > row1 || (row0 === row1 && col0 > col1)) {
-    [col0, row0, col1, row1] = [col1, row1, col0, row0];
-  }
-  const width = Math.abs(col1 - col0);
-  const height = Math.abs(row1 - row0);
-  const stepCol = col1 > col0 ? 1 : -1;
-  const stepRow = row1 > row0 ? 1 : -1;
-  let error = width - height;
-  let col = col0;
-  let row = row0;
-  const tiles = [];
-  while (col !== col1 || row !== row1) {
-    const twice = 2 * error;
-    if (twice > -height) {
-      error -= height;
-      col += stepCol;
-    }
-    if (twice < width) {
-      error += width;
-      row += stepRow;
-    }
-    if (col !== col1 || row !== row1) tiles.push([col, row]);
-  }
-  return tiles;
-}
-
-// REPEATS SERVER RULE: Game._visible_tiles() in server/game.py. The tiles up to `reach`
-// away with no sight-blocking tile on the line, as a Set of "col,row".
-// `sight` is welcome.sight_grid: the server's own list of the tiles that block sight
-// ("#"), so tables, trees and the sea do not block here either (spec 010, part 2).
-function visibleTiles(sight, col, row, reach) {
-  const blocksSight = ([c, r]) => r >= 0 && r < sight.length && sight[r][c] === "#";
-  const visible = new Set();
-  for (let dr = -reach; dr <= reach; dr++) {
-    for (let dc = -reach; dc <= reach; dc++) {
-      if (!lineBetween(col, row, col + dc, row + dr).some(blocksSight)) visible.add(`${col + dc},${row + dr}`);
-    }
-  }
-  return visible;
-}
-
 // --- Phaser scene -----------------------------------------------------------------
 
 class CampusScene extends Phaser.Scene {
@@ -938,7 +890,6 @@ class CampusScene extends Phaser.Scene {
     this.sprites = new Map(); // id -> character from Render.makeCharacter()
     this.exams = new Map(); // failed exam id -> sheet from Render.makeExam()
     this.taskMarkers = new Map(); // own open task id -> mark from Render.makeTaskMarker()
-    this.litKey = ""; // the tile and reach the lit tiles were last worked out for
     this.lastSent = { dx: 0, dy: 0 };
     // The own character, predicted in whole server ticks (see updateOwn).
     this.predicted = null; // position after the newest predicted tick
@@ -949,13 +900,14 @@ class CampusScene extends Phaser.Scene {
   }
 
   create() {
-    // The map is drawn from the server's data; the darkness covers it outside the
-    // vision radius (which the server sent in "welcome").
+    // The map is drawn from the server's data; the darkness covers what the own character
+    // has no line of sight to. The vision radius and the tiles that block sight come from
+    // the server ("welcome"), so the lit area matches what the server sends.
     const { width, height } = Render.drawMap(this, welcome.map);
     if (welcome.map.bell) Render.makeBell(this, welcome.map);
     for (const door of welcome.map.staff_doors || []) Render.makeDoor(this, welcome.map, door);
     this.taskRing = Render.makeTaskRing(this);
-    this.darkness = Render.makeDarkness(this, width, height, welcome.vision_radius);
+    this.darkness = Render.makeDarkness(this, welcome.map, welcome.sight_grid, welcome.vision_radius);
     this.switchMark = welcome.map.light_switch ? Render.makeSwitch(this, welcome.map) : null;
 
     const camera = this.cameras.main;
@@ -1017,7 +969,6 @@ class CampusScene extends Phaser.Scene {
     // The server says how far this player sees right now: less for a student in the dark.
     const radius = limited ? latestState.vision_radius : welcome.vision_radius;
     if (own) Render.updateDarkness(this.darkness, own.x, own.y, radius, limited);
-    this.updateLitTiles(latest.get(welcome.id), limited);
     if (this.switchMark) {
       const off = lastPhase === "playing" && latestState.lights_on === false;
       const t = welcome.map.tile_size;
@@ -1041,25 +992,6 @@ class CampusScene extends Phaser.Scene {
     } else {
       Render.updateTaskRing(this.taskRing, 0, 0, null);
     }
-  }
-
-  // The lit tiles, for the tile the server has the own character on (that is the tile the
-  // server's vision uses), as far as the radius shown right now reaches. Worked out again
-  // only when one of the two changes. Without darkness (ghost, lobby, end) the last shape
-  // stays, so the darkness can fade out.
-  updateLitTiles(server, limited) {
-    if (!server || !limited) {
-      this.litKey = "";
-      return;
-    }
-    const t = welcome.map.tile_size;
-    const col = Math.floor(server.x / t);
-    const row = Math.floor(server.y / t);
-    const reach = Math.ceil(this.darkness.radius / t);
-    const key = `${col},${row},${reach}`;
-    if (key === this.litKey) return;
-    this.litKey = key;
-    Render.drawLitTiles(this.darkness, welcome.map, visibleTiles(welcome.sight_grid, col, row, reach));
   }
 
   // One mark per own open task; a finished task (and a new round) removes its mark.
