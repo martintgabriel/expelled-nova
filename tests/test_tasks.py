@@ -823,6 +823,10 @@ def receive_until(ws, predicate, limit=5 * TICK_RATE):
 
 
 def test_a_student_does_a_task_over_the_websocket_and_everyone_sees_the_progress(fresh_game):
+    # Seed 1 deals the real campus: Ada (joins first) is a student with "gate" (the
+    # "card" mini-game) as her first task, Bo is the examiner (same seed as the
+    # equivalent test in test_minigames.py).
+    fresh_game.rng = random.Random(1)
     with TestClient(app) as client:
         with (
             client.websocket_connect("/ws") as a,
@@ -862,8 +866,14 @@ def test_a_student_does_a_task_over_the_websocket_and_everyone_sees_the_progress
             ws.send_json({"type": "task", "task": task["id"]})
             running = receive_until(ws, lambda m: m["type"] == "state" and m["doing"])
             assert running["doing"]["task"] == task["id"]
-            player.doing_done_tick = fresh_game.tick + 2  # skip the waiting
+            assert running["doing"]["challenge"]["kind"] == "card"
 
+            wrong_number = "00000" if player.challenge["number"] != "00000" else "11111"
+            ws.send_json({"type": "task_input", "task": task["id"], "value": wrong_number})
+            after_wrong = receive_until(ws, lambda m: m["type"] == "state" and m.get("task_note"))
+            assert after_wrong["task_note"] == "Beep. Red."
+
+            ws.send_json({"type": "task_input", "task": task["id"], "value": player.challenge["number"]})
             done = receive_until(
                 ws, lambda m: m["type"] == "state" and any(t["done"] for t in m["tasks"])
             )

@@ -578,7 +578,10 @@ def test_no_snapshot_contains_another_players_challenge():
         if other is student:
             assert snapshot["doing"]["task"] == "paper_jam"
         else:
-            assert snapshot["doing"] is None or snapshot["doing"]["task"] == other.doing
+            # Examiners don't have tasks yet (part 3 lands separately), so their
+            # snapshot has no "doing" key at all — that's an even stronger secrecy
+            # guarantee than an empty one.
+            assert snapshot.get("doing") is None or snapshot["doing"]["task"] == other.doing
 
 
 # --- WebSocket -----------------------------------------------------------------------
