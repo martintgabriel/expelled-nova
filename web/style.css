@@ -204,6 +204,13 @@ button:disabled { opacity: 0.55; box-shadow: none; cursor: not-allowed; }
   line-height: 1;
   z-index: 30; /* above every overlay, below the handbook itself */
 }
+/* Mute (spec 016): same circle as the "?" button, one slot to its left. */
+.mute-button {
+  right: calc(56px + env(safe-area-inset-right));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .help-overlay { z-index: 35; padding-top: 16px; }
 .help-card { max-width: 560px; max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); gap: 12px; }
 .help-close {
@@ -451,8 +458,8 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
 .panel {
   position: fixed;
   top: calc(12px + env(safe-area-inset-top));
-  right: calc(62px + env(safe-area-inset-right)); /* next to the "?" button */
-  max-width: calc(100vw - 86px);
+  right: calc(108px + env(safe-area-inset-right)); /* next to the "?" and mute buttons */
+  max-width: calc(100vw - 132px);
   padding: 10px 14px;
   border: 1px solid var(--rule);
   border-radius: 4px;
