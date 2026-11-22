@@ -1,5 +1,5 @@
-// All drawing code (spec 005): the map, the characters, the failed exams, the meeting table, the staff
-// doors, the light switch, the task markers and the darkness.
+// All drawing code (spec 005): the map, the characters, the failed exams, the meeting table, the
+// vents, the light switch, the task places and the darkness.
 // Everything is drawn here from simple shapes and text: there are no image files.
 // main.js decides WHAT to draw from the server's state; this file decides HOW it looks.
 // Loaded as a plain script after Phaser and before main.js (no build step).
@@ -101,12 +101,17 @@ const Render = (() => {
   const GROUND_ORDER = ["shopfloor", "sand", "paving", "grass", "terrace", "pergola", "glassroof", "seats"];
   const FURNITURE_ORDER = [
     "beanbag", "steps", "counter", "shelf", "desk", "studytable", "table", "cafetable", "woodtable",
-    "shopshelf", "foodcounter", "piano", "picnic", "tree",
+    "shopshelf", "foodcounter", "piano", "picnic", "tree", "surfboard",
   ];
   const OUTDOOR_FLOOR = { paving: [0xd2c4aa, 0xcabb9f], grass: [0x86b45a, 0x86b45a], terrace: [0xe9e6df, 0xe1ddd4] };
   const BEANBAG_COLORS = [0xd9412e, 0xf2b632, 0x4caf50, 0xd9412e, 0x2f80c3];
   const PRODUCT_COLORS = [0xe53935, 0x43a047, 0xfdd835, 0x1e88e5, 0xfb8c00, 0x8e24aa];
   const BOOK_COLORS = [0xc0392b, 0xe6b33a, 0x2e86c1, 0xf4f1e8, 0x27ae60];
+  // Surfboards (spec 015): [board, stripe] colour pairs, picked by the board's tile.
+  const BOARD_COLORS = [
+    [0xff6b5e, 0xfff3d6], [0x2ec4b6, 0xfff3d6], [0xf5d547, 0xe5484d],
+    [0x8e5bd9, 0xf5d547], [0xfff3d6, 0x3a86ff], [0xff7ab6, 0x2ec4b6],
+  ];
 
   // A small seeded random generator, so speckles and books look the same on every screen.
   function seeded(seed) {
@@ -185,7 +190,8 @@ const Render = (() => {
         rect(col, row, (col + row) % 2 ? 0xead6a6 : 0xe6d19e);
         g.fillStyle(0xcdb47c);
         for (let i = 0; i < 7; i++) g.fillCircle(x + (3 + random() * 46) * u, y + (3 + random() * 46) * u, 1.6 * u);
-        if (row % 6 === 2) g.fillStyle(0xf6efe2).fillEllipse(x + 34 * u, y + 33 * u, 8 * u, 6 * u);
+        // A shell here and there (not one per tile of a row: the beach is five tiles wide now).
+        if ((col * 5 + row * 3) % 13 === 0) g.fillStyle(0xf6efe2).fillEllipse(x + 34 * u, y + 33 * u, 8 * u, 6 * u);
       } else if (kind in OUTDOOR_FLOOR) {
         rect(col, row, OUTDOOR_FLOOR[kind][(col + row) % 2]);
         if (kind === "grass") {
@@ -207,7 +213,7 @@ const Render = (() => {
         g.lineStyle(3 * u, 0xffffff, 0.8).lineBetween(x, y, x + t, y);
         g.lineStyle(2 * u, 0xffffff, 0.5).lineBetween(x, y, x, y + t);
       } else if (kind === "seats") {
-        if (col !== 29) {
+        if (col !== 33) { // the free aisle in the middle of the Auditorium
           // A seat facing north (towards the screen): backrest at the bottom.
           g.fillStyle(0x5f8a4a).fillRect(x + 6 * u, y + 6 * u, t - 12 * u, t - 20 * u);
           g.fillStyle(0x3f6331).fillRect(x + 6 * u, y + t - 16 * u, t - 12 * u, 10 * u);
@@ -236,6 +242,13 @@ const Render = (() => {
         g.fillStyle(0x4f8fbf).fillRect(x + t - 10 * u, y, 10 * u, t);
         g.fillStyle(0xe9f3f8);
         for (let o = 0; o < 52; o += 12) g.fillEllipse(x + t - 8 * u, y + (o + 5) * u, 12 * u, 10 * u);
+      }
+      // The same along the north and south ends of the beach (spec 015: the beach is a bay).
+      for (const [dr, edge] of [[1, t - 10 * u], [-1, 0]]) {
+        if (!isFloor(col, row + dr)) continue;
+        g.fillStyle(0x4f8fbf).fillRect(x, y + edge, t, 10 * u);
+        g.fillStyle(0xe9f3f8);
+        for (let o = 0; o < 52; o += 12) g.fillEllipse(x + (o + 5) * u, y + edge + (dr > 0 ? 8 : 2) * u, 10 * u, 12 * u);
       }
     }
 
@@ -372,6 +385,60 @@ const Render = (() => {
         g.fillStyle(0x000000, 0.24).fillEllipse(x + 31 * u, y + 32 * u, 46 * u, 44 * u);
         g.fillStyle(0x3f7d34).fillCircle(x + 24 * u, y + 24 * u, 22 * u);
         g.fillStyle(0x5c9c48).fillCircle(x + 18 * u, y + 15 * u, 8 * u);
+      } else if (kind === "surfboard") {
+        drawSurfboards(col, row, x, y);
+      }
+    }
+
+    // Surfboards on the beach (spec 015), three looks chosen by the tile so the same map
+    // always shows the same boards: lying on the sand, two leaning on a wooden rack, and
+    // one stuck upright in the sand. Boards are a little longer than their tile.
+    function drawSurfboards(col, row, x, y) {
+      const cx = x + t / 2;
+      const cy = y + t / 2;
+      const look = (col + row) % 3;
+      const colors = (n) => BOARD_COLORS[(col * 5 + row * 3 + n) % BOARD_COLORS.length];
+      // One board seen from above: centre, length, width, angle in degrees, colours.
+      const board = (bx, by, length, width, angle, [fill, stripe]) => {
+        const a = Phaser.Math.DegToRad(angle);
+        const cos = Math.cos(a);
+        const sin = Math.sin(a);
+        // The outline of a board: pointed nose, round tail, as points along its length.
+        const shape = (grow) => {
+          const points = [];
+          for (let i = 0; i <= 16; i++) {
+            const f = i / 16; // 0 = tail, 1 = nose
+            const half = (width / 2 + grow) * Math.sin(Math.PI * Math.pow(f, 0.75)) ** 0.8;
+            points.push([(f - 0.5) * (length + grow * 2), half]);
+          }
+          const outline = [...points, ...points.map(([px, py]) => [px, -py]).reverse()];
+          return outline.map(([px, py]) => ({ x: bx + px * cos - py * sin, y: by + px * sin + py * cos }));
+        };
+        g.fillStyle(0x000000, 0.2).fillPoints(shape(0).map((p) => ({ x: p.x + 2 * u, y: p.y + 3 * u })), true);
+        g.fillStyle(OUTLINE).fillPoints(shape(1.5 * u), true);
+        g.fillStyle(fill).fillPoints(shape(0), true);
+        // A stripe down the middle and a small fin near the tail.
+        g.lineStyle(2.5 * u, stripe).lineBetween(
+          bx - cos * length * 0.36, by - sin * length * 0.36, bx + cos * length * 0.4, by + sin * length * 0.4,
+        );
+        g.fillStyle(OUTLINE).fillCircle(bx - cos * length * 0.38, by - sin * length * 0.38, 1.8 * u);
+      };
+      if (look === 0) {
+        board(cx, cy, 62 * u, 17 * u, -28, colors(0)); // lying on the sand
+      } else if (look === 1) {
+        // A wooden rack with two boards leaning against it.
+        g.fillStyle(0x000000, 0.18).fillRect(x + 4 * u, y + 30 * u, 46 * u, 6 * u);
+        board(cx - 10 * u, cy - 2 * u, 58 * u, 15 * u, -74, colors(0));
+        board(cx + 9 * u, cy - 2 * u, 58 * u, 15 * u, -104, colors(1));
+        g.fillStyle(0x6e4628).fillRect(x + 2 * u, y + 24 * u, 48 * u, 5 * u);
+        g.fillStyle(0x8a5a33).fillRect(x + 2 * u, y + 24 * u, 48 * u, 2 * u);
+        for (const px of [3, 45]) g.fillStyle(0x4f3219).fillRect(x + px * u, y + 20 * u, 5 * u, 13 * u);
+      } else {
+        // Stuck upright in the sand: a long shadow, the board, a mound of sand at its foot.
+        g.fillStyle(0x000000, 0.2).fillEllipse(cx + 16 * u, cy + 15 * u, 34 * u, 8 * u);
+        board(cx, cy - 8 * u, 56 * u, 16 * u, -90, colors(0));
+        g.fillStyle(0xd9c38c).fillEllipse(cx, cy + 19 * u, 30 * u, 12 * u);
+        g.fillStyle(0xead6a6).fillEllipse(cx - 2 * u, cy + 17 * u, 20 * u, 7 * u);
       }
     }
 
@@ -632,19 +699,41 @@ const Render = (() => {
     return scene.add.container((col + 0.5) * t, (row + 0.5) * t, [g, label]).setDepth(0.6);
   }
 
-  // --- Staff doors (spec 008, part 6) ----------------------------------------------------
+  // --- Vents (spec 015) -----------------------------------------------------------------
 
-  // A hatch in the floor on a tile the server's map names ("staff_doors"). Everyone sees
-  // the hatches; only examiners can use them.
-  function makeDoor(scene, map, door) {
+  // A hatch in the floor on a tile the server's map names ("vents"). Everyone sees the
+  // hatches; only examiners can climb in. The lid slides aside while the hatch is open.
+  function makeVent(scene, map, vent) {
     const t = map.tile_size;
-    const g = scene.add.graphics();
-    g.fillStyle(OUTLINE).fillRoundedRect(-13, -13, 26, 26, 4);
-    g.fillStyle(0x6a7183).fillRoundedRect(-11, -11, 22, 22, 3); // the metal plate
-    g.fillStyle(0x23262e);
-    for (const y of [-7.5, -1.5, 4.5]) g.fillRect(-8, y, 16, 3); // three slats
-    g.fillStyle(0xf2b33d).fillCircle(8, -8, 1.6); // a small handle
-    return scene.add.container((door.x + 0.5) * t, (door.y + 0.5) * t, [g]).setDepth(0.4);
+    const hole = scene.add.graphics();
+    hole.fillStyle(OUTLINE).fillRoundedRect(-13, -13, 26, 26, 4);
+    hole.fillStyle(0x0b0c10).fillRoundedRect(-10.5, -10.5, 21, 21, 3); // the dark shaft
+    // Two eyes in the dark: only shown to the examiner who sits in this vent.
+    const eyes = scene.add.graphics();
+    eyes.fillStyle(0xffffff).fillEllipse(-4, 0, 5.5, 7).fillEllipse(4, 0, 5.5, 7);
+    eyes.fillStyle(OUTLINE).fillCircle(-3.4, 0.6, 1.7).fillCircle(4.6, 0.6, 1.7);
+    const lid = scene.add.graphics();
+    lid.fillStyle(OUTLINE).fillRoundedRect(-12.5, -12.5, 25, 25, 4);
+    lid.fillStyle(0x6a7183).fillRoundedRect(-11, -11, 22, 22, 3); // the metal plate
+    lid.fillStyle(0x23262e);
+    for (const y of [-7.5, -1.5, 4.5]) lid.fillRect(-8, y, 16, 3); // three slats
+    lid.fillStyle(0xf2b33d).fillCircle(8, -8, 1.6); // a small handle
+    const hatch = scene.add.container((vent.x + 0.5) * t, (vent.y + 0.5) * t, [hole, eyes, lid]).setDepth(0.4);
+    hatch.parts = { lid, eyes, slide: 0 };
+    return hatch;
+  }
+
+  // Call every frame. `open`: the server says this hatch shows open (someone just climbed
+  // in or out). `occupied`: the own character sits inside: the lid stays ajar and its eyes
+  // look out. The lid glides between closed (0) and fully aside (1).
+  function updateVent(hatch, { open, occupied }, time) {
+    const { lid, eyes } = hatch.parts;
+    const target = open ? 1 : occupied ? 0.55 : 0;
+    hatch.parts.slide += (target - hatch.parts.slide) * 0.3;
+    const slide = hatch.parts.slide;
+    lid.setPosition(slide * 15, slide * -12).setAngle(slide * 24);
+    eyes.setVisible(occupied && slide > 0.2);
+    if (occupied) eyes.setX(Math.sin(time / 600) * 1.5); // looking left and right
   }
 
   // --- Light switch (spec 008, part 8) ---------------------------------------------------
@@ -691,22 +780,141 @@ const Render = (() => {
 
   const TASK_COLOR = 0x4cb963; // the green of the task button and bar (style.css)
 
-  // The mark on one of the player's own open task places. It is drawn above the darkness,
-  // so it also shows outside the vision radius: a player's own tasks are no secret.
-  function makeTaskMarker(scene, task) {
+  // Task places (spec 015): every task station of the map is an object that belongs to
+  // its task's story, drawn on the floor under the characters. Which object is chosen by the
+  // station's mini-game kind, so the map needs no extra data. Everyone sees the objects;
+  // only a player's own open ones glow (see makeTaskGlow).
+  const TASK_OBJECTS = {
+    paper_jam: drawPrinter, // "Print ..." in the Library
+    ticket: drawTicketMachine, // "Submit your Bachelor certificate" at Student Services
+    translate: drawHelpdeskSign, // "Ask the Helpdesk for help"
+    cable: drawProjector, // "Get your slides on the projector"
+    card: drawCardGate, // "Tap your student card at the gate"
+    seagull: drawNataPlate, // "Eat your pastel de nata in the sun"
+  };
+
+  // Every station of the map's tasks as {x, y, minigame} in tiles (a task without "steps"
+  // is one station itself).
+  function taskStations(map) {
+    return (map.tasks || []).flatMap((task) => task.steps || [task]);
+  }
+
+  function makeTaskPlace(scene, map, station) {
+    const t = map.tile_size;
     const g = scene.add.graphics();
-    g.fillStyle(OUTLINE, 0.85).fillCircle(0, 0, 11);
-    g.lineStyle(2, TASK_COLOR).strokeCircle(0, 0, 11);
-    const mark = scene.add
-      .text(0, 0, "!", {
-        fontFamily: FONT,
-        fontSize: "14px",
-        fontStyle: "bold",
-        color: "#4cb963",
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0.5);
-    return scene.add.container(task.x, task.y, [g, mark]).setDepth(11);
+    const parts = [g];
+    const draw = TASK_OBJECTS[station.minigame] || drawClipboard;
+    draw(g, (text, x, y, size, color) => {
+      parts.push(
+        scene.add
+          .text(x, y, text, { fontFamily: FONT, fontSize: size, fontStyle: "bold", color, resolution: TEXT_RESOLUTION })
+          .setOrigin(0.5),
+      );
+    });
+    return scene.add.container((station.x + 0.5) * t, (station.y + 0.5) * t, parts).setDepth(0.45);
+  }
+
+  // Each object is drawn around (0, 0) within about 28 x 28 px: a soft shadow, a dark
+  // outline shape, then the coloured shapes on top (as for the characters).
+  function drawPrinter(g) {
+    g.fillStyle(0x000000, 0.22).fillRoundedRect(-11, -5, 26, 19, 4);
+    g.fillStyle(0xffffff).fillRect(-7, -14, 14, 9); // the paper going in
+    g.lineStyle(1, 0x8a8f99).strokeRect(-7, -14, 14, 9);
+    g.fillStyle(OUTLINE).fillRoundedRect(-13, -8, 26, 19, 4);
+    g.fillStyle(0xd9dde4).fillRoundedRect(-11.5, -6.5, 23, 16, 3); // the body
+    g.fillStyle(0x596072).fillRect(-9, -3, 18, 3); // the slot
+    g.fillStyle(0xffffff).fillRect(-7, 2, 14, 7); // a printed page, half out
+    g.fillStyle(0xb9bec8).fillRect(-5, 4, 10, 1).fillRect(-5, 6, 7, 1);
+    g.fillStyle(0xe5484d).fillCircle(8.5, -4.5, 1.6); // the red "paper jam" light
+  }
+
+  function drawTicketMachine(g, text) {
+    g.fillStyle(0x000000, 0.22).fillRoundedRect(-8, -10, 20, 26, 4);
+    g.fillStyle(OUTLINE).fillRoundedRect(-10, -13, 20, 26, 4);
+    g.fillStyle(0xb3261e).fillRoundedRect(-8.5, -11.5, 17, 23, 3); // the red kiosk
+    g.fillStyle(0x14161b).fillRoundedRect(-6.5, -9.5, 13, 8, 1.5); // "now serving" display
+    g.fillStyle(0xfff3d6).fillRect(-4, 2, 8, 9); // the ticket coming out
+    g.lineStyle(1, 0xb9a773).lineBetween(-2.5, 5, 2.5, 5).lineBetween(-2.5, 7.5, 2.5, 7.5);
+    g.fillStyle(0x14161b).fillRect(-5.5, 0.5, 11, 2);
+    text("A12", 0, -5.5, "7px", "#7dff9a");
+  }
+
+  function drawHelpdeskSign(g, text) {
+    g.fillStyle(0x000000, 0.22).fillEllipse(2, 12, 20, 6);
+    g.fillStyle(0x596072).fillRect(-1, 2, 2, 10); // the stand
+    g.fillStyle(OUTLINE).fillRoundedRect(-6, 10, 12, 4, 2);
+    g.fillStyle(OUTLINE).fillCircle(0, -4, 11.5);
+    g.fillStyle(0x1f5fd4).fillCircle(0, -4, 10); // the blue info sign
+    g.fillStyle(0xffffff, 0.25).fillEllipse(-3, -8, 9, 4);
+    text("?", 0, -4, "15px", "#ffffff");
+  }
+
+  function drawProjector(g) {
+    g.fillStyle(0x78b4f0, 0.28).fillTriangle(0, -6, -12, -16, 12, -16); // the light it throws
+    g.fillStyle(0x000000, 0.22).fillRoundedRect(-10, -3, 24, 15, 4);
+    g.fillStyle(OUTLINE).fillRoundedRect(-12, -6, 24, 15, 4);
+    g.fillStyle(0xe9ecef).fillRoundedRect(-10.5, -4.5, 21, 12, 3); // the body
+    g.fillStyle(OUTLINE).fillCircle(-4, 1.5, 5);
+    g.fillStyle(0x3d8bd4).fillCircle(-4, 1.5, 3.6); // the lens
+    g.fillStyle(0xffffff, 0.7).fillCircle(-5.2, 0.3, 1.2);
+    g.fillStyle(0x9aa0aa).fillRect(4, -2, 5, 1.5).fillRect(4, 1, 5, 1.5).fillRect(4, 4, 5, 1.5); // air slits
+    // The loose cable: a short wavy line ending in a plug.
+    g.lineStyle(2, OUTLINE);
+    g.beginPath();
+    g.moveTo(9, 8);
+    g.lineTo(11, 12);
+    g.lineTo(7, 14);
+    g.lineTo(11, 16);
+    g.strokePath();
+    g.fillStyle(0xf2b33d).fillRect(9.5, 15, 4, 3);
+  }
+
+  function drawCardGate(g) {
+    g.fillStyle(0x000000, 0.22).fillRoundedRect(-12, 6, 28, 7, 3);
+    for (const x of [-13, 7]) {
+      g.fillStyle(OUTLINE).fillRoundedRect(x, -11, 7, 22, 2.5);
+      g.fillStyle(0x9aa0aa).fillRoundedRect(x + 1.2, -9.8, 4.6, 19.6, 1.5); // the two posts
+    }
+    g.fillStyle(OUTLINE).fillRect(-7, -2.5, 15, 5);
+    g.fillStyle(0xf5d547).fillRect(-7, -1.5, 15, 3); // the yellow arm
+    g.fillStyle(OUTLINE).fillRect(-3, -1.5, 2.5, 3).fillRect(2.5, -1.5, 2.5, 3);
+    g.fillStyle(0x14161b).fillRoundedRect(7.8, -9, 5.4, 7, 1); // the card reader
+    g.fillStyle(0x4cb963).fillCircle(10.5, -5.5, 1.6); // "beep": the green light
+  }
+
+  function drawNataPlate(g) {
+    g.fillStyle(0x000000, 0.2).fillEllipse(2, 4, 26, 22);
+    g.fillStyle(OUTLINE).fillCircle(0, 0, 12.5);
+    g.fillStyle(0xffffff).fillCircle(0, 0, 11); // the plate
+    g.lineStyle(1, 0xc9d2de).strokeCircle(0, 0, 8.5);
+    g.fillStyle(0xb9793a).fillCircle(0, 0, 7); // the pastry
+    g.fillStyle(0xe8a33d).fillCircle(0, 0, 5.4); // the custard
+    g.fillStyle(0x7a4a16, 0.7).fillCircle(-1.6, -1.2, 1.5).fillCircle(1.8, 1.4, 1.2); // burnt spots
+  }
+
+  // A station without a mini-game (only the small test maps): a clipboard.
+  function drawClipboard(g) {
+    g.fillStyle(OUTLINE).fillRoundedRect(-9, -11, 18, 22, 3);
+    g.fillStyle(0xb07a45).fillRoundedRect(-7.5, -9.5, 15, 19, 2);
+    g.fillStyle(0xffffff).fillRect(-5.5, -6, 11, 13);
+    g.fillStyle(0x596072).fillRoundedRect(-3.5, -11.5, 7, 4, 1.5);
+  }
+
+  // The soft green glow on one of the player's own open task places (spec 015; it replaces
+  // the "!" mark). It is drawn above the darkness, so it also shows outside the vision
+  // radius: a player's own tasks are no secret. A finished task loses it (main.js).
+  function makeTaskGlow(scene, task) {
+    const g = scene.add.graphics();
+    for (const [radius, alpha] of [[24, 0.1], [20, 0.12], [16, 0.16]]) g.fillStyle(TASK_COLOR, alpha).fillCircle(0, 0, radius);
+    g.lineStyle(2, TASK_COLOR, 0.95).strokeRoundedRect(-16, -16, 32, 32, 8);
+    return scene.add.container(task.x, task.y, [g]).setDepth(11);
+  }
+
+  // Call every frame: the glow breathes slowly, and is faint while the own character
+  // stands at the place (`near`), so it does not cover the face.
+  function updateTaskGlow(glow, time, near) {
+    const breath = 0.5 + 0.5 * Math.sin(time / 320);
+    glow.setAlpha(near ? 0.2 + 0.15 * breath : 0.6 + 0.4 * breath);
   }
 
   // The ring around the own character while a task runs, with the seconds left below.
@@ -1003,10 +1211,14 @@ const Render = (() => {
     animateCharacter,
     makeExam,
     makeMeetingPoint,
-    makeDoor,
+    makeVent,
+    updateVent,
     makeSwitch,
     updateSwitch,
-    makeTaskMarker,
+    taskStations,
+    makeTaskPlace,
+    makeTaskGlow,
+    updateTaskGlow,
     makeTaskRing,
     updateTaskRing,
     makeEdgeArrow,

@@ -1,9 +1,10 @@
 """Game rules: lobby, host, secret roles, live movement, expelling, ghosts, meetings and
-votes, tasks, staff doors, the lights, the end of a round, player colours and vision.
+votes, tasks, vents, the lights, the end of a round, player colours and vision.
 Plain Python, no network code, so it can be tested directly.
 
 The server owns the truth: browsers only send a direction (dx, dy), "start", "expel",
-"report", "meeting", "vote", "task", "door", "sabotage", "fix" or "restart". Every tick the server moves each player a fixed
+"report", "meeting", "vote", "task", "vent_enter", "vent_move", "vent_leave", "sabotage", "fix",
+"make_host" or "restart". Every tick the server moves each player a fixed
 distance and blocks walls. Time is counted in ticks (not the wall clock), so tests can
 advance it with step().
 """
@@ -30,8 +31,9 @@ MAX_PLAYERS = 10
 NAME_MAX = 16
 MAX_MESSAGE_BYTES = 512
 RATE_LIMIT = 30  # messages per second per connection
-MESSAGE_TYPES = {"join", "input", "start", "restart"}  # joining, walking and the round
-MESSAGE_TYPES |= {"expel", "report", "meeting", "vote", "task", "door"}  # actions in a round
+MESSAGE_TYPES = {"join", "input", "start", "restart", "make_host"}  # joining, walking, the round
+MESSAGE_TYPES |= {"expel", "report", "meeting", "vote", "task"}  # actions in a round
+MESSAGE_TYPES |= {"vent_enter", "vent_move", "vent_leave"}  # examiners in the vents
 MESSAGE_TYPES |= {"task_input", "task_cancel"}  # answering or closing a task's mini-game
 MESSAGE_TYPES |= {"sabotage", "fix"}  # the lights
 EXPEL_RANGE = 48  # px between centres, about 1.5 tiles
@@ -44,8 +46,12 @@ REPORT_RANGE = 48  # px from a player's centre to a failed exam, about 1.5 tiles
 MEETING_TABLE_RADIUS = 40  # px from the table's middle to its edge
 MEETING_RANGE = 48  # px from a player's centre to the table's edge, about 1.5 tiles
 MEETING_CIRCLE = 64  # px from the table's middle to each player's place at a meeting
-DOOR_COOLDOWN = 3  # seconds between two staff door journeys of the same examiner
-DOOR_COOLDOWN_TICKS = DOOR_COOLDOWN * TICK_RATE  # 60
+# Vents (spec 015): a living examiner climbs into a vent, is hidden while inside, moves
+# between the vents and climbs out again.
+VENT_COOLDOWN = 3  # seconds before an examiner may climb in again after climbing out
+VENT_COOLDOWN_TICKS = VENT_COOLDOWN * TICK_RATE  # 60
+VENT_OPEN_TICKS = TICK_RATE // 2  # how long a hatch shows open after someone used it (0.5 s)
+INSIDE_VENT = "Leave the vent first"  # the reason for every other action while inside
 SABOTAGE_COOLDOWN = 30  # seconds before the lights can be turned off (again)
 SABOTAGE_COOLDOWN_TICKS = SABOTAGE_COOLDOWN * TICK_RATE  # 600
 LIGHTS_OUT_TILES = 1.5  # how far a living student sees while the lights are off, in tiles
@@ -99,7 +105,8 @@ class Player:
     alive: bool = True  # False = ghost: walks through walls, cannot expel or be expelled
     color: int = 0  # colour number, unique in the game, kept until the player leaves
     next_expel_tick: int = 0  # first tick at which this player may expel (again)
-    next_door_tick: int = 0  # first tick at which this player may use a staff door (again)
+    vent: str | None = None  # id of the vent this examiner is inside right now, or None
+    next_vent_tick: int = 0  # first tick at which this player may climb into a vent (again)
     meeting_used: bool = False  # one call at the meeting table per player per round
     tasks: list = field(default_factory=list)  # ids of this student's tasks (examiners: none)
     tasks_done: list = field(default_factory=list)  # ids of the finished ones
@@ -140,7 +147,7 @@ SOLID_DECOR = {"sea", "solar", "greenroof", "roof", "glasswall", "screen"}
 GROUND_DECOR = {"sand", "paving", "grass", "terrace", "pergola", "glassroof", "shopfloor", "seats"}
 FURNITURE_DECOR = {
     "beanbag", "counter", "shelf", "desk", "studytable", "table", "cafetable", "woodtable",
-    "shopshelf", "foodcounter", "piano", "steps", "picnic", "tree",
+    "shopshelf", "foodcounter", "piano", "steps", "picnic", "tree", "surfboard",
 }
 FLOOR_DECOR = GROUND_DECOR | FURNITURE_DECOR
 # The solid kinds that also block sight (spec 010, part 2), like every plain wall tile:
@@ -321,12 +328,16 @@ class Game:
             }
             for raw in campus.get("tasks", [])
         }  # task id -> {id, joke, steps}; a flat task (no "steps") normalises to one station
-        self.doors = {door["id"]: door for door in campus.get("staff_doors", [])}  # by id
+        self.vents = {vent["id"]: vent for vent in campus.get("vents", [])}  # by id
+        self.vent_open = {}  # vent id -> the tick until which its hatch shows open
         self.sight = sight_grid(campus)  # which tiles block sight; walls never change
         self.lights_out_radius = LIGHTS_OUT_TILES * self.tile  # px, for students in the dark
         self.lights_on = True
         self.next_sabotage_tick = 0  # first tick at which an examiner may turn the lights off
         self.players = {}  # by id, in join order (Python dicts keep insertion order)
+        # The host's player id (spec 015): the first player to join, until the host hands
+        # over (make_host) or leaves (then the player who has been in the game longest).
+        self.host_id = None
         self.tick = 0
         self.next_id = 1
         self.phase = LOBBY
@@ -337,11 +348,6 @@ class Game:
         # Operating-system randomness, so nobody can predict the roles.
         # Tests pass a seeded random.Random to fix the outcome.
         self.rng = rng or random.SystemRandom()
-
-    @property
-    def host_id(self):
-        """The player who has been in the game longest: the first one in join order."""
-        return next(iter(self.players), None)
 
     # --- Joining and leaving --------------------------------------------------
 
@@ -357,10 +363,13 @@ class Game:
         player = Player(id=f"p{self.next_id}", name=name, x=x, y=y, color=self._free_color())
         self.next_id += 1
         self.players[player.id] = player
+        if self.host_id is None:
+            self.host_id = player.id  # the first player in an empty game
         return player
 
     def leave(self, player_id):
-        """Remove a player. If it was the host, the next-longest player is host automatically.
+        """Remove a player. If it was the host, the player who has been in the game longest
+        (the first one in join order) becomes host.
 
         While playing or in a meeting, a player leaving can decide the game (see _check_win).
         During the vote, the leaver's vote and the votes for them are taken back.
@@ -368,8 +377,11 @@ class Game:
         self.players.pop(player_id, None)
         if not self.players:
             # Everyone has gone: open a clean lobby again, otherwise nobody could ever join.
+            self.host_id = None
             self._reset_round()
             return
+        if player_id == self.host_id:
+            self.host_id = next(iter(self.players))
         if self.phase == MEETING and self.meeting.result is None:
             self.meeting.votes = {
                 voter: target
@@ -378,6 +390,25 @@ class Game:
             }
         if self.phase in (PLAYING, MEETING):
             self._check_win()
+
+    def make_host(self, player_id, target_id):
+        """The host hands the host role to another player, in the lobby only (spec 015).
+
+        The sender is checked before the target. Checks everything before changing anything.
+        """
+        if player_id not in self.players:
+            raise GameError("Unknown player")
+        if self.phase != LOBBY:
+            raise GameError("The host can only change in the lobby")
+        if player_id != self.host_id:
+            raise GameError("Only the host can hand over")
+        if not isinstance(target_id, str):
+            raise GameError("Target must be a player id")
+        if target_id == player_id:
+            raise GameError("You are already the host")
+        if target_id not in self.players:
+            raise GameError("Unknown target")
+        self.host_id = target_id
 
     # --- Starting and roles -----------------------------------------------------
 
@@ -450,6 +481,8 @@ class Game:
             raise GameError("Ghosts cannot expel")
         if examiner.role != EXAMINER:
             raise GameError("Only examiners can expel")
+        if examiner.vent is not None:
+            raise GameError(INSIDE_VENT)
         if not isinstance(target_id, str):
             raise GameError("Target must be a player id")
         target = self.players.get(target_id)
@@ -482,15 +515,61 @@ class Game:
         """Whole seconds from now until the given tick, rounded up (0 = now or past)."""
         return max(0, math.ceil((tick - self.tick) / TICK_RATE))
 
-    # --- Staff doors (spec 008, part 6) -------------------------------------------------
+    # --- Vents (spec 015; they replace the staff doors of spec 008, part 6) --------------
 
-    def use_door(self, player_id, destination):
-        """A living examiner standing on a staff door travels to another door of the network.
+    def enter_vent(self, player_id):
+        """A living examiner standing on a vent climbs in.
 
-        The sender is checked before the door and the destination, so a rejection tells a
-        student nothing. Others only notice the journey if it happens within their vision:
-        the snapshots simply show the new position.
+        While inside they sit on the vent's centre, are left out of everyone else's
+        snapshot (see snapshot) and can only move to another vent or climb out: walking,
+        expelling, reporting, calling a meeting, tasks and sabotage are rejected. The sender
+        is checked before the place, so a rejection tells a student nothing.
         """
+        player = self._check_vent_user(player_id)
+        if player.vent is not None:
+            raise GameError("You are already inside a vent")
+        here = self._vent_under(player)
+        if here is None:
+            raise GameError("You are not standing on a vent")
+        if self.tick < player.next_vent_tick:
+            left = self._seconds_until(player.next_vent_tick)
+            raise GameError(f"Vent cooldown: {left} s left")
+
+        player.vent = here
+        player.x, player.y = self._vent_centre(here)
+        player.dx = player.dy = 0
+        player.doing = None  # a running (fake) task is cancelled
+        player.challenge = None
+        player.task_note = None
+        self.vent_open[here] = self.tick + VENT_OPEN_TICKS  # others see the hatch move
+
+    def move_vent(self, player_id, destination):
+        """An examiner inside a vent moves to another vent, at once and without a cooldown.
+        No hatch opens: nobody can tell where they are."""
+        player = self._check_vent_user(player_id)
+        if player.vent is None:
+            raise GameError("You are not inside a vent")
+        if not isinstance(destination, str):
+            raise GameError("Destination must be a vent id")
+        if destination not in self.vents:
+            raise GameError("Unknown vent")
+        if destination == player.vent:
+            raise GameError("You are already at this vent")
+        player.vent = destination
+        player.x, player.y = self._vent_centre(destination)
+
+    def leave_vent(self, player_id):
+        """An examiner inside a vent climbs out at the vent they are in. Climbing in again
+        (anywhere) has a cooldown of VENT_COOLDOWN seconds from now."""
+        player = self._check_vent_user(player_id)
+        if player.vent is None:
+            raise GameError("You are not inside a vent")
+        self.vent_open[player.vent] = self.tick + VENT_OPEN_TICKS
+        player.vent = None  # they already sit on the vent's centre
+        player.next_vent_tick = self.tick + VENT_COOLDOWN_TICKS
+
+    def _check_vent_user(self, player_id):
+        """The checks the three vent actions share. Returns the player."""
         player = self.players.get(player_id)
         if player is None:
             raise GameError("Unknown player")
@@ -501,33 +580,22 @@ class Game:
         if self.phase != PLAYING:
             raise GameError("The game has not started yet")
         if not player.alive:
-            raise GameError("Ghosts cannot use staff doors")
+            raise GameError("Ghosts cannot use vents")
         if player.role != EXAMINER:
-            raise GameError("Only examiners can use staff doors")
-        here = self._door_under(player)
-        if here is None:
-            raise GameError("You are not standing on a staff door")
-        if not isinstance(destination, str):
-            raise GameError("Destination must be a staff door id")
-        if destination not in self.doors:
-            raise GameError("Unknown staff door")
-        if destination == here:
-            raise GameError("You are already at this door")
-        if self.tick < player.next_door_tick:
-            left = self._seconds_until(player.next_door_tick)
-            raise GameError(f"Staff door cooldown: {left} s left")
+            raise GameError("Only examiners can use vents")
+        return player
 
-        door = self.doors[destination]
-        player.x, player.y = self._tile_centre(door["x"], door["y"])
-        player.next_door_tick = self.tick + DOOR_COOLDOWN_TICKS
-
-    def _door_under(self, player):
-        """The id of the staff door whose tile the player's centre is on, or None."""
+    def _vent_under(self, player):
+        """The id of the vent whose tile the player's centre is on, or None."""
         col, row = math.floor(player.x / self.tile), math.floor(player.y / self.tile)
-        for door in self.doors.values():
-            if (door["x"], door["y"]) == (col, row):
-                return door["id"]
+        for vent in self.vents.values():
+            if (vent["x"], vent["y"]) == (col, row):
+                return vent["id"]
         return None
+
+    def _vent_centre(self, vent_id):
+        vent = self.vents[vent_id]
+        return self._tile_centre(vent["x"], vent["y"])
 
     # --- Meetings: report, meeting table and vote ---------------------------------------
 
@@ -581,12 +649,19 @@ class Game:
             raise GameError("The game has not started yet")
         if not player.alive:
             raise GameError(ghost_reason)
+        if player.vent is not None:
+            raise GameError(INSIDE_VENT)
         return player
 
     def _start_meeting(self, reason, caller):
-        """Everyone, ghosts too, goes to their place around the meeting table and stands still."""
+        """Everyone, ghosts too, goes to their place around the meeting table and stands
+        still. Whoever is inside a vent is taken out first (spec 015) and placed like
+        everyone else."""
         self.phase = MEETING
         self.meeting = Meeting(reason, caller.id, voting_ends=self.tick + MEETING_TICKS)
+        self.vent_open = {}
+        for player in self.players.values():
+            player.vent = None
         for player, spot in zip(self.players.values(), self._meeting_spots()):
             if spot is not None:
                 player.x, player.y = spot
@@ -715,7 +790,9 @@ class Game:
         self.phase = ENDED
         self.winner = winner
         self.meeting = None  # a player leaving can end the game during a meeting
+        self.vent_open = {}
         for player in self.players.values():
+            player.vent = None  # everyone is shown on the end screen
             player.dx = player.dy = 0  # movement is rejected now, so nobody keeps walking
             player.doing = None  # and no task keeps running
             player.challenge = None
@@ -741,12 +818,14 @@ class Game:
         self.meeting = None
         self.lights_on = True
         self.next_sabotage_tick = 0
+        self.vent_open = {}
         self._place_on_spawns()
         for player in self.players.values():
             player.role = None
             player.alive = True
             player.next_expel_tick = 0
-            player.next_door_tick = 0
+            player.vent = None
+            player.next_vent_tick = 0
             player.meeting_used = False
             player.tasks = []
             player.tasks_done = []
@@ -781,6 +860,8 @@ class Game:
             raise GameError("The game has not started yet")
         if player.role == EXAMINER and not player.alive:
             raise GameError("Ghosts cannot do tasks")
+        if player.vent is not None:
+            raise GameError(INSIDE_VENT)
         if not isinstance(task_id, str):
             raise GameError("Task must be a task id")
         if task_id not in player.tasks:
@@ -964,6 +1045,8 @@ class Game:
             raise GameError("Ghosts cannot turn off the lights")
         if player.role != EXAMINER:
             raise GameError("Only examiners can turn off the lights")
+        if player.vent is not None:
+            raise GameError(INSIDE_VENT)
         if "light_switch" not in self.campus:
             raise GameError("This map has no light switch")  # nobody could fix them
         if not self.lights_on:
@@ -1043,6 +1126,8 @@ class Game:
         dx, dy = message.get("dx"), message.get("dy")
         if not (is_direction(dx) and is_direction(dy)):
             raise GameError("dx and dy must each be -1, 0 or 1")
+        if player.vent is not None and (dx, dy) != (0, 0):
+            raise GameError(INSIDE_VENT)  # stopping is always accepted
         player.dx, player.dy = dx, dy
 
     def step(self):
@@ -1207,12 +1292,22 @@ class Game:
 
         Never a role. Ghosts are left out unless see_ghosts is set. With a viewer, players
         and failed exams the viewer cannot see (too far or behind a wall) are left out too.
+        A player inside a vent is left out for everyone but themselves (spec 015).
+        "open_vents" lists the hatches that show open right now, by vent id only: never who
+        used them, and with a viewer only the ones in sight.
         """
         players = [
             p
             for p in self.players.values()
             if (p.alive or see_ghosts)
+            and (p.vent is None or p is viewer)
             and (viewer is None or p is viewer or self._in_sight(viewer, p.x, p.y))
+        ]
+        open_vents = [
+            vent_id
+            for vent_id, until in self.vent_open.items()
+            if self.tick < until
+            and (viewer is None or self._in_sight(viewer, *self._vent_centre(vent_id)))
         ]
         exams = [
             e for e in self.failed_exams if viewer is None or self._in_sight(viewer, e.x, e.y)
@@ -1229,6 +1324,7 @@ class Game:
             # Kept next to the player entries, so those stay exactly {id, name, x, y}.
             "colors": {p.id: p.color for p in players},
             "failed_exams": [{"id": e.id, "x": round(e.x, 1), "y": round(e.y, 1)} for e in exams],
+            "open_vents": open_vents,
         }
 
     def snapshot_for(self, player_id):
@@ -1238,8 +1334,8 @@ class Game:
           the vision radius (spec 005) with a clear line of sight (spec 010). In the
           lobby, in a meeting and after the end there is no limit (ghosts stay hidden from
           the living until the end).
-        - An examiner also gets the fellow examiners' ids and their own cooldowns
-          (expel and staff door).
+        - An examiner also gets the fellow examiners' ids, their own cooldowns (expel and
+          vent) and the vent they are inside (never anyone else's).
         - A ghost (and everyone once the game has ended) sees all players and who is a ghost.
         - Only in ENDED does anyone get other players' roles, together with the winner.
         - From the start on, everyone gets the shared task progress (students only, spec
@@ -1294,7 +1390,8 @@ class Game:
                 p.id for p in self.players.values() if p.role == EXAMINER and p.id != me.id
             ]
             state["expel_cooldown"] = self._cooldown_left(me)
-            state["door_cooldown"] = self._seconds_until(me.next_door_tick)
+            state["vent"] = me.vent
+            state["vent_cooldown"] = self._seconds_until(me.next_vent_tick)
         if self.phase == ENDED:
             state["winner"] = self.winner
             state["roles"] = {p.id: p.role for p in self.players.values()}

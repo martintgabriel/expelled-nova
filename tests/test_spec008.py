@@ -509,7 +509,8 @@ def test_a_ghost_slides_along_the_map_edge():
 def test_a_ghost_inside_a_wall_is_placed_at_the_meeting_table_when_a_meeting_starts():
     game, (examiner,), students = started(5, campus=load_map())
     ghost = make_ghost(game, examiner, students[0])
-    ghost.x, ghost.y = 27.5 * TILE, 17.5 * TILE  # in the wall between Food Court and Library
+    # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+    ghost.x, ghost.y = 31.5 * TILE, 17.5 * TILE  # in the wall between Food Court and Library
     assert game.blocked(ghost.x, ghost.y)
     ringer = students[1]
     go_to_bell(ringer)  # part 4: the bell
@@ -708,7 +709,9 @@ def test_the_campus_bell_is_a_floor_tile_in_the_middle_of_the_map():
     assert campus["grid"][row][col] == "."
     assert not game.blocked(*bell_centre())
     assert game.area_at(*bell_centre()) is None  # spec 011: in the spine, where all routes cross
-    assert abs(col - len(campus["grid"][0]) / 2) <= 3
+    # Spec 015: 4 columns of beach were added in the west only, so the middle of the
+    # buildings lies 2 columns east of the middle of the grid.
+    assert abs(col - (len(campus["grid"][0]) + 4) / 2) <= 3
     assert abs(row - len(campus["grid"]) / 2) <= 3
 
 
@@ -853,25 +856,12 @@ def test_an_etag_from_another_file_does_not_count_as_unchanged():
 # Part 6: staff doors
 # =====================================================================================
 
-DOOR_SECONDS = 3
-DOOR_TICKS = DOOR_SECONDS * TICK_RATE
-NOT_ON_A_DOOR = "You are not standing on a staff door"
-
-
-def doors():
-    """The campus staff doors by id."""
-    return {door["id"]: door for door in load_map()["staff_doors"]}
-
-
-def door_centre(door_id):
-    door = doors()[door_id]
-    return (door["x"] + 0.5) * TILE, (door["y"] + 0.5) * TILE
-
-
-def stand_on(player, door_id, dx=0, dy=0):
-    """Put a player on the centre of a staff door's tile, or `dx`, `dy` pixels from it."""
-    x, y = door_centre(door_id)
-    player.x, player.y = x + dx, y + dy
+# Spec 015 replaced the staff doors by vents: an examiner no longer travels from door to
+# door in one step but climbs into a vent, moves between the vents unseen and climbs out.
+# The rule changed, so the staff-door tests that stood here (travel, the 13 rejected cases,
+# the cooldown, vanishing within vision, the map's doors, the WebSocket) were removed. The
+# same cases for vents are in tests/test_spec015.py, section 3. The helpers below are
+# still used by parts 7 and 8.
 
 
 def stand_at(player, col, row):
@@ -891,296 +881,6 @@ def vote_out(game, ringer, target):
 
 def sees(game, viewer, other):
     return other.id in [p["id"] for p in game.snapshot_for(viewer.id)["players"]]
-
-
-# --- Accepted ---------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("destination", ["food-court", "student-services", "main-entrance"])
-def test_an_examiner_on_a_staff_door_travels_to_the_chosen_door(destination):
-    game, (examiner,), students = started(5, campus=load_map())
-    stand_on(examiner, "library")
-    others = [(p.x, p.y) for p in students]
-    game.use_door(examiner.id, destination)
-    assert (examiner.x, examiner.y) == door_centre(destination)
-    assert not game.blocked(examiner.x, examiner.y)
-    assert game.phase == "playing" and examiner.alive
-    assert [(p.x, p.y) for p in students] == others  # nobody else moved
-
-
-@pytest.mark.parametrize("dx, dy", [(-16, -16), (15, 15), (-16, 15), (15, -16)])
-def test_anywhere_on_the_doors_tile_counts_as_standing_on_it(dx, dy):
-    game, (examiner,), _ = started(5, campus=load_map())
-    stand_on(examiner, "library", dx, dy)  # the corners of the tile
-    game.use_door(examiner.id, "food-court")
-    assert (examiner.x, examiner.y) == door_centre("food-court")
-
-
-def test_the_door_cooldown_is_shown_to_the_examiner_only():
-    game, (examiner,), students = started(5, campus=load_map())
-    assert game.snapshot_for(examiner.id)["door_cooldown"] == 0  # ready at the start
-    stand_on(examiner, "library")
-    game.use_door(examiner.id, "food-court")
-    assert game.snapshot_for(examiner.id)["door_cooldown"] == DOOR_SECONDS
-    for _ in range(TICK_RATE):
-        game.step()
-    assert game.snapshot_for(examiner.id)["door_cooldown"] == DOOR_SECONDS - 1
-    for student in students:
-        assert "door_cooldown" not in game.snapshot_for(student.id)
-
-
-def test_an_examiner_can_travel_on_from_the_destination_after_the_cooldown():
-    game, (examiner,), _ = started(5, campus=load_map())
-    stand_on(examiner, "library")
-    game.use_door(examiner.id, "food-court")
-    for _ in range(DOOR_TICKS):
-        game.step()
-    game.use_door(examiner.id, "main-entrance")
-    assert (examiner.x, examiner.y) == door_centre("main-entrance")
-
-
-# --- Rejected: each leaves the whole state unchanged ---------------------------------------------
-
-
-def door_by_a_student():
-    game, _, students = started(5, campus=load_map())
-    stand_on(students[0], "library")
-    return game, lambda: game.use_door(students[0].id, "food-court")
-
-
-def unknown_door_by_a_student_somewhere():
-    # The sender is checked first: a student learns nothing about doors by trying.
-    game, _, students = started(5, campus=load_map())
-    return game, lambda: game.use_door(students[0].id, "no-such-door")
-
-
-def door_by_a_ghost_examiner():
-    game, (first, second), students = started(7, campus=load_map())
-    vote_out(game, students[0], first)
-    assert first.alive is False and game.phase == "playing"
-    stand_on(first, "library")
-    return game, lambda: game.use_door(first.id, "food-court")
-
-
-def door_during_a_meeting():
-    game, (examiner,), students = started(5, campus=load_map())
-    go_to_bell(students[0])
-    game.call_meeting(students[0].id)
-    stand_on(examiner, "library")
-    return game, lambda: game.use_door(examiner.id, "food-court")
-
-
-def door_in_the_lobby():
-    game = Game(load_map())
-    players = [game.join(f"Player {i}") for i in range(4)]
-    stand_on(players[0], "library")
-    return game, lambda: game.use_door(players[0].id, "food-court")
-
-
-def door_after_the_end():
-    game, (examiner,), students = started(4, campus=load_map())
-    make_ghost(game, examiner, students[0])
-    make_ghost(game, examiner, students[1])  # the examiners win
-    stand_on(examiner, "library")
-    return game, lambda: game.use_door(examiner.id, "food-court")
-
-
-def door_from_the_spawn():
-    game, (examiner,), _ = started(5, campus=load_map())
-    return game, lambda: game.use_door(examiner.id, "food-court")
-
-
-def door_one_pixel_beside_the_tile():
-    game, (examiner,), _ = started(5, campus=load_map())
-    stand_on(examiner, "library", dx=-17)  # the tile is 16 px to each side of its centre
-    return game, lambda: game.use_door(examiner.id, "food-court")
-
-
-def door_to_an_unknown_destination():
-    game, (examiner,), _ = started(5, campus=load_map())
-    stand_on(examiner, "library")
-    return game, lambda: game.use_door(examiner.id, "no-such-door")
-
-
-def door_to_the_door_you_stand_on():
-    game, (examiner,), _ = started(5, campus=load_map())
-    stand_on(examiner, "library")
-    return game, lambda: game.use_door(examiner.id, "library")
-
-
-def door_during_the_cooldown():
-    game, (examiner,), _ = started(5, campus=load_map())
-    stand_on(examiner, "library")
-    game.use_door(examiner.id, "food-court")
-    return game, lambda: game.use_door(examiner.id, "library")
-
-
-def door_by_an_unknown_player():
-    game, _, _ = started(5, campus=load_map())
-    return game, lambda: game.use_door("nobody", "library")
-
-
-def door_on_a_map_without_doors():
-    game, (examiner,), _ = started(4)  # HALL_MAP
-    return game, lambda: game.use_door(examiner.id, "library")
-
-
-@pytest.mark.parametrize(
-    "case, reason",
-    [
-        (door_by_a_student, "Only examiners can use staff doors"),
-        (unknown_door_by_a_student_somewhere, "Only examiners can use staff doors"),
-        (door_by_a_ghost_examiner, "Ghosts cannot use staff doors"),
-        (door_during_a_meeting, "Meeting in progress"),
-        (door_in_the_lobby, "The game has not started yet"),
-        (door_after_the_end, "Game is over"),
-        (door_from_the_spawn, NOT_ON_A_DOOR),
-        (door_one_pixel_beside_the_tile, NOT_ON_A_DOOR),
-        (door_to_an_unknown_destination, "Unknown staff door"),
-        (door_to_the_door_you_stand_on, "You are already at this door"),
-        (door_during_the_cooldown, "Staff door cooldown: 3 s left"),
-        (door_by_an_unknown_player, "Unknown player"),
-        (door_on_a_map_without_doors, NOT_ON_A_DOOR),
-    ],
-    ids=lambda value: value.__name__ if callable(value) else None,
-)
-def test_rejected_staff_door_changes_nothing(case, reason):
-    game, action = case()
-    assert_rejected(game, action, reason)
-
-
-# None stands for a missing field: server/main.py passes message.get("to").
-@pytest.mark.parametrize("destination", [2, None, True, ["library"], {"id": "library"}])
-def test_a_destination_that_is_not_a_string_is_rejected(destination):
-    game, (examiner,), _ = started(5, campus=load_map())
-    stand_on(examiner, "library")
-    reason = "Destination must be a staff door id"
-    assert_rejected(game, lambda: game.use_door(examiner.id, destination), reason)
-
-
-def test_door_messages_are_parsed_after_joining_and_rejected_before():
-    raw = '{"type": "door", "to": "library"}'
-    assert game_rules.parse_message(raw, joined=True) == {"type": "door", "to": "library"}
-    with pytest.raises(GameError, match="Join the game first"):
-        game_rules.parse_message(raw, joined=False)
-
-
-# --- Edge cases -------------------------------------------------------------------------------
-
-
-def test_the_door_cooldown_ends_after_exactly_three_seconds():
-    game, (examiner,), _ = started(5, campus=load_map())
-    stand_on(examiner, "library")
-    game.use_door(examiner.id, "food-court")
-    for _ in range(DOOR_TICKS - 1):
-        game.step()
-    assert_rejected(
-        game, lambda: game.use_door(examiner.id, "library"), "Staff door cooldown: 1 s left"
-    )
-    game.step()
-    game.use_door(examiner.id, "library")  # exactly 3 seconds later
-    assert (examiner.x, examiner.y) == door_centre("library")
-
-
-def test_others_see_the_examiner_vanish_and_appear_only_within_their_vision():
-    game, (examiner,), students = started(5, campus=load_map())
-    at_origin, at_destination, far_away, ghost = students
-    make_ghost(game, examiner, ghost)
-    stand_on(examiner, "library")
-    stand_at(at_origin, 34, 25)  # two tiles from the Library door, same room
-    stand_at(at_destination, 36, 15)  # two tiles from the Food Court door, same room
-    stand_at(far_away, 24, 4)  # in the Main Entrance, far from both
-    stand_at(ghost, 20, 22)
-
-    before = [sees(game, viewer, examiner) for viewer in students]
-    assert before == [True, False, False, True]
-    game.use_door(examiner.id, "food-court")
-    after = [sees(game, viewer, examiner) for viewer in students]
-    assert after == [False, True, False, True]
-    # Whoever sees the examiner receives the new position, nothing else about the journey.
-    seen = next(p for p in game.snapshot_for(at_destination.id)["players"] if p["id"] == examiner.id)
-    assert seen == {"id": examiner.id, "name": examiner.name, "x": examiner.x, "y": examiner.y}
-
-
-def test_a_new_round_resets_the_door_cooldown():
-    game, (examiner,), students = started(4, campus=load_map())
-    stand_on(examiner, "library")
-    game.use_door(examiner.id, "food-court")
-    make_ghost(game, examiner, students[0])
-    make_ghost(game, examiner, students[1])  # the examiners win
-    game.restart(game.host_id)
-    assert examiner.next_door_tick == 0
-    assert "door_cooldown" not in game.snapshot_for(examiner.id)  # no roles in the lobby
-
-
-def test_the_campus_has_three_or_four_staff_doors_on_reachable_floor_tiles():
-    campus = load_map()
-    game = Game(campus)
-    staff_doors = campus["staff_doors"]
-    assert 3 <= len(staff_doors) <= 4
-    assert len({door["id"] for door in staff_doors}) == len(staff_doors)  # one network, unique ids
-    assert len({(door["x"], door["y"]) for door in staff_doors}) == len(staff_doors)
-    seen, todo = set(), [tuple(campus["spawns"][0])]
-    while todo:  # flood fill over the floor tiles (4 neighbours)
-        col, row = todo.pop()
-        if (col, row) in seen or game.blocked((col + 0.5) * TILE, (row + 0.5) * TILE):
-            continue
-        seen.add((col, row))
-        todo += [(col + 1, row), (col - 1, row), (col, row + 1), (col, row - 1)]
-    taken = [campus["meeting_point"]] + campus["spawns"]
-    taken += [[s["x"], s["y"]] for t in campus["tasks"] for s in t.get("steps", [t])]
-    for door in staff_doors:
-        assert set(door) == {"id", "name", "x", "y"}
-        assert door["id"] and door["name"]
-        assert campus["grid"][door["y"]][door["x"]] == ".", door["id"]
-        assert (door["x"], door["y"]) in seen, door["id"]
-        assert [door["x"], door["y"]] not in taken, door["id"]  # not on a bell, spawn or task
-
-
-def test_a_staff_door_over_the_websocket(fresh_game):
-    with TestClient(app) as client:
-        with (
-            client.websocket_connect("/ws") as a,
-            client.websocket_connect("/ws") as b,
-            client.websocket_connect("/ws") as c,
-            client.websocket_connect("/ws") as d,
-        ):
-            clients = [a, b, c, d]
-            ids = []
-            for ws, name in zip(clients, ["Ada", "Bo", "Cy", "Di"]):
-                ws.send_json({"type": "join", "name": name})
-                welcome = receive_until(ws, lambda m: m["type"] == "welcome")
-                assert welcome["map"]["staff_doors"] == load_map()["staff_doors"]
-                ids.append(welcome["id"])
-            a.send_json({"type": "start"})
-            roles = [
-                receive_until(ws, lambda m: m["type"] == "state" and m["phase"] == "playing")["role"]
-                for ws in clients
-            ]
-            examiner_ws = clients[roles.index("examiner")]
-            examiner = fresh_game.players[ids[roles.index("examiner")]]
-            student_ws = clients[roles.index("student")]
-            student = fresh_game.players[ids[roles.index("student")]]
-
-            stand_on(student, "library")
-            student_ws.send_json({"type": "door", "to": "food-court"})
-            error = receive_until(student_ws, lambda m: m["type"] == "error")
-            assert error["reason"] == "Only examiners can use staff doors"
-
-            examiner_ws.send_json({"type": "door", "to": "food-court"})  # from the spawn
-            error = receive_until(examiner_ws, lambda m: m["type"] == "error")
-            assert error["reason"] == NOT_ON_A_DOOR
-
-            stand_on(examiner, "library")
-            examiner_ws.send_json({"type": "door", "to": "food-court"})
-            x, y = door_centre("food-court")
-            arrived = receive_until(
-                examiner_ws,
-                lambda m: m["type"] == "state"
-                and any(p["id"] == examiner.id and (p["x"], p["y"]) == (x, y) for p in m["players"]),
-            )
-            assert arrived["door_cooldown"] == DOOR_SECONDS
-            assert arrived["area"] == "Food Court"
 
 
 # =====================================================================================
@@ -1359,10 +1059,11 @@ def test_a_hidden_player_appears_when_the_viewer_walks_past_the_end_of_the_wall(
 def test_on_the_campus_a_player_in_the_next_room_is_hidden_and_one_in_the_doorway_is_not():
     game, _, students = started(5, campus=load_map())
     viewer, target = students[0], students[1]
-    stand_at(viewer, 29, 21)  # Library, west side
-    stand_at(target, 29, 15)  # Food Court: 6 tiles away, behind the wall between the rooms
+    # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+    stand_at(viewer, 33, 21)  # Library, west side
+    stand_at(target, 33, 15)  # Food Court: 6 tiles away, behind the wall between the rooms
     assert target.id not in seen_ids(game, viewer)
-    stand_at(target, 27, 21)  # in the Library's doorway to the spine, same row
+    stand_at(target, 31, 21)  # in the Library's doorway to the spine, same row
     assert target.id in seen_ids(game, viewer)
 
 
@@ -1874,7 +1575,7 @@ def test_the_campus_light_switch_is_a_free_floor_tile_in_student_services():
     assert game.area_at((col + 0.5) * TILE, (row + 0.5) * TILE) == "Student Services"
     taken = [campus["meeting_point"]] + campus["spawns"]
     taken += [[s["x"], s["y"]] for t in campus["tasks"] for s in t.get("steps", [t])]
-    taken += [[d["x"], d["y"]] for d in campus["staff_doors"]]
+    taken += [[v["x"], v["y"]] for v in campus["vents"]]  # spec 015: vents replace the staff doors
     assert [col, row] not in taken
     # No task place is within reach of the switch, so one key can serve both.
     for task in campus["tasks"]:

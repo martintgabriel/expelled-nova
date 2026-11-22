@@ -25,6 +25,7 @@ FLOOR_KINDS = {
     "sand", "paving", "grass", "terrace", "pergola", "glassroof", "shopfloor", "seats", "beanbag",
     "counter", "shelf", "desk", "studytable", "table", "cafetable", "woodtable", "shopshelf",
     "foodcounter", "piano", "steps", "picnic", "tree",
+    "surfboard",  # spec 015: surfboards on the beach
 }
 
 # A small valid map: a 6 x 5 room with walls all around (columns/rows 0 and the last).
@@ -75,11 +76,12 @@ def with_decor(*entries, labels=None):
 # --- Accepted: the real campus map --------------------------------------------------------
 
 
-def test_the_campus_grid_is_42_by_43_with_walls_all_around():
+# Spec 015: the grid grew from 42 to 46 columns (4 more columns of beach in the west).
+def test_the_campus_grid_is_46_by_43_with_walls_all_around():
     grid = load_map()["grid"]
-    assert len(grid) == 43 and all(len(row) == 42 for row in grid)
+    assert len(grid) == 43 and all(len(row) == 46 for row in grid)
     assert set("".join(grid)) <= {"#", "."}
-    assert grid[0] == grid[-1] == "#" * 42
+    assert grid[0] == grid[-1] == "#" * 46
     assert all(row[0] == "#" and row[-1] == "#" for row in grid)
 
 
@@ -89,7 +91,7 @@ def test_the_campus_has_the_six_areas_and_two_courtyards_inside_the_grid():
     assert set(names) == AREA_NAMES
     assert names.count("Courtyard") == 2
     for area in campus["areas"]:
-        assert 0 <= area["x"] and area["x"] + area["w"] <= 42
+        assert 0 <= area["x"] and area["x"] + area["w"] <= 46  # spec 015: 46 columns
         assert 0 <= area["y"] and area["y"] + area["h"] <= 43
 
 
@@ -120,9 +122,10 @@ def test_every_spawn_is_its_own_floor_tile_in_the_main_entrance():
 
 def test_each_courtyard_is_a_courtyard_and_spine_beach_and_plaza_are_corridors():
     game = Game(load_map())
-    assert game.area_at(*centre(12, 14)) == "Courtyard"  # north courtyard
-    assert game.area_at(*centre(12, 22)) == "Courtyard"  # south courtyard
-    for col, row in [(24, 20), (1, 20), (30, 32)]:  # spine, beach, EDP Plaza
+    # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+    assert game.area_at(*centre(16, 14)) == "Courtyard"  # north courtyard
+    assert game.area_at(*centre(16, 22)) == "Courtyard"  # south courtyard
+    for col, row in [(28, 20), (1, 20), (34, 32)]:  # spine, beach, EDP Plaza
         assert not game.blocked(*centre(col, row))
         assert game.area_at(*centre(col, row)) is None
 
@@ -143,21 +146,24 @@ def test_the_meeting_table_has_a_free_place_for_ten_players_who_do_not_overlap()
             assert max(abs(x1 - x2), abs(y1 - y2)) >= 2 * game_rules.PLAYER_HALF
 
 
-def test_the_longest_walk_from_the_first_spawn_is_at_most_60_tiles():
+# Spec 015: the beach is 4 tiles wider, so its far corner at the water is 4 tiles further
+# from the spawn (62 instead of 58): the limit grew from 60 tiles / 12 s to 64 tiles / 13 s.
+def test_the_longest_walk_from_the_first_spawn_is_at_most_64_tiles():
     campus = load_map()
     longest = max(walk_distances(campus, campus["spawns"][0]).values())
-    assert longest <= 60
-    assert longest * TILE / SPEED <= 12  # seconds at the current speed
+    assert longest <= 64
+    assert longest * TILE / SPEED <= 13  # seconds at the current speed
 
 
-def test_bell_staff_doors_and_light_switch_are_free_reachable_floor_tiles():
+# Spec 015: the four vents replaced the staff doors (map key "vents").
+def test_bell_vents_and_light_switch_are_free_reachable_floor_tiles():
     campus = load_map()
     game = Game(campus)
     reachable = walk_distances(campus, campus["spawns"][0])
     spawns = {tuple(s) for s in campus["spawns"]}
     tasks = {(s["x"], s["y"]) for t in campus["tasks"] for s in t.get("steps", [t])}
     places = [tuple(campus["meeting_point"]), tuple(campus["light_switch"])]
-    places += [(d["x"], d["y"]) for d in campus["staff_doors"]]
+    places += [(v["x"], v["y"]) for v in campus["vents"]]
     for place in places:
         assert place in reachable, place
         assert place not in spawns and place not in tasks, place
@@ -189,7 +195,8 @@ def test_every_decor_kind_on_the_campus_is_known_and_solid_kinds_cover_only_wall
 
 def test_the_campus_labels_name_the_halls_and_the_beach():
     texts = {label["text"] for label in load_map()["labels"]}
-    assert {"Hall B", "Student Hall", "Hall D", "Hall E", "Beach"} <= texts
+    # Spec 015: the beach's label is "Carcavelos Beach" now.
+    assert {"Hall B", "Student Hall", "Hall D", "Hall E", "Carcavelos Beach"} <= texts
 
 
 # --- Rejected: validate_campus ----------------------------------------------------------------
@@ -259,7 +266,8 @@ def test_decor_never_changes_who_can_walk_where():
     campus = load_map()
     bare = {key: value for key, value in campus.items() if key not in ("decor", "labels")}
     with_look, without = Game(campus), Game(bare)
-    for col, row in floor_tiles(campus) | {(0, 0), (12, 23), (28, 37)}:
+    # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+    for col, row in floor_tiles(campus) | {(0, 0), (16, 23), (32, 37)}:
         assert with_look.blocked(*centre(col, row)) == without.blocked(*centre(col, row))
 
 

@@ -1,20 +1,39 @@
+/* Expelled! — everything around the map (spec 015: the story look).
+   One idea for every screen and panel: campus paperwork. Cream paper, navy ink, rubber
+   stamps, a student ID card, a notebook, a class roster, a diploma. All of it is CSS and
+   inline SVG: no image files and no downloaded fonts (system font stacks only).
+   Every text/background pair below passes WCAG AA (4.5:1); the ratios are noted where the
+   colours are defined. The map itself is drawn in render.js. */
+
 :root {
-  --bg: #1d1f24;
-  --card: #2a2d34;
-  --text: #f1f1f1;
-  --muted: #a9adb6;
-  --accent: #f2b33d;
-  --error: #ff7a7a;
+  --paper: #f7f0dc; /* cream card stock: the background of every card and panel */
+  --paper-light: #fffaf0; /* a lighter sheet lying on the paper */
+  --paper-shade: #ebe1c5; /* folds, secondary buttons, table stripes */
+  --rule: #c9bd9a; /* ruled lines and borders on paper */
+  --ink: #1f2a44; /* navy ink: 12.5:1 on paper */
+  --ink-soft: #4d5873; /* secondary text: 6.2:1 on paper */
+  --nova: #9c1d6e; /* the campus colour: 6.6:1 on paper, 7.5:1 under white text */
+  --stamp-red: #b3261e; /* 5.7:1 on paper, 6.5:1 under white text */
+  --stamp-green: #1d6b43; /* 5.7:1 on paper */
+  --accent: #f2b33d; /* highlighter yellow: 7.7:1 under ink text */
+  --desk: #171b28; /* behind overlays and around the map */
+  --serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Courier New", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --lift: 0 2px 0 rgba(0, 0, 0, 0.18), 0 8px 22px rgba(0, 0, 0, 0.35); /* a sheet lying on the desk */
+  --hud-bottom: 48px; /* the HUD's bottom edge; main.js keeps it up to date (the HUD wraps) */
 }
 
 * { box-sizing: border-box; }
+/* One rule for every hidden element, whatever its display is otherwise. */
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--desk);
+  color: var(--ink);
+  font-family: var(--sans);
   overflow: hidden;
 }
 
@@ -26,79 +45,305 @@ html, body {
   overscroll-behavior: none;
 }
 
+h1, h2, h3 { margin: 0; font-family: var(--serif); }
+
+/* --- Building blocks: overlay, paper card, buttons, stamps, tags ----------------------- */
+
 .overlay {
   position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
-  background: rgba(20, 22, 26, 0.85);
+  /* Room at the top for the "?" button, which stays in its corner on every screen. */
+  padding: 60px 16px 16px;
+  background: rgba(18, 21, 32, 0.84);
   z-index: 10;
 }
 
-.overlay[hidden], #hud[hidden], .toast[hidden] { display: none; }
-
+/* A sheet of paper. Long cards scroll inside, so they never run under the "?" button. */
 .card {
+  position: relative;
   width: 100%;
-  max-width: 360px;
-  padding: 24px;
-  border-radius: 12px;
-  background: var(--card);
+  max-width: 380px;
+  max-height: calc(100vh - 76px);
+  max-height: calc(100dvh - 76px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule) transparent;
+  padding: 22px 24px 24px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--lift);
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
+.card p { margin: 0; color: var(--ink-soft); line-height: 1.45; }
+.card h2 { font-size: 24px; line-height: 1.15; }
 
-h1, h2 { margin: 0; }
-h1 { color: var(--accent); }
-.subtitle, .card p { margin: 0; color: var(--muted); }
+/* The small line above a title: which office this paper comes from. */
+.doc-kicker {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--nova);
+}
+.card .doc-kicker { color: var(--nova); }
 
-label { font-weight: 600; margin-top: 8px; }
+label { font-weight: 700; }
 
 input {
   padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid #4a4e57;
-  background: #1f2126;
-  color: var(--text);
-  font-size: 16px;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  background: var(--paper-light);
+  color: var(--ink);
+  font-size: 16px; /* 16 px: a phone does not zoom in when the field gets focus */
+  font-family: var(--sans);
+}
+input::placeholder { color: #636b80; } /* 5.1:1 on the light sheet, 4.7:1 on paper */
+input:focus-visible, button:focus-visible, [role="button"]:focus-visible {
+  outline: 3px solid var(--nova);
+  outline-offset: 2px;
 }
 
+/* Buttons look pressed out of the paper: a yellow highlighter fill, an ink edge. */
 button {
-  padding: 10px 12px;
-  border: 0;
-  border-radius: 8px;
+  padding: 10px 14px;
+  border: 2px solid var(--ink);
+  border-radius: 6px;
   background: var(--accent);
-  color: #1d1f24;
+  color: var(--ink);
+  font-family: var(--sans);
   font-size: 16px;
   font-weight: 700;
+  box-shadow: 2px 3px 0 var(--ink);
   cursor: pointer;
   touch-action: manipulation; /* a double tap must not zoom */
 }
-button:disabled { opacity: 0.6; cursor: wait; }
+button:active:not(:disabled) { transform: translate(1px, 2px); box-shadow: 1px 1px 0 var(--ink); }
+button:disabled { opacity: 0.55; box-shadow: none; cursor: not-allowed; }
+.lobby-secondary, .cancel-vote, #invite-close, #minigame-close {
+  background: var(--paper-shade);
+}
 
-.card .error { color: var(--error); min-height: 1.2em; }
+.error, .card .error { color: var(--stamp-red); font-weight: 700; min-height: 1.2em; }
+.hint, .card .hint { margin: 0; color: var(--ink-soft); font-size: 13px; }
+
+/* A rubber stamp: slightly rotated, double border, the ink soaks into the paper. */
+.stamp {
+  display: inline-block;
+  align-self: center;
+  padding: 4px 14px;
+  border: 3px double currentColor;
+  border-radius: 8px;
+  color: var(--stamp-red);
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  line-height: 1.2;
+  transform: rotate(-7deg);
+  mix-blend-mode: multiply;
+}
+.stamp:empty { display: none; }
+@keyframes stamp-down {
+  0% { transform: rotate(-16deg) scale(2.2); opacity: 0; }
+  70% { transform: rotate(-5deg) scale(0.94); opacity: 1; }
+  100% { transform: rotate(-7deg) scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .role-stamp, .end-stamp { animation: stamp-down 0.45s 0.35s both cubic-bezier(0.3, 1.4, 0.5, 1); }
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--paper-shade);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.tag.host { background: var(--accent); border-color: var(--ink); color: var(--ink); }
+.tag.you { background: var(--ink); border-color: var(--ink); color: #fff; }
+.tag.examiner, .tag.surfing { background: var(--stamp-red); border-color: var(--stamp-red); color: #fff; }
+.tag.student { background: #cfe1fb; border-color: #9db9e6; color: var(--ink); }
+.tag.voted { background: var(--stamp-green); border-color: var(--stamp-green); color: #fff; }
+
+.chip-figure { display: block; flex-shrink: 0; }
+/* The host's original symbol (spec 014): a ring with an upward chevron. */
+.host-symbol { display: inline-block; flex-shrink: 0; margin-left: 4px; color: var(--nova); }
+
+/* --- "How to play" (spec 015): the "?" button and the handbook ------------------------- */
+
+/* Always in the top right corner: on the join screen, in the lobby and in the game. */
+.help-button {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  right: calc(10px + env(safe-area-inset-right));
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  font-family: var(--serif);
+  font-size: 22px;
+  line-height: 1;
+  z-index: 30; /* above every overlay, below the handbook itself */
+}
+.help-overlay { z-index: 35; padding-top: 16px; }
+.help-card { max-width: 560px; max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); gap: 12px; }
+.help-close {
+  position: sticky;
+  top: 0;
+  align-self: flex-end;
+  width: 36px;
+  height: 36px;
+  margin-bottom: -40px; /* takes no room of its own: it floats over the first lines */
+  padding: 0;
+  border-radius: 50%;
+  background: var(--paper-light);
+  font-size: 22px;
+  line-height: 1;
+  box-shadow: 1px 2px 0 var(--ink);
+  z-index: 1;
+}
+.help-card h2 { padding-right: 44px; font-size: 28px; }
+.help-card .doc-kicker { padding-right: 44px; }
+.help-card .help-intro { color: var(--ink); font-family: var(--serif); font-style: italic; font-size: 16px; }
+.help-section { padding-top: 10px; border-top: 1px dashed var(--rule); }
+.help-section h3 { margin-bottom: 4px; font-size: 16px; color: var(--nova); }
+.help-section p, .help-section li { color: var(--ink); font-size: 14px; line-height: 1.5; }
+.help-section ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.help-keys { list-style: none; padding-left: 0 !important; }
+.help-keys kbd.key { margin-right: 2px; }
+
+/* --- Join screen (spec 015): a student ID card ------------------------------------------ */
+
+#join-screen {
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.025) 0 14px, transparent 14px 28px),
+    radial-gradient(circle at 30% 15%, #2e3757, var(--desk) 70%);
+}
+.id-card {
+  max-width: 400px;
+  padding: 0 0 14px;
+  border-radius: 14px;
+  gap: 12px;
+  overflow-x: hidden;
+}
+/* Everything on the card keeps a margin to its edge, except the coloured band on top. */
+.card.id-card > * { margin-left: 22px; margin-right: 22px; }
+.card.id-card > .id-band {
+  margin: 0;
+  padding: 14px 22px 12px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--nova);
+  color: #fff;
+}
+.id-school { font-family: var(--serif); font-size: 19px; font-weight: 700; letter-spacing: 0.02em; }
+.id-kind { font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
+/* The slot a lanyard goes through. */
+.card.id-card > .id-slot {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 46px;
+  height: 8px;
+  margin: 0 0 0 -23px;
+  border-radius: 4px;
+  background: var(--desk);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.title-stamp { margin-top: 6px; margin-bottom: -2px; font-size: 34px; letter-spacing: 0.08em; transform: rotate(-4deg); }
+.id-body { display: flex; gap: 14px; align-items: flex-start; }
+.id-photo {
+  flex: 0 0 92px;
+  width: 92px;
+  height: auto;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  background: #dfe6f2;
+}
+.id-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.id-fields label, .id-facts dt {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+/* The nickname is written on the card's dotted line. */
+.id-fields input {
+  width: 100%;
+  padding: 6px 2px;
+  border: 0;
+  border-bottom: 2px dotted var(--ink);
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--serif);
+  font-size: 19px;
+  font-weight: 700;
+}
+.id-fields input::placeholder { font-family: var(--sans); font-size: 13px; font-weight: 400; }
+.id-facts { margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.id-facts dd { margin: 0; font-family: var(--serif); font-size: 14px; color: var(--ink); }
+.id-card .subtitle { font-size: 13px; }
+.id-card .error:empty { display: none; }
+.id-barcode {
+  height: 26px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--ink) 0 2px, transparent 2px 4px, var(--ink) 4px 5px, transparent 5px 9px,
+    var(--ink) 9px 12px, transparent 12px 14px, var(--ink) 14px 15px, transparent 15px 17px
+  );
+  opacity: 0.85;
+}
+
+/* --- HUD: a hall pass in the top left corner (spec 005, spec 008 part 9) ---------------- */
 
 #hud {
   position: fixed;
   top: calc(12px + env(safe-area-inset-top));
   left: calc(12px + env(safe-area-inset-left));
+  max-width: calc(100vw - 76px); /* leaves the corner to the "?" button */
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  align-items: center;
+  gap: 6px 14px;
   padding: 6px 12px;
-  border-radius: 8px;
-  background: rgba(20, 22, 26, 0.75);
+  border: 1px solid var(--rule);
+  border-left: 5px solid var(--nova);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
   font-size: 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   z-index: 5;
 }
-#hud .hint { color: var(--muted); }
-#hud { align-items: center; }
+#area-name { font-family: var(--serif); font-weight: 700; color: var(--nova); }
+#player-count { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
 
-/* --- Controls as pictograms (spec 008, part 9): everything here is drawn with CSS --- */
+/* Controls as pictograms: everything here is drawn with CSS. */
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
-.control { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; }
+.control { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: 12px; }
 /* One keycap: a small raised key with its letter. */
 kbd.key {
   display: inline-flex;
@@ -107,12 +352,12 @@ kbd.key {
   min-width: 18px;
   height: 18px;
   padding: 0 4px;
-  border: 1px solid #6a7183;
+  border: 1px solid var(--ink);
   border-bottom-width: 3px;
   border-radius: 4px;
-  background: #3a3e47;
-  color: var(--text);
-  font: 700 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--paper-light);
+  color: var(--ink);
+  font: 700 11px/1 var(--sans);
 }
 /* Four keys laid out as on a keyboard: one on top, three below. */
 .cluster { display: grid; grid-template-columns: repeat(3, 14px); grid-template-rows: repeat(2, 13px); gap: 1px; }
@@ -121,137 +366,266 @@ kbd.key {
 .cluster kbd.key:nth-child(n + 2) { grid-row: 2; }
 /* An arrow key: a triangle made of borders. */
 kbd.arrow::before { content: ""; border: 3px solid transparent; }
-kbd.arrow.up::before { border-top-width: 0; border-bottom: 4px solid var(--text); }
-kbd.arrow.down::before { border-bottom-width: 0; border-top: 4px solid var(--text); }
-kbd.arrow.left::before { border-left-width: 0; border-right: 4px solid var(--text); }
-kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--text); }
+kbd.arrow.up::before { border-top-width: 0; border-bottom: 4px solid var(--ink); }
+kbd.arrow.down::before { border-bottom-width: 0; border-top: 4px solid var(--ink); }
+kbd.arrow.left::before { border-left-width: 0; border-right: 4px solid var(--ink); }
+kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--ink); }
 /* The joystick, for touch devices: a ring with a knob. */
-.stick { position: relative; width: 16px; height: 16px; border: 2px solid rgba(241, 241, 241, 0.45); border-radius: 50%; }
-.stick::after { content: ""; position: absolute; top: 1px; left: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--text); }
+.stick { position: relative; width: 16px; height: 16px; border: 2px solid var(--ink-soft); border-radius: 50%; }
+.stick::after { content: ""; position: absolute; top: 1px; left: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--ink); }
+/* Only one of these two is shown, chosen by input device (main.js), not by width. */
+.hint-touch, .hint-keyboard { color: var(--ink-soft); }
 
+/* --- Toasts and banners: campus notice slips --------------------------------------------- */
+
+/* A toast is the clear reason from the server (or main.js) on a notice slip. */
 .toast {
   position: fixed;
-  bottom: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
   left: 50%;
-  transform: translateX(-50%);
-  padding: 10px 16px;
-  border-radius: 8px;
-  background: #5a2a2a;
-  color: #fff;
-  z-index: 20;
+  transform: translateX(-50%) rotate(-1deg);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 9px 16px 10px 14px;
+  border: 1px solid var(--rule);
+  border-left: 6px solid var(--stamp-red);
+  border-radius: 3px;
+  background: var(--paper-light);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: var(--lift);
+  z-index: 40; /* also above the handbook */
 }
-
-/* --- Lobby panel and role (spec 002) --- */
-
-.panel {
-  position: fixed;
-  top: calc(12px + env(safe-area-inset-top));
-  right: calc(12px + env(safe-area-inset-right));
-  max-width: calc(100vw - 24px);
-  padding: 10px 14px;
-  border-radius: 8px;
-  background: rgba(20, 22, 26, 0.85);
-  font-size: 14px;
-  z-index: 5;
+.toast::before {
+  content: "Campus notice";
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--stamp-red);
 }
-.panel[hidden], #lobby[hidden] { display: none; }
-
-#lobby { width: 260px; display: flex; flex-direction: column; gap: 8px; }
-#lobby h2 { font-size: 16px; }
-.lobby-count { margin: -4px 0 2px; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
-#lobby-players.lobby-chips {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.lobby-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 4px;
-  border-radius: 999px;
-  background: #343841;
-}
-.chip-figure { display: block; flex-shrink: 0; }
-.lobby-chip-name { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
-#lobby .hint { margin: 0; color: var(--muted); }
-.lobby-main, .lobby-secondary { width: 100%; }
-.lobby-main { font-size: 17px; padding: 14px 12px; }
-.lobby-main:disabled { cursor: not-allowed; }
-.lobby-secondary { background: #3a3e47; color: var(--text); }
-
-.tag {
-  margin-left: 6px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: #3a3e47;
-  color: var(--muted);
-  font-size: 12px;
-}
-.tag.host { background: var(--accent); color: #1d1f24; font-weight: 700; }
-
-/* The host's original symbol (spec 014): a ring with an upward chevron, no text. */
-.host-symbol { display: inline-block; flex-shrink: 0; color: var(--accent); }
-
-#role-badge { font-weight: 600; }
-
-.role-card { text-align: center; }
-.role-card h2 { font-size: 24px; color: var(--accent); }
-#role-screen[data-role="examiner"] .role-card h2 { color: var(--error); }
-
-/* --- Expel, ghosts and end screen (spec 003) --- */
 
 .banner {
   position: fixed;
   left: 50%;
-  bottom: 64px;
+  bottom: calc(64px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   width: max-content;
   max-width: calc(100vw - 32px);
-  padding: 10px 16px;
-  border-radius: 8px;
-  background: rgba(20, 22, 26, 0.85);
-  color: var(--muted);
+  padding: 9px 16px;
+  border: 1px solid var(--rule);
+  border-top: 5px solid var(--stamp-red);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 14px;
   text-align: center;
+  box-shadow: var(--lift);
   z-index: 6;
 }
-.banner[hidden] { display: none; }
-.banner strong { display: block; color: var(--error); font-size: 18px; }
+.banner strong { display: block; font-family: var(--serif); font-size: 18px; color: var(--stamp-red); }
 
-.end-card { text-align: center; }
-.end-card h2 { font-size: 26px; color: var(--accent); }
-#end-screen[data-winner="examiners"] .end-card h2 { color: var(--error); }
-#end-roles {
+/* A finished task's joke: a yellow sticky note. */
+.joke {
+  position: fixed;
+  left: 50%;
+  top: 22%;
+  transform: translateX(-50%) rotate(-2deg);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 12px 18px 14px;
+  background: #ffe98a;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-style: italic;
+  text-align: center;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15), 4px 8px 16px rgba(0, 0, 0, 0.35);
+  z-index: 7;
+}
+.joke strong { display: block; font-style: normal; color: var(--stamp-green); }
+
+/* --- Panels in the top right corner: the lobby roster and the role badge ----------------- */
+
+.panel {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top));
+  right: calc(62px + env(safe-area-inset-right)); /* next to the "?" button */
+  max-width: calc(100vw - 86px);
+  padding: 10px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 14px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  z-index: 5;
+}
+
+/* The lobby (spec 015): a class roster with one ruled line per player. */
+#lobby { width: 300px; display: flex; flex-direction: column; gap: 8px; }
+.roster-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 6px;
+  border-bottom: 3px double var(--ink);
+}
+.roster-head h2 { font-size: 19px; }
+.roster-count { margin: 0; font-family: var(--mono); font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+.lobby-count { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--nova); }
+#lobby-players.lobby-chips {
   list-style: none;
   margin: 0;
   padding: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+  counter-reset: roster;
+}
+.lobby-chip {
+  counter-increment: roster;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  text-align: left;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  border-bottom: 1px solid var(--rule);
 }
-.tag.examiner { background: var(--error); color: #1d1f24; font-weight: 700; }
-.tag.student { background: #9fd3ff; color: #1d1f24; font-weight: 700; }
+.lobby-chip::before {
+  content: counter(roster, decimal-leading-zero);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.lobby-chip-name {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+/* The host's hand-over button on every other player's line. */
+.make-host {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-width: 1px;
+  background: var(--paper-light);
+  font-size: 12px;
+  box-shadow: 1px 2px 0 var(--ink);
+}
+.lobby-main, .lobby-secondary { width: 100%; }
+.lobby-main { padding: 13px 12px; font-size: 17px; }
+.lobby-main:disabled { opacity: 0.75; } /* its label says how many players are missing */
 
-/* --- Look (spec 005): current area and colour dots --- */
-
-#hud { max-width: calc(100vw - 24px); }
-#hud [hidden] { display: none; }
-#area-name { font-weight: 700; color: var(--accent); }
-
-.dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-right: 8px;
-  border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.5);
+/* The role badge while playing: a name tag under the HUD, above the notebook. */
+#role-badge {
+  top: calc(var(--hud-bottom) + 8px);
+  left: calc(12px + env(safe-area-inset-left));
+  right: auto;
+  max-width: calc(100vw - 24px);
+  padding: 6px 12px 6px 14px;
+  border-left: 5px solid var(--nova);
+  font-family: var(--serif);
+  font-weight: 700;
 }
 
-/* --- The shared action-button component (spec 014) ------------------------------------ */
+/* --- Role reveal (spec 015): a letter with a stamp ---------------------------------------- */
+
+.role-card { text-align: center; padding-top: 26px; border-top: 8px solid var(--stamp-green); }
+.role-card h2 { font-size: 26px; }
+.role-card .role-motto {
+  margin: 2px 0;
+  font-family: var(--serif);
+  font-size: 20px;
+  font-style: italic;
+  color: var(--stamp-green);
+}
+.role-card .role-motto::before { content: "\201C"; }
+.role-card .role-motto::after { content: "\201D"; }
+.role-stamp { margin-top: 6px; color: var(--stamp-green); }
+/* The examiner's letter is the confidential one: red edge, red stamp. */
+#role-screen[data-role="examiner"] .role-card { border-top-color: var(--stamp-red); }
+#role-screen[data-role="examiner"] .doc-kicker,
+#role-screen[data-role="examiner"] .role-motto,
+#role-screen[data-role="examiner"] .role-stamp { color: var(--stamp-red); }
+
+/* --- Tasks (spec 004): the shared bar and the own notebook page --------------------------- */
+
+/* The shared progress: a strip along the top edge, also over the meeting screen. */
+#task-bar {
+  position: fixed;
+  top: env(safe-area-inset-top);
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: rgba(18, 21, 32, 0.85);
+  z-index: 12;
+}
+#task-bar-fill { width: 0; height: 100%; background: #4cb963; transition: width 0.4s; }
+
+/* The own tasks (spec 015): a page of a ring notebook with tick boxes, under the HUD.
+   Touches go through it to the game. */
+#task-list {
+  position: fixed;
+  top: calc(var(--hud-bottom) + 54px); /* under the role badge */
+  left: calc(12px + env(safe-area-inset-left));
+  width: max-content;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 8px 12px 10px 30px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  /* The holes of the ring binding, then the red margin line. */
+  background:
+    radial-gradient(circle at 9px 13px, var(--desk) 0 3.5px, transparent 4px) 0 0 / 100% 26px repeat-y,
+    linear-gradient(90deg, transparent 21px, #e6a5a0 21px 22.5px, transparent 22.5px),
+    var(--paper-light);
+  color: var(--ink);
+  font-size: 13px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  z-index: 5;
+  pointer-events: none;
+}
+#task-list h2 { margin-bottom: 4px; font-size: 15px; font-style: italic; color: var(--nova); }
+#task-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+#task-items li {
+  position: relative;
+  padding: 5px 0 5px 22px;
+  border-top: 1px solid #c9d6ea; /* the notebook's ruled lines */
+  line-height: 1.3;
+}
+/* The tick box, and the tick once the task is done. */
+#task-items li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--ink);
+  border-radius: 2px;
+  background: #fff;
+}
+#task-items li.done::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  width: 6px;
+  height: 13px;
+  border: solid var(--stamp-green);
+  border-width: 0 3px 3px 0;
+  transform: rotate(40deg);
+}
+#task-items li.done { text-decoration: line-through; color: var(--ink-soft); }
+.task-area { display: block; font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+
+/* --- The shared action-button component (spec 014) ---------------------------------------- */
 
 /* Fixed slots in the bottom-right corner. Every button below keeps its place in the DOM
    for the whole round (hidden only by role, never by momentary availability — see the
@@ -270,42 +644,45 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   gap: 12px;
   z-index: 6;
 }
-#actions[hidden] { display: none; }
-#actions [hidden] { display: none; }
 
 .action {
   background: none;
   border: 0;
+  border-radius: 0;
+  box-shadow: none;
   padding: 0;
   margin: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   font-family: inherit;
   cursor: pointer;
   overflow: visible;
   -webkit-tap-highlight-color: transparent;
 }
-.action:disabled { cursor: not-allowed; }
+.action:active:not(:disabled) { box-shadow: none; }
+.action:disabled { opacity: 1; cursor: not-allowed; }
 
+/* Story look (spec 015): each button is a round rubber stamp with an ink edge. */
 .action-circle {
   position: relative;
   width: 64px;
   height: 64px;
+  border: 2px solid var(--ink);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 3px 0 var(--ink), 0 6px 10px rgba(0, 0, 0, 0.35);
 }
-.action:disabled .action-circle { opacity: 0.4; filter: grayscale(0.4); box-shadow: none; }
+.action:disabled .action-circle { opacity: 0.6; filter: grayscale(0.55); box-shadow: none; }
 .action-primary .action-circle { width: 84px; height: 84px; }
 
 /* Colours carry meaning and stay the same everywhere they are used (spec 014): use = accent
-   yellow, report/meeting = blue, expel/sabotage = red, door = purple. Each pair clears
-   WCAG AA (>= 4.5:1) for the label text drawn in that colour. */
-.action-yellow .action-circle { background: var(--accent); color: #1d1f24; }
+   yellow, report/meeting = blue, expel/sabotage = red, vent = purple. Each pair clears
+   WCAG AA (>= 4.5:1) for the icon and number drawn in that colour. */
+.action-yellow .action-circle { background: var(--accent); color: var(--ink); }
 .action-blue .action-circle { background: #1f5fd4; color: #fff; }
 .action-red .action-circle { background: #c92a2a; color: #fff; }
 .action-purple .action-circle { background: #6b3fd4; color: #fff; }
@@ -322,27 +699,35 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   stroke-linejoin: round;
 }
 
+/* The label is a small paper tag, so it reads on every floor colour of the map. */
 .action-label {
-  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--ink);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--muted);
+  white-space: nowrap;
 }
-.action-primary .action-label { font-size: 12px; color: var(--text); }
+.action-primary .action-label { font-size: 11px; }
+.action:disabled .action-label { color: var(--ink-soft); border-color: var(--rule); }
 
 /* The cooldown ring: a circular sweep drawn around the button with the seconds left in the
-   middle (expel, staff door, lights off). The one-shot "call a meeting" action has no timer
+   middle (expel, vent, lights off). The one-shot "call a meeting" action has no timer
    from the server (`meeting_used` is a flag, not a countdown), so its ring is only ever
    fully drawn (used) or invisible (not used yet), with no number. */
 .action-ring {
   position: absolute;
-  inset: -6px;
+  inset: -8px;
   transform: rotate(-90deg);
   pointer-events: none;
   opacity: 0;
 }
-.ring-track { fill: none; stroke: rgba(255, 255, 255, 0.2); stroke-width: 4; }
+.ring-track { fill: none; stroke: rgba(255, 255, 255, 0.25); stroke-width: 4; }
 .ring-sweep { fill: none; stroke: #fff; stroke-width: 4; stroke-linecap: round; transition: stroke-dashoffset 0.3s linear; }
 .action-cooldown {
   position: absolute;
@@ -352,7 +737,7 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: rgba(20, 22, 26, 0.6);
+  background: rgba(18, 21, 32, 0.66);
   color: #fff;
   font-size: 15px;
   font-weight: 700;
@@ -364,65 +749,63 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
    HUD's own keycaps, spec 008 part 9 — reuses .hint-keyboard). */
 .action-key {
   position: absolute;
-  top: -4px;
-  right: -4px;
+  top: -5px;
+  right: -5px;
   z-index: 2;
-  min-width: 16px;
-  height: 16px;
+  min-width: 17px;
+  height: 17px;
   padding: 0 3px;
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--ink);
+  border-bottom-width: 2px;
   border-radius: 4px;
-  background: #23262e;
-  color: #fff;
-  font: 700 10px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--paper-light);
+  color: var(--ink);
+  font: 700 10px/1 var(--sans);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-/* --- Staff doors (spec 014): destination cards grouped above the round door button --- */
+/* --- Vents (spec 015): arrow cards above the round vent button while inside --------------- */
 
 .action-item { position: relative; display: flex; flex-direction: column; align-items: center; }
 .door-cards {
   position: absolute;
   bottom: 100%;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
   width: max-content;
 }
+.door-cards:empty { display: none; }
 .door-card {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  background: rgba(20, 22, 26, 0.9);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 12px 6px 8px;
+  background: var(--paper);
+  font-size: 13px;
   white-space: nowrap;
-  cursor: pointer;
 }
-.door-card:disabled { opacity: 0.5; cursor: not-allowed; }
-.door-cards:empty { display: none; }
-.door-arrow { flex-shrink: 0; color: var(--accent); }
+.door-arrow { flex-shrink: 0; color: var(--nova); }
+/* While inside, the round button is the way out: it pulses gently. */
+@keyframes vent-pulse { 50% { box-shadow: 0 3px 0 var(--ink), 0 0 0 7px rgba(255, 255, 255, 0.45); } }
+@media (prefers-reduced-motion: no-preference) {
+  .action.inside .action-circle { animation: vent-pulse 1.2s ease-in-out infinite; }
+}
 
-/* --- Meetings and votes (spec 006, redrawn as cards in spec 014) ---------------------- */
+/* --- Meetings and votes (spec 006, cards spec 014): an emergency faculty meeting ---------- */
 
 /* Much lighter than the other overlays and with the card at the right side, so everyone
    standing around the meeting table stays visible (spec 011). main.js moves the camera
    so the table shows in the part of the window the card leaves free. */
-#meeting-screen { background: rgba(20, 22, 26, 0.3); justify-content: flex-end; }
+#meeting-screen { background: rgba(18, 21, 32, 0.3); justify-content: flex-end; }
 .meeting-card {
   max-width: min(460px, 55vw);
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #4a4e57 transparent;
+  border-top: 8px solid var(--nova);
 }
 /* A window higher than wide (a phone held upright): the card at the bottom instead. */
 @media (orientation: portrait) {
@@ -430,15 +813,17 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   .meeting-card { max-width: 460px; max-height: 70vh; }
 }
 .meeting-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-/* The big timer at the top (spec 014). */
+/* The big timer at the top (spec 014): the wall clock of the meeting room. */
 .timer {
   flex-shrink: 0;
   white-space: nowrap;
-  font-size: 32px;
-  font-weight: 700;
+  font-family: var(--mono);
+  font-size: 30px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  color: var(--stamp-red);
 }
+.card #meeting-reason { color: var(--ink); font-family: var(--serif); font-style: italic; }
 
 .meeting-grid {
   display: grid;
@@ -447,123 +832,161 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
 }
 /* While a vote is in flight, locked out until the server answers (spec 014). */
 .meeting-grid.locked { pointer-events: none; opacity: 0.7; }
+/* One player's file card. At least 44 px high: the vote/skip touch target (spec 007). */
 .meeting-player-card {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
+  min-height: 44px;
   padding: 10px 8px;
-  border: 0;
-  border-radius: 10px;
-  background: #343841;
-  color: var(--text);
+  border: 1px solid var(--rule);
+  border-bottom: 3px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper-light);
+  color: var(--ink);
   font: inherit;
   text-align: center;
   cursor: pointer;
 }
-.meeting-player-card[hidden] { display: none; }
-.meeting-player-card.disabled, .meeting-player-card[aria-disabled="true"] { cursor: not-allowed; opacity: 0.6; }
-.meeting-player-card.ghost { opacity: 0.45; filter: grayscale(0.6); cursor: default; }
-.meeting-player-card .player-name { display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; }
-.meeting-player-card.pending { outline: 2px solid var(--accent); }
-.confirm-prompt { font-size: 12px; color: var(--muted); }
+.meeting-player-card.disabled, .meeting-player-card[aria-disabled="true"] { cursor: not-allowed; background: var(--paper); }
+.meeting-player-card.ghost { cursor: default; background: var(--paper-shade); }
+.meeting-player-card.ghost .chip-figure { opacity: 0.45; filter: grayscale(1); }
+.meeting-player-card.ghost .player-name { color: var(--ink-soft); text-decoration: line-through; }
+.meeting-player-card .player-name {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 2px 0;
+  font-family: var(--serif);
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.meeting-player-card.pending { border-color: var(--nova); box-shadow: 0 0 0 2px var(--nova); }
+/* The confirm step inside a tapped card: the question, then two buttons side by side. */
+.meeting-player-card > div { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.confirm-prompt { font-size: 12px; color: var(--ink-soft); }
 .confirm-row { display: flex; gap: 6px; width: 100%; }
-.confirm-row button { flex: 1; padding: 6px 4px; font-size: 13px; }
-.confirm-row .cancel-vote { background: #3a3e47; color: var(--text); }
+.confirm-row button { flex: 1; padding: 6px 4px; font-size: 13px; box-shadow: 1px 2px 0 var(--ink); }
+/* "VOTED": a small green stamp in the corner of the card. */
 .voted-stamp {
   position: absolute;
-  top: 4px;
-  right: 6px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: #3f8c6e;
-  color: #fff;
+  top: 5px;
+  right: 5px;
+  padding: 0 5px;
+  border: 2px solid var(--stamp-green);
+  border-radius: 4px;
+  color: var(--stamp-green);
+  font-family: var(--mono);
   font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  transform: rotate(8deg);
 }
-.skip-card { grid-column: 1 / -1; flex-direction: row; justify-content: center; gap: 8px; }
+.skip-card { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .skip-card .action-icon { width: 20px; height: 20px; }
 .vote-dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; min-height: 8px; }
-.vote-dot { width: 7px; height: 7px; border-radius: 50%; background: #3f8c6e; }
-.meeting-player-card .count { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
-.tag.voted { background: #3f8c6e; color: #fff; }
-.tag.surfing { background: var(--error); color: #1d1f24; font-weight: 700; }
-#meeting-status.verdict { color: var(--text); font-size: 18px; font-weight: 700; }
-
-/* --- Tasks (spec 004) --- */
-
-/* The shared progress: a strip along the top edge, also over the meeting screen. */
-#task-bar {
-  position: fixed;
-  top: env(safe-area-inset-top);
-  left: 0;
-  right: 0;
-  height: 8px;
-  background: rgba(20, 22, 26, 0.8);
-  z-index: 12;
+.vote-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--stamp-red); }
+.meeting-player-card .count { font-family: var(--mono); font-weight: 700; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-soft); }
+.card #meeting-status { color: var(--ink-soft); font-size: 13px; }
+/* The verdict: the last line of the minutes, underlined twice. */
+.card #meeting-status.verdict {
+  padding-top: 8px;
+  border-top: 3px double var(--ink);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 19px;
+  font-weight: 700;
 }
-#task-bar[hidden], #task-list[hidden], .joke[hidden] { display: none; }
-#task-bar-fill { width: 0; height: 100%; background: #4cb963; transition: width 0.4s; }
 
-/* The student's own tasks, under the HUD. Touches go through it to the game. */
-#task-list {
-  position: fixed;
-  top: calc(52px + env(safe-area-inset-top));
-  left: calc(12px + env(safe-area-inset-left));
-  max-width: min(270px, calc(100vw - 24px));
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: rgba(20, 22, 26, 0.75);
-  font-size: 13px;
-  z-index: 5;
-  pointer-events: none;
+/* --- End screen (spec 015): a diploma or an exmatriculation letter ------------------------- */
+
+.end-card { max-width: 420px; }
+.end-card h2 { font-size: 28px; }
+.end-card .end-text { color: var(--ink); font-family: var(--serif); font-size: 15px; }
+.end-list-title {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--rule);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
 }
-#task-list h2 { margin-bottom: 4px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
-#task-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-#task-items li.done { text-decoration: line-through; color: var(--muted); }
-.task-area { display: block; font-size: 12px; color: var(--muted); }
+#end-roles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+#end-roles li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--serif);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+#end-roles .chip-figure { margin-right: 8px; }
+/* The students won: a diploma with an ornamental frame and a green seal. */
+#end-screen[data-winner="students"] .end-card {
+  text-align: center;
+  border: 3px double var(--stamp-green);
+  outline: 1px solid var(--stamp-green);
+  outline-offset: -9px;
+  padding: 30px 30px 26px;
+}
+#end-screen[data-winner="students"] .end-card h2 { color: var(--stamp-green); }
+#end-screen[data-winner="students"] .end-text { font-style: italic; }
+#end-screen[data-winner="students"] .end-stamp { color: var(--stamp-green); border-radius: 50%; padding: 16px 10px; font-size: 16px; }
+/* The examiners won: an official letter with a red letterhead and an "Expelled" stamp. */
+#end-screen[data-winner="examiners"] .end-card { border-top: 10px solid var(--stamp-red); }
+#end-screen[data-winner="examiners"] .doc-kicker,
+#end-screen[data-winner="examiners"] .end-card h2 { color: var(--stamp-red); }
+#end-screen[data-winner="examiners"] .end-stamp { align-self: flex-end; margin-top: -4px; font-size: 24px; }
 
-/* --- Mini-game panel (spec 012) --- */
+/* --- Mini-game panel (spec 012): an errand form -------------------------------------------- */
 
-.minigame-card { text-align: center; }
-.minigame-hint { margin: 0; color: var(--muted); font-size: 13px; }
-.minigame-note { color: var(--error); min-height: 1.2em; }
-.minigame-note[hidden] { display: none; }
+.minigame-card { text-align: center; border-top: 8px solid var(--accent); }
+.card .minigame-hint { color: var(--ink-soft); font-size: 14px; }
+.card .minigame-note { color: var(--stamp-red); font-weight: 700; min-height: 1.2em; }
 #minigame-content { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 #minigame-content form { display: flex; gap: 8px; }
-.minigame-number {
-  margin: 0;
+.card .minigame-number {
+  font-family: var(--mono);
   font-size: 40px;
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: 4px;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  color: var(--nova);
 }
-.minigame-hits { margin: 0; font-weight: 700; color: var(--muted); }
-.minigame-sentence { margin: 0; font-size: 18px; font-style: italic; text-align: center; }
+.card .minigame-hits, .card .minigame-cable-status { font-family: var(--mono); font-weight: 700; color: var(--ink-soft); }
+.card .minigame-sentence { color: var(--ink); font-family: var(--serif); font-size: 19px; font-style: italic; text-align: center; }
 .minigame-options { display: flex; flex-direction: column; gap: 8px; width: 100%; }
-.minigame-options button { width: 100%; }
+.minigame-options button { width: 100%; background: var(--paper-light); }
 #minigame-content input[type="number"] { width: 140px; text-align: center; font-size: 22px; letter-spacing: 4px; }
 .minigame-grid { display: grid; gap: 8px; }
-.minigame-grid button {
-  min-height: 48px;
-  min-width: 48px;
-  font-size: 20px;
-}
+.minigame-grid button { min-height: 52px; min-width: 52px; font-size: 22px; background: var(--paper-light); }
 /* The projector/cable mini-game (socket, Auditorium): original SVG plug shapes, no images. */
 .minigame-cable { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; }
-.minigame-cable-status { margin: 0; font-weight: 700; color: var(--muted); }
 .projector {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 140px;
   height: 100px;
+  border: 2px solid var(--ink);
   border-radius: 10px;
-  background: #3a3e47;
-  border: 2px solid var(--muted);
+  background: #2a3145;
 }
 .cable-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
 .cable {
@@ -572,14 +995,15 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   align-items: center;
   gap: 4px;
   padding: 6px;
+  border: 1px solid transparent;
   border-radius: 8px;
   cursor: grab;
 }
-.cable.selected { background: rgba(242, 179, 61, 0.25); }
+.cable.selected { background: #ffe98a; border-color: var(--ink); }
 .cable.dragging { opacity: 0.4; }
-.cable-name { font-size: 11px; color: var(--muted); }
-.cable-plug .plug-shape { fill: #596072; stroke: var(--text); stroke-width: 2; }
-.projector .plug-shape { fill: var(--bg); stroke: var(--accent); stroke-width: 3; }
+.cable-name { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+.cable-plug .plug-shape { fill: #8b93a7; stroke: var(--ink); stroke-width: 2; }
+.projector .plug-shape { fill: var(--desk); stroke: var(--accent); stroke-width: 3; }
 .cable-plug.plugged { animation: cable-plug-in 0.35s ease; }
 @keyframes cable-plug-in {
   0% { transform: scale(1); }
@@ -592,7 +1016,6 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   25% { transform: translateX(-6px); }
   75% { transform: translateX(6px); }
 }
-
 /* The pastel de nata the seagull is after: original inline SVG, no image files. */
 .nata-tart { display: block; }
 .nata-tart.hit { animation: nata-wobble 0.3s ease; }
@@ -602,40 +1025,7 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   60% { transform: rotate(8deg); }
 }
 
-.joke {
-  position: fixed;
-  left: 50%;
-  top: 22%;
-  transform: translateX(-50%);
-  width: max-content;
-  max-width: calc(100vw - 32px);
-  padding: 12px 18px;
-  border: 2px solid #4cb963;
-  border-radius: 10px;
-  background: rgba(20, 22, 26, 0.92);
-  text-align: center;
-  z-index: 7;
-}
-.joke strong { display: block; color: #4cb963; }
-
-/* Phones: put the panel under the HUD instead of next to it. */
-@media (max-width: 600px) {
-  #task-list { top: calc(100px + env(safe-area-inset-top)); } /* under the role badge */
-  .panel {
-    top: calc(52px + env(safe-area-inset-top));
-    left: calc(12px + env(safe-area-inset-left));
-    right: calc(12px + env(safe-area-inset-right));
-    width: auto;
-  }
-  #lobby { width: auto; }
-}
-
-/* --- Phone controls and hints by device (spec 007) ----------------------------- */
-
-/* Only one of these two is shown, chosen by input device (main.js), not by width. */
-.hint-touch, .hint-keyboard { color: var(--muted); }
-
-#invite-button { background: #3a3e47; color: var(--text); }
+/* --- Invite players: QR code and URL (spec 007) -------------------------------------------- */
 
 .invite-card { align-items: center; text-align: center; }
 #invite-qr {
@@ -643,14 +1033,17 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   height: auto;
   min-width: 240px;
   max-width: 100%;
-  background: #fff;
-  border-radius: 8px;
   padding: 8px;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  background: #fff;
 }
 @media (max-width: 280px) {
   #invite-qr { min-width: 0; }
 }
-#invite-url { word-break: break-all; }
+.card #invite-url { color: var(--ink); font-family: var(--mono); font-size: 14px; word-break: break-all; }
+
+/* --- Phone controls (spec 007) ---------------------------------------------------------------- */
 
 /* A round, half-transparent joystick at the bottom left, drawn in CSS (no images). */
 #joystick {
@@ -660,13 +1053,12 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   width: 120px;
   height: 120px;
   border-radius: 50%;
-  background: rgba(241, 241, 241, 0.15);
-  border: 2px solid rgba(241, 241, 241, 0.3);
+  background: rgba(247, 240, 220, 0.22);
+  border: 2px solid rgba(247, 240, 220, 0.55);
   touch-action: none;
   user-select: none;
   z-index: 6;
 }
-#joystick[hidden] { display: none; }
 #joystick-knob {
   position: absolute;
   top: 50%;
@@ -674,19 +1066,48 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   width: 52px;
   height: 52px;
   margin: -26px 0 0 -26px;
+  border: 2px solid var(--ink);
   border-radius: 50%;
-  background: rgba(241, 241, 241, 0.4);
+  background: rgba(247, 240, 220, 0.85);
   pointer-events: none;
 }
 
-/* Meeting cards: at least 44 px high on every screen, the vote/skip touch target (spec 007). */
-.meeting-player-card { min-height: 44px; }
+/* --- Narrow windows: the lobby roster under the HUD instead of next to it ------------------- */
 
-/* Phones: bigger round buttons (spec 014) and a bit more room to grow upward without
-   covering the joystick (left) or an off-screen task's edge arrow (render.js reads the
-   action bar's own rendered height at runtime, so this only has to look right). */
+@media (max-width: 760px) {
+  #lobby {
+    top: calc(var(--hud-bottom) + 8px);
+    left: calc(12px + env(safe-area-inset-left));
+    right: calc(12px + env(safe-area-inset-right));
+    max-width: none;
+    width: auto;
+  }
+  #lobby-players.lobby-chips { max-height: 34vh; }
+}
+
+/* --- Phones: tighter cards, bigger round buttons ---------------------------------------------- */
+
 @media (max-width: 600px) {
+  .card { padding: 18px 18px 20px; }
+  .id-card { padding: 0 0 12px; }
+  .card.id-card > * { margin-left: 16px; margin-right: 16px; }
+  .card.id-card > .id-band { margin: 0; padding: 14px 16px 10px; }
+  .card.id-card > .id-slot { margin: 0 0 0 -23px; }
+  .id-photo { flex-basis: 78px; width: 78px; }
+  .title-stamp { font-size: 30px; }
+
+  /* Bigger round buttons (spec 014) and a bit more room to grow upward without covering
+     the joystick (left) or an off-screen task's edge arrow (render.js reads the action
+     bar's own rendered height at runtime, so this only has to look right). */
   .action-circle { width: 72px; height: 72px; }
   .action-primary .action-circle { width: 94px; height: 94px; }
   #actions { gap: 14px; }
+}
+
+/* Narrow phones (found while checking spec 015 at 375 px): three 72 px buttons reached
+   21 px into the joystick. A little smaller and closer together, they clear it. */
+@media (max-width: 400px) {
+  .action-circle { width: 66px; height: 66px; }
+  .action-primary .action-circle { width: 88px; height: 88px; }
+  #actions { gap: 8px; right: calc(10px + env(safe-area-inset-right)); }
 }
