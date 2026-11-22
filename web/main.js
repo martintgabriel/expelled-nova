@@ -17,6 +17,12 @@ const MAX_TICKS_PER_FRAME = 5; // after a very long frame (hidden tab), do not r
 const ROLE_SCREEN_MS = 3000; // how long the role screen shows at the start
 // REPEATS SERVER RULE: MIN_PLAYERS in server/game.py. Only for the hint; the server decides.
 const MIN_PLAYERS = 4;
+// REPEATS SERVER RULE: EXPEL_COOLDOWN/DOOR_COOLDOWN/SABOTAGE_COOLDOWN in server/game.py.
+// Only to size the cooldown ring's sweep; the server is the only one that counts down.
+const EXPEL_COOLDOWN = 20;
+const DOOR_COOLDOWN = 3;
+const SABOTAGE_COOLDOWN = 30;
+const RING_CIRCUMFERENCE = 2 * Math.PI * 35; // matches r="35" on .ring-sweep in index.html
 
 const ui = {
   joinScreen: document.getElementById("join-screen"),
@@ -30,6 +36,7 @@ const ui = {
   toast: document.getElementById("toast"),
   disconnected: document.getElementById("disconnected"),
   lobby: document.getElementById("lobby"),
+  lobbyCount: document.getElementById("lobby-count"),
   lobbyPlayers: document.getElementById("lobby-players"),
   inviteButton: document.getElementById("invite-button"),
   inviteScreen: document.getElementById("invite-screen"),
@@ -41,9 +48,12 @@ const ui = {
   roleTitle: document.getElementById("role-title"),
   roleDetail: document.getElementById("role-detail"),
   roleBadge: document.getElementById("role-badge"),
+  actions: document.getElementById("actions"),
   expelButton: document.getElementById("expel-button"),
   taskButton: document.getElementById("task-button"),
+  doorItem: document.getElementById("door-item"),
   doorButtons: document.getElementById("door-buttons"),
+  doorActionButton: document.getElementById("door-action-button"),
   fixButton: document.getElementById("fix-button"),
   controlMove: document.getElementById("control-move"),
   controlExpel: document.getElementById("control-expel"),
@@ -92,7 +102,6 @@ const ui = {
 for (const el of document.querySelectorAll(".hint-keyboard")) el.hidden = Controls.isTouch;
 for (const el of document.querySelectorAll(".hint-touch")) el.hidden = !Controls.isTouch;
 for (const el of document.querySelectorAll(".key-hint")) el.hidden = Controls.isTouch;
-const EXPEL_KEY_HINT = Controls.isTouch ? "" : " (E)";
 
 // --- Invite players: QR code and URL, lobby only (spec 007) -------------------------
 
@@ -113,6 +122,10 @@ let lastPhase = null; // "lobby", "playing", "meeting" or "ended", from the late
 let lobbyKey = ""; // what the lobby list currently shows, to redraw only on changes
 let endKey = ""; // the same for the end screen
 let meetingKey = ""; // the same for the meeting screen
+let rosterIds = []; // every player id seen in the lobby this round, for the meeting grid
+let pendingVote = null; // a candidate id or "skip" picked but not yet confirmed (spec 014)
+let votingArgs = null; // the latest {state, meeting}, so a confirm/cancel tap can redraw
+// the grid at once, without waiting for the server's next state
 let roleTimer = null;
 let sentSurfing = false; // this player was voted out in this round
 // Nicknames and colour numbers by player id. While playing, the server only sends the
@@ -187,13 +200,51 @@ function updateHud(state) {
 function colorDot(state, playerId) {
   const dot = document.createElement("span");
   dot.className = "dot";
-  dot.style.background = Render.colorCss(state.colors[playerId] ?? knownColors.get(playerId));
+  dot.style.background = Render.colorCss(playerColor(state, playerId));
   return dot;
 }
 
 // A player's nickname, also for players out of sight or voted out.
 function nameOf(playerId) {
   return knownNames.get(playerId) ?? "A player";
+}
+
+function playerColor(state, playerId) {
+  return state.colors[playerId] ?? knownColors.get(playerId);
+}
+
+// A small original character (spec 014), echoing the one drawn on the map (render.js) at a
+// glance: a round body in the player's colour, a graduation cap and two eyes. Used for the
+// lobby chips and the meeting cards; a ghost is drawn greyed out with CSS (.ghost), not here.
+function characterChip(colorNumber, size = 32) {
+  const svg = svgEl("svg", { viewBox: "0 0 40 40", width: size, height: size, class: "chip-figure" });
+  const fill = Render.colorCss(colorNumber);
+  svg.append(
+    svgEl("circle", { cx: 20, cy: 23, r: 14, fill, stroke: "#16181d", "stroke-width": 2 }),
+    svgEl("path", { d: "M6 15 L20 8 L34 15 L20 19 Z", fill: "#2d313b", stroke: "#596072", "stroke-width": 1 }),
+    svgEl("circle", { cx: 15.5, cy: 22, r: 2.3, fill: "#fff" }),
+    svgEl("circle", { cx: 24.5, cy: 22, r: 2.3, fill: "#fff" }),
+    svgEl("circle", { cx: 15.5, cy: 22.4, r: 0.9, fill: "#16181d" }),
+    svgEl("circle", { cx: 24.5, cy: 22.4, r: 0.9, fill: "#16181d" }),
+  );
+  return svg;
+}
+
+// The host's original symbol (spec 014): a ring with an upward chevron, no text or emoji.
+function hostSymbol() {
+  const svg = svgEl("svg", { viewBox: "0 0 16 16", width: 14, height: 14, class: "host-symbol", role: "img", "aria-label": "host" });
+  svg.append(
+    svgEl("circle", { cx: 8, cy: 8, r: 7, fill: "none", stroke: "currentColor", "stroke-width": 1.5 }),
+    svgEl("path", {
+      d: "M4.5 9.5 L8 5.5 L11.5 9.5",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": 1.5,
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+    }),
+  );
+  return svg;
 }
 
 // --- Controls as pictograms (spec 008, part 9) --------------------------------------------
@@ -230,6 +281,9 @@ function updatePhase(state) {
   if (result && result.surfing === welcome.id) sentSurfing = true;
   ui.ghostBanner.hidden = !(state.phase === "playing" && !state.alive);
   setText(ui.ghostTitle, sentSurfing ? "You have been sent surfing" : "You have been expelled");
+  // The whole action bar only during a round (spec 014): a slot's own hidden/disabled
+  // state below only has to track the player's role and momentary availability, not phase.
+  ui.actions.hidden = state.phase !== "playing";
   updateExpelButton(state);
   updateReportAndMeeting(state);
   updateTasks(state);
@@ -258,6 +312,13 @@ function updatePhase(state) {
 }
 
 function renderLobby(state) {
+  // The whole lobby's roster, remembered for the meeting grid (spec 014): a living
+  // player's state never lists a ghost, so "who is missing from `meeting.living`" is read
+  // against this list, captured here since the lobby is the one phase everyone sees
+  // everyone in.
+  rosterIds = state.players.map((p) => p.id);
+  setText(ui.lobbyCount, `${state.players.length}/10`);
+
   // Redraw the list only when players or host change (states arrive 20 times a second).
   const key = JSON.stringify([state.host, state.colors, state.players.map((p) => [p.id, p.name])]);
   if (key !== lobbyKey) {
@@ -265,9 +326,14 @@ function renderLobby(state) {
     ui.lobbyPlayers.replaceChildren(
       ...state.players.map((p) => {
         const item = document.createElement("li");
-        item.append(colorDot(state, p.id), p.name); // appended as text: never read as HTML
-        if (p.id === state.host) item.append(tag("host", "host"));
-        if (p.id === welcome.id) item.append(tag("you", "you"));
+        item.className = "lobby-chip";
+        item.append(characterChip(playerColor(state, p.id), 36));
+        const name = document.createElement("span");
+        name.className = "lobby-chip-name";
+        name.append(p.name); // appended as text: never read as HTML
+        if (p.id === state.host) name.append(hostSymbol());
+        if (p.id === welcome.id) name.append(tag("you", "you"));
+        item.append(name);
         return item;
       }),
     );
@@ -276,9 +342,9 @@ function renderLobby(state) {
   const enough = state.players.length >= MIN_PLAYERS;
   ui.startButton.hidden = !isHost;
   ui.startButton.disabled = !enough;
+  setText(ui.startButton, enough ? "Start game" : `Need ${MIN_PLAYERS - state.players.length} more players`);
   let hint = "";
-  if (!enough) hint = `Need at least ${MIN_PLAYERS} players`;
-  else if (!isHost) hint = "Waiting for the host to start";
+  if (!isHost) hint = enough ? "Waiting for the host to start" : `Need at least ${MIN_PLAYERS} players`;
   setText(ui.startHint, hint);
 }
 
@@ -321,6 +387,57 @@ function setText(element, text) {
   if (element.textContent !== text) element.textContent = text;
 }
 
+// The action bar's own rendered height (spec 014), for render.js's edge arrows: the bar's
+// height depends on the role (3 slots for a student, 6 for an examiner) and the window
+// size, so this reads the real thing instead of guessing a fixed margin.
+function actionsBottomMargin() {
+  if (ui.actions.hidden) return 150;
+  const rect = ui.actions.getBoundingClientRect();
+  return window.innerHeight - rect.top + 16;
+}
+
+// --- The shared action button component (spec 014) ----------------------------------
+// One round button per in-round action, always in the same slot for a role: main.js never
+// hides one because it is momentarily out of reach, only disables it and explains why, as
+// both the title (desktop hover) and the aria-label (screen readers).
+
+function setActionReason(button, reason, defaultLabel) {
+  const title = reason || "";
+  if (button.title !== title) button.title = title;
+  const label = reason || defaultLabel;
+  if (button.getAttribute("aria-label") !== label) button.setAttribute("aria-label", label);
+}
+
+// A timed cooldown (expel, staff door, lights off): the ring sweeps back to full as
+// `secondsLeft` counts down to 0, with the number in the middle. `secondsLeft` is always
+// the server's own value; `totalSeconds` only sizes the sweep.
+function setCooldownRing(button, secondsLeft, totalSeconds) {
+  const ring = button.querySelector(".ring-sweep");
+  const cooldown = button.querySelector(".action-cooldown");
+  if (!ring) return;
+  if (secondsLeft > 0) {
+    const fraction = Math.min(1, secondsLeft / totalSeconds);
+    ring.style.strokeDasharray = `${RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`;
+    ring.style.strokeDashoffset = `${RING_CIRCUMFERENCE * (1 - fraction)}`;
+    ring.style.opacity = "1";
+    setText(cooldown, String(secondsLeft));
+  } else {
+    ring.style.opacity = "0";
+    setText(cooldown, "");
+  }
+}
+
+// The one-shot "call a meeting" action: the server only ever sends `meeting_used` as a
+// flag, never a countdown, so the ring is either fully drawn (used, for the rest of the
+// round) or not drawn at all — never a number in the middle.
+function setUsedRing(button, used) {
+  const ring = button.querySelector(".ring-sweep");
+  if (!ring) return;
+  ring.style.strokeDasharray = `${RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`;
+  ring.style.strokeDashoffset = used ? "0" : `${RING_CIRCUMFERENCE}`;
+  ring.style.opacity = used ? "1" : "0";
+}
+
 ui.startButton.addEventListener("click", () => {
   // The server checks host, phase and player count; a rejection comes back as a toast.
   send({ type: "start" });
@@ -356,15 +473,21 @@ function expelTarget(state) {
 }
 
 function updateExpelButton(state) {
-  ui.expelButton.hidden = !isLivingExaminer(state);
+  // Hidden only by role, for the whole round (spec 014): a ghost examiner still sees its
+  // own fixed EXPEL slot, just greyed out, instead of it disappearing.
+  ui.expelButton.hidden = state.role !== "examiner";
   if (ui.expelButton.hidden) return;
-  const cooldown = state.expel_cooldown;
-  const target = expelTarget(state);
-  ui.expelButton.disabled = cooldown > 0 || !target;
-  let label = `Expel${EXPEL_KEY_HINT} · nobody in range`;
-  if (cooldown > 0) label = `Expel${EXPEL_KEY_HINT} · ready in ${cooldown} s`;
-  else if (target) label = `Expel ${target.name}${EXPEL_KEY_HINT}`; // textContent: never read as HTML
-  setText(ui.expelButton, label);
+  const alive = state.phase === "playing" && state.alive;
+  const cooldown = alive ? state.expel_cooldown : 0;
+  const target = alive ? expelTarget(state) : null;
+  ui.expelButton.disabled = !alive || cooldown > 0 || !target;
+  let reason = "";
+  if (!alive) reason = "Ghosts cannot expel";
+  else if (cooldown > 0) reason = `Ready in ${cooldown} s`;
+  else if (!target) reason = "Nobody in range";
+  else reason = `Expel ${target.name}`; // the full reason, e.g. on hover; the label stays "Expel"
+  setActionReason(ui.expelButton, reason, "Expel");
+  setCooldownRing(ui.expelButton, cooldown, EXPEL_COOLDOWN);
 }
 
 function tryExpel() {
@@ -468,10 +591,27 @@ function nearMeetingTable(state) {
 }
 
 function updateReportAndMeeting(state) {
-  ui.reportButton.hidden = !reportTarget(state);
-  ui.meetingButton.hidden = !(isLivingAndPlaying(state) && nearMeetingTable(state));
-  ui.meetingButton.disabled = state.meeting_used;
-  setText(ui.meetingButton, state.meeting_used ? "Meeting already called" : "Call a meeting");
+  // Both fixed slots, for every role (spec 014): the server never restricts report or
+  // meeting by role either (only by being alive and, for meeting, at the table).
+  ui.reportButton.hidden = false;
+  ui.meetingButton.hidden = false;
+  const alive = isLivingAndPlaying(state);
+  const target = alive ? reportTarget(state) : null;
+  ui.reportButton.disabled = !target;
+  let reportReason = "";
+  if (!alive) reportReason = "Ghosts cannot report";
+  else if (!target) reportReason = "No failed exam within reach";
+  setActionReason(ui.reportButton, reportReason, "Report");
+
+  const near = alive && nearMeetingTable(state);
+  const used = Boolean(state.meeting_used);
+  ui.meetingButton.disabled = !alive || used || !near;
+  let meetingReason = "";
+  if (!alive) meetingReason = "Ghosts cannot call a meeting";
+  else if (used) meetingReason = "Already used this round";
+  else if (!near) meetingReason = "Go to the meeting table";
+  setActionReason(ui.meetingButton, meetingReason, "Call a meeting");
+  setUsedRing(ui.meetingButton, used);
 }
 
 function tryReport() {
@@ -499,10 +639,11 @@ function renderMeeting(state) {
   setText(ui.meetingTimer, `${meeting.seconds_left} s`);
   const result = meeting.result;
   // Redraw only when something on the screen changes; the timer is updated above, so a
-  // redraw does not replace the buttons under the mouse every second.
+  // redraw does not replace the cards under the mouse every second.
   const key = JSON.stringify([{ ...meeting, seconds_left: null }, state.alive]);
   if (key === meetingKey) return;
   meetingKey = key;
+  pendingVote = null; // a real change from the server always clears a half-made pick
 
   const caller = nameOf(meeting.called_by); // added as text: never read as HTML
   ui.meetingReason.textContent =
@@ -511,62 +652,203 @@ function renderMeeting(state) {
   else renderVoting(state, meeting);
 }
 
-function meetingRow(state, playerId) {
-  const item = document.createElement("li");
-  const who = document.createElement("span");
-  who.append(colorDot(state, playerId), nameOf(playerId)); // as text: never read as HTML
-  if (playerId === welcome.id) who.append(tag("you", "you"));
-  item.append(who);
-  return { item, who };
+function canActuallyVote(state, meeting) {
+  return state.alive && meeting.my_vote === null;
 }
 
-function renderVoting(state, meeting) {
-  setText(ui.meetingTitle, "Meeting: who is an examiner?");
-  const canVote = state.alive && meeting.my_vote === null;
-  const voted = new Set(meeting.voted);
-  ui.meetingPlayers.replaceChildren(
-    ...meeting.living.map((playerId) => {
-      const { item, who } = meetingRow(state, playerId);
-      if (voted.has(playerId)) who.append(tag("voted", "voted"));
-      // No button on the own row: the server rejects a vote for yourself (spec 008, part 2).
-      if (state.alive && playerId !== welcome.id) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.textContent = "Vote";
-        button.disabled = !canVote;
-        button.addEventListener("click", () => castVote(playerId));
-        item.append(button);
-      }
-      return item;
+// One card in the 2-column grid (spec 014): a small original character in the player's
+// colour, their name, a "you" marker and a "VOTED" stamp once they have voted. Ghosts are
+// greyed out and not votable. Tapping a votable card opens a confirm/cancel step inside
+// it, instead of sending the vote straight away.
+function buildPlayerCard(state, playerId, { isGhost, hasVoted, canVote }) {
+  const card = document.createElement("div");
+  card.className = "meeting-player-card" + (isGhost ? " ghost" : "");
+  card.append(characterChip(playerColor(state, playerId), 40));
+  const name = document.createElement("span");
+  name.className = "player-name";
+  name.append(nameOf(playerId)); // appended as text: never read as HTML
+  if (playerId === welcome.id) name.append(tag("you", "you"));
+  card.append(name);
+  if (hasVoted) {
+    const stamp = document.createElement("span");
+    stamp.className = "voted-stamp";
+    stamp.textContent = "VOTED";
+    card.append(stamp);
+  }
+
+  if (isGhost) {
+    card.setAttribute("aria-disabled", "true");
+    card.title = "Ghosts cannot vote";
+    return card;
+  }
+  if (!canVote) {
+    card.classList.add("disabled");
+    return card;
+  }
+  card.setAttribute("role", "button");
+  card.tabIndex = 0;
+  const select = () => {
+    pendingVote = playerId;
+    buildVotingGrid();
+  };
+  card.addEventListener("click", select);
+  card.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      select();
+    }
+  });
+
+  if (pendingVote === playerId) {
+    card.classList.add("pending");
+    card.append(confirmStep(`Vote for ${nameOf(playerId)}?`, "Vote", () => castVote(playerId)));
+  }
+  return card;
+}
+
+// The confirm/cancel step shown inside a card once it is tapped (spec 014): a short prompt
+// and two buttons, never sent until "Confirm" is tapped.
+function confirmStep(prompt, confirmLabel, onConfirm) {
+  const wrap = document.createElement("div");
+  const line = document.createElement("span");
+  line.className = "confirm-prompt";
+  line.textContent = prompt;
+  const row = document.createElement("div");
+  row.className = "confirm-row";
+  const confirmButton = document.createElement("button");
+  confirmButton.type = "button";
+  confirmButton.textContent = confirmLabel;
+  confirmButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onConfirm();
+  });
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "cancel-vote";
+  cancelButton.textContent = "Cancel";
+  cancelButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    pendingVote = null;
+    buildVotingGrid();
+  });
+  row.append(confirmButton, cancelButton);
+  wrap.append(line, row);
+  return wrap;
+}
+
+// The "Skip vote" card: `ui.skipButton` is one persistent element (its id and click
+// listener never change, see below), only its content is rebuilt every time the grid is.
+function buildSkipCard(canVote) {
+  const card = ui.skipButton;
+  card.hidden = false;
+  card.className = "meeting-player-card skip-card" + (pendingVote === "skip" ? " pending" : "") + (!canVote ? " disabled" : "");
+  card.setAttribute("aria-disabled", String(!canVote));
+  card.replaceChildren();
+  const icon = svgEl("svg", { viewBox: "0 0 24 24", class: "action-icon", "aria-hidden": "true" });
+  icon.append(
+    svgEl("path", {
+      d: "M5 12h13M12 6l6 6-6 6",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": 2,
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
     }),
   );
-  ui.skipButton.hidden = !state.alive; // ghosts get the screen without buttons
-  ui.skipButton.disabled = !canVote;
+  const label = document.createElement("span");
+  label.className = "player-name";
+  label.textContent = "Skip vote";
+  card.append(icon, label);
+  if (pendingVote === "skip") card.append(confirmStep("Skip this vote?", "Skip", () => castVote("skip")));
+  return card;
+}
+
+// Rebuilds the whole grid from the latest known state/meeting (`votingArgs`): called both
+// for a real change from the server (renderVoting) and right away for a local pick or a
+// cancel (buildPlayerCard/buildSkipCard/the skip click below), so the confirm step shows
+// at once instead of waiting for the next "state" message.
+function buildVotingGrid() {
+  const { state, meeting } = votingArgs;
+  ui.meetingPlayers.classList.remove("locked");
+  const canVote = canActuallyVote(state, meeting);
+  const voted = new Set(meeting.voted);
+  const living = new Set(meeting.living);
+  // A living player's state never lists a ghost (server/game.py); `state.ghosts` only
+  // exists for a ghost viewer (or after the end). Otherwise, a known player missing from
+  // `meeting.living` has to be a ghost: nobody leaves a running game any other way.
+  const ghostIds = (state.ghosts ?? rosterIds).filter((id) => !living.has(id));
+
+  const cards = meeting.living.map((playerId) =>
+    buildPlayerCard(state, playerId, {
+      isGhost: false,
+      hasVoted: voted.has(playerId),
+      // No confirm step on the own card: the server rejects a vote for yourself (spec
+      // 008, part 2).
+      canVote: canVote && playerId !== welcome.id,
+    }),
+  );
+  for (const playerId of ghostIds) {
+    cards.push(buildPlayerCard(state, playerId, { isGhost: true, hasVoted: false, canVote: false }));
+  }
+  cards.push(buildSkipCard(canVote));
+  ui.meetingPlayers.replaceChildren(...cards);
+
   ui.meetingStatus.classList.remove("verdict");
-  let status = "Vote for a player or skip.";
+  let status = "Tap a player or skip, then confirm.";
   if (!state.alive) status = "Ghosts cannot vote";
   else if (meeting.my_vote === "skip") status = "You skipped";
   else if (meeting.my_vote) status = `You voted for ${nameOf(meeting.my_vote)}`;
   ui.meetingStatus.textContent = status;
 }
 
+function renderVoting(state, meeting) {
+  setText(ui.meetingTitle, "Meeting: who is an examiner?");
+  votingArgs = { state, meeting };
+  buildVotingGrid();
+}
+
+// `count` small dots, one per vote (spec 014) — only a count, never an identity: the
+// server does not tell a client who voted for whom (R2, docs/brd.md).
+function voteDots(count) {
+  const wrap = document.createElement("span");
+  wrap.className = "vote-dots";
+  for (let i = 0; i < count; i++) {
+    const dot = document.createElement("span");
+    dot.className = "vote-dot";
+    wrap.append(dot);
+  }
+  return wrap;
+}
+
 function renderResult(state, result) {
   setText(ui.meetingTitle, "Result");
-  const rows = Object.entries(result.votes).map(([playerId, count]) => {
-    const { item, who } = meetingRow(state, playerId);
-    if (playerId === result.surfing) who.append(tag("sent surfing", "surfing"));
-    const votes = document.createElement("span");
-    votes.className = "count";
-    votes.textContent = count === 1 ? "1 vote" : `${count} votes`;
-    item.append(votes);
-    return item;
+  const cards = Object.entries(result.votes).map(([playerId, count]) => {
+    const card = document.createElement("div");
+    card.className = "meeting-player-card";
+    card.append(characterChip(playerColor(state, playerId), 40));
+    const name = document.createElement("span");
+    name.className = "player-name";
+    name.append(nameOf(playerId)); // appended as text: never read as HTML
+    if (playerId === welcome.id) name.append(tag("you", "you"));
+    if (playerId === result.surfing) name.append(tag("sent surfing", "surfing"));
+    card.append(name);
+    const votesLabel = document.createElement("span");
+    votesLabel.className = "count";
+    votesLabel.textContent = count === 1 ? "1 vote" : `${count} votes`;
+    card.append(votesLabel, voteDots(count));
+    return card;
   });
-  const skips = document.createElement("li");
+  const skipCard = document.createElement("div");
+  skipCard.className = "meeting-player-card skip-card";
+  const skipLabel = document.createElement("span");
+  skipLabel.className = "player-name";
+  skipLabel.textContent = "Skipped";
   const skipCount = document.createElement("span");
   skipCount.className = "count";
   skipCount.textContent = String(result.skips);
-  skips.append("Skipped", skipCount);
-  ui.meetingPlayers.replaceChildren(...rows, skips);
+  skipCard.append(skipLabel, skipCount);
+  ui.meetingPlayers.classList.remove("locked");
+  ui.meetingPlayers.replaceChildren(...cards, skipCard);
   ui.skipButton.hidden = true;
   ui.meetingStatus.classList.add("verdict");
   ui.meetingStatus.textContent = result.surfing
@@ -575,13 +857,24 @@ function renderResult(state, result) {
 }
 
 function castVote(target) {
-  // Disable the buttons until the server's answer: the next state shows the vote,
-  // a rejection comes back as a toast and re-enables them.
+  // Lock the grid until the server's answer: the next state shows the vote, a rejection
+  // comes back as a toast and unlocks it (handleMessage resets meetingKey on an error).
+  pendingVote = null;
+  ui.meetingPlayers.classList.add("locked");
   for (const button of ui.meetingScreen.querySelectorAll("button")) button.disabled = true;
   send({ type: "vote", target });
 }
 
-ui.skipButton.addEventListener("click", () => castVote("skip"));
+// One persistent listener for the skip card's own click (not inside buildSkipCard, which
+// reruns on every redraw and would otherwise pile up a new listener each time): picks
+// "skip" as the pending choice, same as tapping a player card.
+ui.skipButton.addEventListener("click", () => {
+  if (!votingArgs || pendingVote === "skip") return;
+  const { state, meeting } = votingArgs;
+  if (!canActuallyVote(state, meeting)) return;
+  pendingVote = "skip";
+  buildVotingGrid();
+});
 
 // --- Tasks (spec 004) ----------------------------------------------------------------
 // The server deals, times and counts the tasks. This only shows them and sends "task";
@@ -655,7 +948,22 @@ function updateTasks(state) {
       }),
     );
   }
-  ui.taskButton.hidden = !taskTarget(state);
+  // The fixed USE slot (spec 014): a living student's USE slot shows "fix the lights"
+  // instead while that is possible (tryUse() gives fix the same priority), so the slot
+  // never shows both at once; everyone else always sees "task" in it.
+  const showFix = state.role === "student" && canFix(state);
+  ui.taskButton.hidden = showFix;
+  if (!ui.taskButton.hidden) {
+    const inRound = state.phase === "playing";
+    const player = inRound && isTaskPlayer(state);
+    const target = player ? taskTarget(state) : null;
+    ui.taskButton.disabled = !player || Boolean(state.doing) || !target;
+    let reason = "";
+    if (inRound && !player) reason = "Ghosts cannot do tasks";
+    else if (state.doing) reason = "Already doing something";
+    else if (!target) reason = "None of your tasks is within reach";
+    setActionReason(ui.taskButton, reason, "Use");
+  }
 
   // A task that was running in the previous state and is not any more: done or cancelled.
   const doing = state.doing ? state.doing.task : null;
@@ -1062,7 +1370,6 @@ ui.minigameClose.addEventListener("click", () => {
 // The server turns the lights off and on and shortens what a student receives. This shows
 // it and sends "sabotage" and "fix"; the buttons are a convenience, the server checks again.
 
-const SABOTAGE_KEY_HINT = Controls.isTouch ? "" : " (Q)";
 let wasFixing = false; // `fixing` in the previous state, to notice it starting and ending
 let fixSince = 0; // performance.now() when the running fix was first seen
 let fixSeconds = 0; // how long fixing takes in all
@@ -1093,17 +1400,29 @@ function updateLights(state) {
   const dark = state.phase === "playing" && state.lights_on === false;
   ui.lightsBanner.hidden = !(dark && isLivingStudent(state));
   if (!ui.lightsBanner.hidden) setText(ui.switchArea, switchAreaName());
-  ui.fixButton.hidden = !canFix(state);
 
-  // Examiners: the sabotage button with the shared cooldown.
-  ui.sabotageButton.hidden = !(isLivingExaminer(state) && welcome.map.light_switch);
+  // "Fix the lights" and "task" are one shared USE slot (spec 014): this button only takes
+  // over from #task-button (updateTasks) while fixing is actually possible, the same
+  // priority tryUse() gives it, so the slot never shows both at once. Once shown it is
+  // always available, by definition of canFix(), so there is nothing to grey out here.
+  ui.fixButton.hidden = state.role !== "student" || !welcome.map.light_switch || !canFix(state);
+  if (!ui.fixButton.hidden) {
+    ui.fixButton.disabled = false;
+    setActionReason(ui.fixButton, "", "Fix the lights");
+  }
+
+  // The fixed LIGHTS OFF slot: examiners only, for the whole round.
+  ui.sabotageButton.hidden = state.role !== "examiner" || !welcome.map.light_switch;
   if (!ui.sabotageButton.hidden) {
-    const cooldown = state.sabotage_cooldown;
-    ui.sabotageButton.disabled = dark || cooldown > 0;
-    let label = `Lights off${SABOTAGE_KEY_HINT}`;
-    if (dark) label = "The lights are off";
-    else if (cooldown > 0) label = `Lights off${SABOTAGE_KEY_HINT} · ready in ${cooldown} s`;
-    setText(ui.sabotageButton, label);
+    const alive = state.phase === "playing" && state.alive;
+    const cooldown = alive ? state.sabotage_cooldown : 0;
+    ui.sabotageButton.disabled = !alive || dark || cooldown > 0;
+    let reason = "";
+    if (!alive) reason = "Ghosts cannot sabotage";
+    else if (dark) reason = "The lights are already off";
+    else if (cooldown > 0) reason = `Ready in ${cooldown} s`;
+    setActionReason(ui.sabotageButton, reason, "Lights off");
+    setCooldownRing(ui.sabotageButton, cooldown, SABOTAGE_COOLDOWN);
   }
 
   // Fixing that was running in the previous state and is not any more.
@@ -1172,21 +1491,61 @@ function doorTargets(here) {
   return [...doors.slice(at + 1), ...doors.slice(0, at)];
 }
 
+// A small arrow (spec 014), rotated in world space to point from `me` toward `door`.
+function doorArrow(me, door) {
+  const t = welcome.map.tile_size;
+  const dx = (door.x + 0.5) * t - me.x;
+  const dy = (door.y + 0.5) * t - me.y;
+  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+  const svg = svgEl("svg", { viewBox: "0 0 24 24", width: 14, height: 14, class: "door-arrow", "aria-hidden": "true" });
+  const g = svgEl("g", { transform: `rotate(${angle} 12 12)` });
+  g.append(
+    svgEl("path", {
+      d: "M4 12h13M12 6l6 6-6 6",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": 2,
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+    }),
+  );
+  svg.append(g);
+  return svg;
+}
+
 function updateDoors(state) {
-  const here = doorUnder(state);
+  // The fixed DOOR slot: examiners only, for the whole round (spec 014).
+  ui.doorItem.hidden = state.role !== "examiner";
+  if (ui.doorItem.hidden) {
+    doorKey = "";
+    return;
+  }
+  const alive = state.phase === "playing" && state.alive;
+  const here = alive ? doorUnder(state) : null;
   const cooldown = here ? state.door_cooldown : 0;
-  const key = here ? `${here.id}:${cooldown}` : "";
+  ui.doorActionButton.disabled = !alive || !here || cooldown > 0;
+  let reason = "";
+  if (!alive) reason = "Ghosts cannot use staff doors";
+  else if (!here) reason = "Not at a staff door";
+  else if (cooldown > 0) reason = `Ready in ${cooldown} s`;
+  setActionReason(ui.doorActionButton, reason, "Staff door");
+  setCooldownRing(ui.doorActionButton, cooldown, DOOR_COOLDOWN);
+
+  const key = here ? `${here.id}:${cooldown}:${alive}` : `none:${alive}`;
   if (key === doorKey) return;
   doorKey = key;
   const targets = here ? doorTargets(here) : [];
+  const me = state.players.find((p) => p.id === welcome.id);
   ui.doorButtons.replaceChildren(
-    ...targets.map((door, index) => {
+    ...targets.map((door) => {
       const button = document.createElement("button");
       button.type = "button";
-      const hint = index === 0 && !Controls.isTouch ? " (V)" : "";
-      // Names come from the map and are added as text, never as HTML.
-      button.textContent = cooldown > 0 ? `${door.name} · ready in ${cooldown} s` : `Staff door: ${door.name}${hint}`;
-      button.disabled = cooldown > 0;
+      button.className = "door-card";
+      if (me) button.append(doorArrow(me, door));
+      button.append(door.name); // appended as text: never read as HTML
+      const disabled = cooldown > 0;
+      button.disabled = disabled;
+      if (disabled) button.title = `Ready in ${cooldown} s`;
       button.addEventListener("click", () => send({ type: "door", to: door.id }));
       return button;
     }),
@@ -1203,6 +1562,11 @@ function tryDoor() {
   }
   send({ type: "door", to: doorTargets(here)[0].id });
 }
+
+ui.doorActionButton.addEventListener("click", () => {
+  tryDoor();
+  ui.doorActionButton.blur();
+});
 
 // --- Join form ------------------------------------------------------------------
 
@@ -1407,7 +1771,7 @@ class CampusScene extends Phaser.Scene {
     // Tasks: marks on the own open task places and the ring while one runs. The ring
     // moves smoothly from the time the task was first seen; the seconds are the server's.
     this.syncTaskMarkers(latestState.tasks || [], own);
-    this.syncEdgeArrows(latestState.tasks || [], lastPhase === "meeting");
+    this.syncEdgeArrows(latestState.tasks || [], lastPhase === "meeting", actionsBottomMargin());
     const doing = lastPhase === "playing" ? latestState.doing : null;
     const fixing = lastPhase === "playing" ? latestState.fixing : null;
     if (own && doing) {
@@ -1467,7 +1831,7 @@ class CampusScene extends Phaser.Scene {
   // Edge arrows (spec 012): one per own open task, pointing off-screen places out. Hidden
   // during a meeting, the same way the camera stops following the own character then
   // (frameMeeting draws the table instead).
-  syncEdgeArrows(tasks, inMeeting) {
+  syncEdgeArrows(tasks, inMeeting, bottomMargin) {
     const open = new Map(tasks.filter((task) => !task.done).map((task) => [task.id, task]));
     for (const [id, arrow] of this.edgeArrows) {
       if (!open.has(id)) {
@@ -1482,7 +1846,7 @@ class CampusScene extends Phaser.Scene {
     const camera = this.cameras.main;
     for (const [id, task] of open) {
       if (!this.edgeArrows.has(id)) this.edgeArrows.set(id, Render.makeEdgeArrow(this));
-      Render.updateEdgeArrow(this.edgeArrows.get(id), task, camera);
+      Render.updateEdgeArrow(this.edgeArrows.get(id), task, camera, bottomMargin);
     }
   }
 
