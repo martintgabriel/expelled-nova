@@ -319,6 +319,23 @@
     </div>
   </div>
 
+  <!-- Mute (spec 016): always next to the "?" button, on every screen. The two icon states
+       are plain inline SVG (no images); main.js toggles which one is hidden. -->
+  <button id="mute-button" type="button" class="help-button mute-button" aria-label="Mute sound" title="Mute sound">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <g id="mute-icon-on">
+        <path d="M4 9v6h4l5 5V4L8 9H4Z" fill="currentColor"></path>
+        <path d="M16.2 9a4.2 4.2 0 0 1 0 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+        <path d="M18.8 6.8a7.6 7.6 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+      </g>
+      <g id="mute-icon-off" hidden>
+        <path d="M4 9v6h4l5 5V4L8 9H4Z" fill="currentColor"></path>
+        <line x1="15" y1="9" x2="21" y2="15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></line>
+        <line x1="21" y1="9" x2="15" y2="15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></line>
+      </g>
+    </svg>
+  </button>
+
   <button id="help-button" type="button" class="help-button" aria-label="How to play" title="How to play (H)">?</button>
 
   <div id="help-panel" class="overlay help-overlay" hidden>
@@ -396,6 +413,7 @@
   <script src="vendor/phaser.min.js"></script>
   <script src="render.js"></script>
   <script src="controls.js"></script>
+  <script src="sound.js"></script>
   <script src="main.js"></script>
 </body>
 </html>

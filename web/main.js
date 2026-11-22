@@ -23,6 +23,7 @@ const EXPEL_COOLDOWN = 20;
 const VENT_COOLDOWN = 3;
 const VENT_KEY_WINDOW_MS = 80; // two arrow keys pressed this close together count as a diagonal
 const SABOTAGE_COOLDOWN = 30;
+const FOOTSTEP_TICKS = 6; // ticks between two footstep sounds while walking (spec 016)
 const RING_CIRCUMFERENCE = 2 * Math.PI * 35; // matches r="35" on .ring-sweep in index.html
 
 const ui = {
@@ -107,6 +108,9 @@ const ui = {
   helpButton: document.getElementById("help-button"),
   helpPanel: document.getElementById("help-panel"),
   helpClose: document.getElementById("help-close"),
+  muteButton: document.getElementById("mute-button"),
+  muteIconOn: document.getElementById("mute-icon-on"),
+  muteIconOff: document.getElementById("mute-icon-off"),
 };
 
 // --- Hints and key labels by input device, not by screen width (spec 007) -----------
@@ -118,8 +122,14 @@ for (const el of document.querySelectorAll(".key-hint")) el.hidden = Controls.is
 // --- Invite players: QR code and URL, lobby only (spec 007) -------------------------
 
 ui.inviteUrl.textContent = `${location.origin}/`;
-ui.inviteButton.addEventListener("click", () => (ui.inviteScreen.hidden = false));
-ui.inviteClose.addEventListener("click", () => (ui.inviteScreen.hidden = true));
+ui.inviteButton.addEventListener("click", () => {
+  Sound.play("click");
+  ui.inviteScreen.hidden = false;
+});
+ui.inviteClose.addEventListener("click", () => {
+  Sound.play("click");
+  ui.inviteScreen.hidden = true;
+});
 
 // --- How to play (spec 015): the "?" button, key H, closed with Esc or the cross ----------
 // Only in the browser: it shows static text from index.html and does not pause the game.
@@ -131,8 +141,14 @@ function setHelpOpen(open) {
   else ui.helpButton.blur(); // keys go back to walking
 }
 
-ui.helpButton.addEventListener("click", () => setHelpOpen(ui.helpPanel.hidden));
-ui.helpClose.addEventListener("click", () => setHelpOpen(false));
+ui.helpButton.addEventListener("click", () => {
+  Sound.play("click");
+  setHelpOpen(ui.helpPanel.hidden);
+});
+ui.helpClose.addEventListener("click", () => {
+  Sound.play("click");
+  setHelpOpen(false);
+});
 // A click on the dimmed background (not on the card) closes it too.
 ui.helpPanel.addEventListener("click", (event) => {
   if (event.target === ui.helpPanel) setHelpOpen(false);
@@ -146,6 +162,27 @@ document.addEventListener("keydown", (event) => {
   const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
   if (typing || event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
   if (event.key === "h" || event.key === "H") setHelpOpen(ui.helpPanel.hidden);
+});
+
+// --- Mute (spec 016): next to the "?" button, on every screen; remembered per browser ----
+// Sound itself lives entirely in web/sound.js; this only reflects/toggles Sound's own state.
+
+function updateMuteIcon() {
+  const muted = Sound.isMuted();
+  ui.muteIconOn.hidden = muted;
+  ui.muteIconOff.hidden = !muted;
+  const label = muted ? "Unmute sound" : "Mute sound";
+  ui.muteButton.setAttribute("aria-label", label);
+  ui.muteButton.setAttribute("aria-pressed", String(muted));
+  ui.muteButton.title = label;
+}
+updateMuteIcon();
+
+ui.muteButton.addEventListener("click", () => {
+  Sound.toggleMute();
+  updateMuteIcon();
+  if (!Sound.isMuted()) Sound.play("click"); // confirms sound is back on
+  ui.muteButton.blur();
 });
 
 let socket = null;
@@ -169,6 +206,10 @@ let votingArgs = null; // the latest {state, meeting}, so a confirm/cancel tap c
 // the grid at once, without waiting for the server's next state
 let roleTimer = null;
 let sentSurfing = false; // this player was voted out in this round
+// Sound (spec 016): state these sounds need to tell "just happened" from "already true".
+let wasAliveForExpelSound = true; // `alive` one state ago, to catch the moment it flips
+let pendingExpel = false; // an expel was sent and not yet confirmed or rejected
+let knownVoted = new Set(); // voters already played a sound for, this meeting
 // Nicknames and colour numbers by player id. While playing, the server only sends the
 // players in sight (and the living never receive ghosts), so the ones seen earlier
 // (everyone is visible in the lobby) are remembered here.
@@ -208,6 +249,7 @@ function handleMessage(message) {
     if (welcome) {
       showToast(message.reason);
       meetingKey = ""; // redraw the meeting screen: re-enables the vote buttons
+      pendingExpel = false; // the expel was rejected: no sound for it (spec 016)
     } else {
       showJoinError(message.reason);
     }
@@ -310,6 +352,7 @@ function updateControls(state) {
 
 function updatePhase(state) {
   // Only at the start of a game: play resuming after a meeting shows no role screen.
+  const previousPhase = lastPhase;
   const justStarted = state.phase === "playing" && lastPhase === "lobby";
   lastPhase = state.phase;
   ui.lobby.hidden = state.phase !== "lobby";
@@ -322,6 +365,23 @@ function updatePhase(state) {
   if (result && result.surfing === welcome.id) sentSurfing = true;
   ui.ghostBanner.hidden = !(state.phase === "playing" && !state.alive);
   setText(ui.ghostTitle, sentSurfing ? "You have been sent surfing" : "You have been expelled");
+
+  // A meeting starting (button or report), for everyone: a gong, once, right on the phase
+  // change, the same moment the meeting screen itself appears. Also resets the set of
+  // voters this browser has already played a sound for (see renderMeeting).
+  if (state.phase === "meeting" && previousPhase !== "meeting") {
+    Sound.play("meetingChime");
+    knownVoted = new Set();
+  }
+  // Expel (spec 016): the paper-rip sound is purely local to the two players it belongs to.
+  // The expelled player's own `alive` flips to false while still in the "playing" phase
+  // (a meeting vote-out instead flips it during the "meeting" phase, so that case never
+  // matches here); the expelling examiner's side is handled by checkExpelSound below.
+  if (state.phase === "playing" && previousPhase === "playing" && wasAliveForExpelSound && !state.alive) {
+    Sound.play("expel");
+  }
+  wasAliveForExpelSound = state.alive;
+  checkExpelSound(state);
   // The whole action bar only during a round (spec 014): a slot's own hidden/disabled
   // state below only has to track the player's role and momentary availability, not phase.
   ui.actions.hidden = state.phase !== "playing";
@@ -388,7 +448,10 @@ function renderLobby(state) {
           handOver.textContent = "Make host";
           handOver.setAttribute("aria-label", `Make ${p.name} the host`);
           // The server checks host, phase and target; a rejection comes back as a toast.
-          handOver.addEventListener("click", () => send({ type: "make_host", target: p.id }));
+          handOver.addEventListener("click", () => {
+            Sound.play("click");
+            send({ type: "make_host", target: p.id });
+          });
           item.append(handOver);
         }
         return item;
@@ -423,6 +486,9 @@ function describeRole(state) {
 // The role reveal (spec 015): a letter from the campus with the role's motto and a stamp.
 // Every text is set as text; the look per role is in style.css (data-role).
 function showRoleScreen(roleName, role) {
+  // One dramatic chord, played before the role is even looked at, so it is byte-for-byte
+  // the same whichever role follows (spec 016): nobody can tell a role apart by sound.
+  Sound.play("roleReveal");
   ui.roleTitle.textContent = role.title;
   if (roleName === "examiner") {
     ui.roleKicker.textContent = "Examination Board · strictly confidential";
@@ -502,6 +568,7 @@ function setUsedRing(button, used) {
 }
 
 ui.startButton.addEventListener("click", () => {
+  Sound.play("click");
   // The server checks host, phase and player count; a rejection comes back as a toast.
   send({ type: "start" });
   ui.startButton.blur(); // keys go back to walking
@@ -567,6 +634,19 @@ function tryExpel() {
     return;
   }
   send({ type: "expel", target: target.id });
+  pendingExpel = true; // checkExpelSound() plays the rip once the server confirms it
+}
+
+// The examiner's own half of the expel sound (spec 016): waits for the server to actually
+// start the cooldown (the only way it can go from 0 to not-0 while still playing), instead
+// of assuming the click succeeded. handleMessage's "error" branch clears pendingExpel on a
+// rejection, so a target that stepped out of range in the meantime plays no sound at all.
+function checkExpelSound(state) {
+  if (!pendingExpel || state.phase !== "playing") return;
+  if (state.expel_cooldown > 0) {
+    pendingExpel = false;
+    Sound.play("expel");
+  }
 }
 
 function renderEnd(state) {
@@ -614,11 +694,13 @@ function renderEnd(state) {
 }
 
 ui.expelButton.addEventListener("click", () => {
+  Sound.play("click");
   tryExpel();
   ui.expelButton.blur();
 });
 
 ui.restartButton.addEventListener("click", () => {
+  Sound.play("click");
   // The server checks host and phase; a rejection comes back as a toast.
   send({ type: "restart" });
   ui.restartButton.blur();
@@ -706,6 +788,7 @@ function tryReport() {
 }
 
 ui.reportButton.addEventListener("click", () => {
+  Sound.play("click");
   tryReport();
   ui.reportButton.blur();
 });
@@ -726,12 +809,22 @@ function tryMeeting() {
 }
 
 ui.meetingButton.addEventListener("click", () => {
+  Sound.play("click");
   tryMeeting();
   ui.meetingButton.blur();
 });
 
 function renderMeeting(state) {
   const meeting = state.meeting;
+  // A soft tick for every vote that lands, including ones cast between two redraws of this
+  // screen: `meeting.voted` carries ids only, never a target, so this never learns who a
+  // vote was for (spec 016). The own vote already played "voteSelf" at the moment it was
+  // cast (castVote), so it is skipped here to avoid a second sound for the same vote.
+  for (const id of meeting.voted) {
+    if (knownVoted.has(id)) continue;
+    knownVoted.add(id);
+    if (id !== welcome.id) Sound.play("voteOther");
+  }
   setText(ui.meetingTimer, `${meeting.seconds_left} s`);
   const result = meeting.result;
   // Redraw only when something on the screen changes; the timer is updated above, so a
@@ -784,6 +877,7 @@ function buildPlayerCard(state, playerId, { isGhost, hasVoted, canVote }) {
   card.setAttribute("role", "button");
   card.tabIndex = 0;
   const select = () => {
+    Sound.play("click");
     pendingVote = playerId;
     buildVotingGrid();
   };
@@ -824,6 +918,7 @@ function confirmStep(prompt, confirmLabel, onConfirm) {
   cancelButton.textContent = "Cancel";
   cancelButton.addEventListener("click", (event) => {
     event.stopPropagation();
+    Sound.play("click");
     pendingVote = null;
     buildVotingGrid();
   });
@@ -955,6 +1050,7 @@ function renderResult(state, result) {
 function castVote(target) {
   // Lock the grid until the server's answer: the next state shows the vote, a rejection
   // comes back as a toast and unlocks it (handleMessage resets meetingKey on an error).
+  Sound.play("voteSelf");
   pendingVote = null;
   ui.meetingPlayers.classList.add("locked");
   for (const button of ui.meetingScreen.querySelectorAll("button")) button.disabled = true;
@@ -968,6 +1064,7 @@ ui.skipButton.addEventListener("click", () => {
   if (!votingArgs || pendingVote === "skip") return;
   const { state, meeting } = votingArgs;
   if (!canActuallyVote(state, meeting)) return;
+  Sound.play("click");
   pendingVote = "skip";
   buildVotingGrid();
 });
@@ -983,6 +1080,7 @@ let doingSince = 0; // performance.now() when the running task was first seen
 let doingSeconds = 0; // how long that task takes in all
 let wasAlive = true; // `alive` in the previous state
 let jokeTimer = null;
+let lastTaskSteps = new Map(); // multi-step task id -> its last-seen current station (spec 016)
 
 // Examiners get the same tasks as students now, drawn fake from the same pool (spec 012,
 // part 3): nothing here tells the two roles apart, so an examiner's panel, markers and
@@ -1029,6 +1127,15 @@ function updateTasks(state) {
   // Not during a meeting (spec 015): the notebook would cover the players standing
   // around the table on a phone; the shared bar above stays.
   const tasks = state.tasks || [];
+  // A shorter chime for one finished station of a multi-step task (spec 016, spec 012 part
+  // 4): the station the player is on moved forward, but the whole task is not done yet
+  // (that case plays "taskDone" from showJoke instead, once the joke popup opens for it).
+  for (const task of tasks) {
+    if (!task.steps) continue;
+    const previousStep = lastTaskSteps.get(task.id);
+    if (previousStep !== undefined && task.step > previousStep && !task.done) Sound.play("taskStep");
+    lastTaskSteps.set(task.id, task.step);
+  }
   ui.taskList.hidden = !(state.phase === "playing" && tasks.length > 0);
   const key = JSON.stringify(tasks.map((task) => [task.id, task.done, task.step, task.title]));
   if (key !== taskKey) {
@@ -1087,6 +1194,7 @@ function updateTasks(state) {
 }
 
 function showJoke(task) {
+  Sound.play("taskDone"); // the whole task is done; only its own owner ever gets here
   ui.jokeTitle.textContent = `Done: ${task.title}`;
   ui.jokeText.textContent = task.joke;
   ui.joke.hidden = false;
@@ -1105,6 +1213,7 @@ function tryTask() {
 }
 
 ui.taskButton.addEventListener("click", () => {
+  Sound.play("click");
   tryTask();
   ui.taskButton.blur();
 });
@@ -1194,6 +1303,10 @@ function updateMinigame(state) {
     minigameNoteShown = note;
     setText(ui.minigameNote, note);
     ui.minigameNote.hidden = !note;
+    // A wrong-but-valid answer (spec 012) is the only way a note appears while `doing` is
+    // still set: a time-out or a cancel clear `doing` in the very same snapshot, so they
+    // never reach this branch. One shared buzz for every mini-game (spec 016).
+    if (note) Sound.play("error");
   }
 }
 
@@ -1224,7 +1337,12 @@ function renderTicket(taskId, challenge) {
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = "That's me!";
-  button.addEventListener("click", () => sendTaskInput(taskId, true));
+  button.addEventListener("click", () => {
+    // The challenge already shows both numbers, so the right moment is not a secret
+    // (spec 012): the ding plays right on the tap instead of waiting for the server.
+    if (challenge.counter === challenge.number) Sound.play("ticketDing");
+    sendTaskInput(taskId, true);
+  });
   ui.minigameContent.append(number, counter, button);
 }
 
@@ -1239,7 +1357,12 @@ function renderTranslate(taskId, challenge) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = option;
-    button.addEventListener("click", () => sendTaskInput(taskId, index));
+    // The right translation is secret (spec 012): one flat typing click on every tap,
+    // right or wrong; a wrong one also gets the shared error buzz once the server answers.
+    button.addEventListener("click", () => {
+      Sound.play("typingClick");
+      sendTaskInput(taskId, index);
+    });
     options.append(button);
   });
   ui.minigameContent.append(sentence, options);
@@ -1261,7 +1384,12 @@ function renderPaperJam(taskId, challenge) {
     const isCleared = cleared.has(i);
     button.textContent = isCleared ? "✓" : "";
     button.disabled = isCleared;
-    button.addEventListener("click", () => sendTaskInput(taskId, i));
+    // Which cells are jammed is secret (spec 012): every tap just rattles the printer; a
+    // real jam cleared moves the task on (taskDone/taskStep), a miss gets the error buzz.
+    button.addEventListener("click", () => {
+      Sound.play("paperRattle");
+      sendTaskInput(taskId, i);
+    });
     grid.append(button);
   }
   ui.minigameContent.append(status, grid);
@@ -1286,7 +1414,10 @@ function renderCard(taskId, challenge) {
   form.append(input, submit);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    sendTaskInput(taskId, input.value.padStart(5, "0"));
+    const value = input.value.padStart(5, "0");
+    // The shown number is not a secret (spec 012): the accept beep plays on the tap itself.
+    if (value === challenge.number) Sound.play("cardAccept");
+    sendTaskInput(taskId, value);
   });
   ui.minigameContent.append(number, form);
   input.focus();
@@ -1336,8 +1467,14 @@ function renderCable(taskId, challenge) {
   cablesRow.className = "cable-row";
 
   function attempt(index, cableEl) {
-    if (challenge.cables[index] === challenge.port) playAnimation(projectorSvg, "plugged");
-    else playAnimation(cableEl, "shake");
+    // Nothing in a cable challenge is secret (spec 012): the matching shape is the whole
+    // game, so the plug click plays right on a real match, same as the "plugged" animation.
+    if (challenge.cables[index] === challenge.port) {
+      playAnimation(projectorSvg, "plugged");
+      Sound.play("cableClick");
+    } else {
+      playAnimation(cableEl, "shake");
+    }
     sendTaskInput(taskId, { cable: index });
   }
 
@@ -1440,7 +1577,11 @@ function renderSeagull(taskId, challenge) {
     button.type = "button";
     button.textContent = i === challenge.cell ? "\u{1F426}" : "";
     button.addEventListener("click", () => {
-      if (i === challenge.cell) flinchTart(tart);
+      // The seagull's cell is shown, not secret (spec 012): a hit's squawk plays on the tap.
+      if (i === challenge.cell) {
+        flinchTart(tart);
+        Sound.play("seagullHit");
+      }
       sendTaskInput(taskId, i);
     });
     grid.append(button);
@@ -1461,6 +1602,7 @@ function renderSeagullEaten(challenge) {
 }
 
 ui.minigameClose.addEventListener("click", () => {
+  Sound.play("click");
   if (latestState && latestState.doing) send({ type: "task_cancel", task: latestState.doing.task });
   ui.minigameClose.blur();
 });
@@ -1557,11 +1699,13 @@ function tryUse() {
 }
 
 ui.fixButton.addEventListener("click", () => {
+  Sound.play("click");
   send({ type: "fix" });
   ui.fixButton.blur();
 });
 
 ui.sabotageButton.addEventListener("click", () => {
+  Sound.play("click");
   trySabotage();
   ui.sabotageButton.blur();
 });
@@ -1654,6 +1798,7 @@ function updateVents(state) {
       button.append(ventArrow(inside, vent));
       button.append(vent.name); // appended as text: never read as HTML
       button.addEventListener("click", () => {
+        Sound.play("click");
         send({ type: "vent_move", to: vent.id });
         button.blur();
       });
@@ -1700,6 +1845,7 @@ function tryVentDirection(dx, dy) {
 }
 
 ui.doorActionButton.addEventListener("click", () => {
+  Sound.play("click");
   tryVent();
   ui.doorActionButton.blur();
 });
@@ -1708,6 +1854,7 @@ ui.doorActionButton.addEventListener("click", () => {
 
 ui.joinForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  Sound.play("click");
   ui.joinError.textContent = "";
   ui.joinButton.disabled = true;
   try {
@@ -1822,6 +1969,7 @@ class CampusScene extends Phaser.Scene {
     this.minigameWasOpen = false; // the mini-game panel's open/closed state one tick ago
     this.vents = new Map(); // vent id -> hatch from Render.makeVent()
     this.ventPress = { dx: 0, dy: 0, timer: null }; // arrow keys pressed while inside a vent
+    this.footstepTicks = 0; // ticks walked since the last footstep sound (spec 016)
   }
 
   create() {
@@ -2102,7 +2250,16 @@ class CampusScene extends Phaser.Scene {
       this.sendDirection(dx, dy);
     }
     this.previous = { ...this.predicted };
-    if (dx !== 0 || dy !== 0) walk(this.predicted, dx, dy);
+    if (dx !== 0 || dy !== 0) {
+      walk(this.predicted, dx, dy);
+      // Own footsteps only (spec 016): other players are drawn from the server's
+      // positions in updateOthers(), never from here. A steady cadence instead of one per
+      // tick, so a whole round of walking stays quiet instead of buzzing.
+      this.footstepTicks++;
+      if (this.footstepTicks % FOOTSTEP_TICKS === 0) Sound.play("footstep");
+    } else {
+      this.footstepTicks = 0;
+    }
     this.trail.push({ ...this.predicted });
     if (this.trail.length > TRAIL_TICKS) this.trail.shift();
   }
