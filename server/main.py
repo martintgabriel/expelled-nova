@@ -162,6 +162,8 @@ async def websocket_endpoint(ws: WebSocket):
                     connections[player_id] = ws
                 elif message["type"] == "start":
                     game.start(player_id)
+                elif message["type"] == "make_host":
+                    game.make_host(player_id, message.get("target"))
                 elif message["type"] == "expel":
                     game.expel(player_id, message.get("target"))
                 elif message["type"] == "report":
@@ -172,8 +174,12 @@ async def websocket_endpoint(ws: WebSocket):
                     game.sabotage(player_id)
                 elif message["type"] == "fix":
                     game.fix(player_id)
-                elif message["type"] == "door":
-                    game.use_door(player_id, message.get("to"))
+                elif message["type"] == "vent_enter":
+                    game.enter_vent(player_id)
+                elif message["type"] == "vent_move":
+                    game.move_vent(player_id, message.get("to"))
+                elif message["type"] == "vent_leave":
+                    game.leave_vent(player_id)
                 elif message["type"] == "task":
                     game.task(player_id, message.get("task"))
                 elif message["type"] == "task_input":

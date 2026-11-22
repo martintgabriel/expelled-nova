@@ -114,9 +114,10 @@ def test_three_sea_tiles_in_a_row_do_not_block_sight():
 @pytest.mark.parametrize(
     "viewer_tile, target_tile, between",
     [
-        ((14, 16), (14, 18), "the Student Hall's glass wall"),
-        ((23, 1), (23, 3), "a tree in the Main Entrance"),
-        ((32, 21), (32, 23), "a desk in the Library"),
+        # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+        ((18, 16), (18, 18), "the Student Hall's glass wall"),
+        ((27, 1), (27, 3), "a tree in the Main Entrance"),
+        ((36, 21), (36, 23), "a desk in the Library"),
     ],
 )
 def test_on_the_campus_players_see_each_other_across_low_decor(viewer_tile, target_tile, between):
@@ -167,11 +168,12 @@ def test_a_failed_exam_behind_a_roof_is_not_sent():
 @pytest.mark.parametrize(
     "viewer_tile, target_tile, between",
     [
-        ((30, 36), (30, 38), "the Auditorium screen in its front wall"),
+        # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+        ((34, 36), (34, 38), "the Auditorium screen in its front wall"),
         # Spec 011: the Library's bookshelf is furniture now and hides nobody. The standing
         # screen of the Main Entrance moved onto the wall (map review), so the roof of the
         # Gym stands in for it.
-        ((30, 29), (33, 31), "the roof of the Gym"),
+        ((34, 29), (37, 31), "the roof of the Gym"),
     ],
 )
 def test_on_the_campus_screens_and_shelves_hide_players(viewer_tile, target_tile, between):
@@ -244,8 +246,9 @@ def test_the_campus_sight_grid_marks_walls_roofs_shelves_and_screens_only():
             assert tile in "#."
             assert tile == "." or grid[row][col] == "#", (col, row)  # only walls block sight
     # Spec 011: the bookshelf stands on a floor tile now and moved to the open ones.
-    blocks = {(2, 0): "plain wall", (31, 28): "Gym roof", (27, 37): "screen"}
-    opens = {(0, 0): "sea", (23, 2): "tree", (10, 23): "table", (13, 17): "glass wall", (24, 4): "floor", (30, 19): "bookshelf"}
+    # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+    blocks = {(6, 0): "plain wall", (35, 28): "Gym roof", (31, 37): "screen"}
+    opens = {(0, 0): "sea", (27, 2): "tree", (14, 23): "table", (17, 17): "glass wall", (28, 4): "floor", (34, 19): "bookshelf"}
     for (col, row), what in blocks.items():
         assert sight[row][col] == "#", what
     for (col, row), what in opens.items():
@@ -543,7 +546,8 @@ def test_centre_lines_between_floor_tiles_are_the_same_in_both_directions_on_the
 
 
 def test_on_the_campus_the_next_room_is_hidden_and_the_doorway_is_not():
-    game, viewer, target = pair_in(load_map(), (29, 21), (29, 15), count=5)  # Library, Food Court
+    # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+    game, viewer, target = pair_in(load_map(), (33, 21), (33, 15), count=5)  # Library, Food Court
     assert target.id not in seen_ids(game, viewer)
-    stand_at(target, 27, 21)  # in the Library's doorway to the spine, same row
+    stand_at(target, 31, 21)  # in the Library's doorway to the spine, same row
     assert target.id in seen_ids(game, viewer)

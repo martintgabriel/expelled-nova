@@ -17,10 +17,11 @@ const MAX_TICKS_PER_FRAME = 5; // after a very long frame (hidden tab), do not r
 const ROLE_SCREEN_MS = 3000; // how long the role screen shows at the start
 // REPEATS SERVER RULE: MIN_PLAYERS in server/game.py. Only for the hint; the server decides.
 const MIN_PLAYERS = 4;
-// REPEATS SERVER RULE: EXPEL_COOLDOWN/DOOR_COOLDOWN/SABOTAGE_COOLDOWN in server/game.py.
+// REPEATS SERVER RULE: EXPEL_COOLDOWN/VENT_COOLDOWN/SABOTAGE_COOLDOWN in server/game.py.
 // Only to size the cooldown ring's sweep; the server is the only one that counts down.
 const EXPEL_COOLDOWN = 20;
-const DOOR_COOLDOWN = 3;
+const VENT_COOLDOWN = 3;
+const VENT_KEY_WINDOW_MS = 80; // two arrow keys pressed this close together count as a diagonal
 const SABOTAGE_COOLDOWN = 30;
 const RING_CIRCUMFERENCE = 2 * Math.PI * 35; // matches r="35" on .ring-sweep in index.html
 
@@ -47,6 +48,9 @@ const ui = {
   roleScreen: document.getElementById("role-screen"),
   roleTitle: document.getElementById("role-title"),
   roleDetail: document.getElementById("role-detail"),
+  roleKicker: document.getElementById("role-kicker"),
+  roleMotto: document.getElementById("role-motto"),
+  roleStamp: document.getElementById("role-stamp"),
   roleBadge: document.getElementById("role-badge"),
   actions: document.getElementById("actions"),
   expelButton: document.getElementById("expel-button"),
@@ -54,10 +58,12 @@ const ui = {
   doorItem: document.getElementById("door-item"),
   doorButtons: document.getElementById("door-buttons"),
   doorActionButton: document.getElementById("door-action-button"),
+  doorActionLabel: document.getElementById("door-action-label"),
   fixButton: document.getElementById("fix-button"),
   controlMove: document.getElementById("control-move"),
   controlExpel: document.getElementById("control-expel"),
   controlReport: document.getElementById("control-report"),
+  controlMeeting: document.getElementById("control-meeting"),
   controlUse: document.getElementById("control-use"),
   controlUseLabel: document.getElementById("control-use-label"),
   controlDoor: document.getElementById("control-door"),
@@ -93,8 +99,14 @@ const ui = {
   endScreen: document.getElementById("end-screen"),
   endTitle: document.getElementById("end-title"),
   endRoles: document.getElementById("end-roles"),
+  endKicker: document.getElementById("end-kicker"),
+  endText: document.getElementById("end-text"),
+  endStamp: document.getElementById("end-stamp"),
   restartButton: document.getElementById("restart-button"),
   restartHint: document.getElementById("restart-hint"),
+  helpButton: document.getElementById("help-button"),
+  helpPanel: document.getElementById("help-panel"),
+  helpClose: document.getElementById("help-close"),
 };
 
 // --- Hints and key labels by input device, not by screen width (spec 007) -----------
@@ -109,6 +121,33 @@ ui.inviteUrl.textContent = `${location.origin}/`;
 ui.inviteButton.addEventListener("click", () => (ui.inviteScreen.hidden = false));
 ui.inviteClose.addEventListener("click", () => (ui.inviteScreen.hidden = true));
 
+// --- How to play (spec 015): the "?" button, key H, closed with Esc or the cross ----------
+// Only in the browser: it shows static text from index.html and does not pause the game.
+
+function setHelpOpen(open) {
+  ui.helpPanel.hidden = !open;
+  ui.helpButton.setAttribute("aria-expanded", String(open));
+  if (open) ui.helpClose.focus();
+  else ui.helpButton.blur(); // keys go back to walking
+}
+
+ui.helpButton.addEventListener("click", () => setHelpOpen(ui.helpPanel.hidden));
+ui.helpClose.addEventListener("click", () => setHelpOpen(false));
+// A click on the dimmed background (not on the card) closes it too.
+ui.helpPanel.addEventListener("click", (event) => {
+  if (event.target === ui.helpPanel) setHelpOpen(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !ui.helpPanel.hidden) {
+    setHelpOpen(false);
+    return;
+  }
+  // Not while typing (the nickname, a mini-game's number) and not with a modifier key.
+  const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
+  if (typing || event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
+  if (event.key === "h" || event.key === "H") setHelpOpen(ui.helpPanel.hidden);
+});
+
 let socket = null;
 // {id, map, sight_grid, speed, tick_rate, step, player_half, corner_slide, expel_range, report_range,
 // meeting_range, meeting_table_radius, task_range, switch_range, vision_radius,
@@ -120,6 +159,8 @@ let latestState = null; // the newest state message as the server sent it
 let toastTimer = null;
 let lastPhase = null; // "lobby", "playing", "meeting" or "ended", from the latest state
 let lobbyKey = ""; // what the lobby list currently shows, to redraw only on changes
+let lastHost = null; // the host id in the previous lobby state, to notice a hand-over
+let lastHudBottom = 0; // the HUD's bottom edge in px, as last given to the stylesheet
 let endKey = ""; // the same for the end screen
 let meetingKey = ""; // the same for the meeting screen
 let rosterIds = []; // every player id seen in the lobby this round, for the meeting grid
@@ -194,14 +235,13 @@ function updateHud(state) {
   // players within the vision radius, so a count would be wrong.
   ui.playerCount.hidden = state.phase !== "lobby";
   setText(ui.playerCount, `Players: ${state.players.length}/10`);
-}
-
-// A dot in the player's colour (the server's colour number) for the lobby and end lists.
-function colorDot(state, playerId) {
-  const dot = document.createElement("span");
-  dot.className = "dot";
-  dot.style.background = Render.colorCss(playerColor(state, playerId));
-  return dot;
+  // The HUD wraps onto more lines on a narrow window. The panels under it (style.css)
+  // start below its real bottom edge instead of a guessed height.
+  const hudBottom = Math.round(ui.hud.getBoundingClientRect().bottom);
+  if (hudBottom !== lastHudBottom) {
+    lastHudBottom = hudBottom;
+    document.documentElement.style.setProperty("--hud-bottom", `${hudBottom}px`);
+  }
 }
 
 // A player's nickname, also for players out of sight or voted out.
@@ -257,9 +297,10 @@ function updateControls(state) {
   ui.controlMove.hidden = state.phase === "meeting" || state.phase === "ended"; // nobody moves
   ui.controlExpel.hidden = ui.expelButton.hidden;
   ui.controlReport.hidden = ui.reportButton.hidden;
+  ui.controlMeeting.hidden = ui.meetingButton.hidden || ui.meetingButton.disabled;
   ui.controlUse.hidden = ui.taskButton.hidden && ui.fixButton.hidden;
   setText(ui.controlUseLabel, ui.fixButton.hidden ? "task" : "fix lights");
-  ui.controlDoor.hidden = ui.doorButtons.children.length === 0;
+  ui.controlDoor.hidden = ui.doorItem.hidden || ui.doorActionButton.disabled;
   ui.controlSabotage.hidden = ui.sabotageButton.hidden;
 }
 
@@ -288,7 +329,7 @@ function updatePhase(state) {
   updateReportAndMeeting(state);
   updateTasks(state);
   updateMinigame(state);
-  updateDoors(state);
+  updateVents(state);
   updateLights(state);
   updateControls(state);
   if (state.phase === "lobby") {
@@ -318,6 +359,10 @@ function renderLobby(state) {
   // everyone in.
   rosterIds = state.players.map((p) => p.id);
   setText(ui.lobbyCount, `${state.players.length}/10`);
+  const isHost = state.host === welcome.id;
+  // The host changed to this player (hand-over or the old host left): say so once.
+  if (isHost && lastHost !== null && lastHost !== welcome.id) showToast("You are the host now. The class register is yours.");
+  lastHost = state.host;
 
   // Redraw the list only when players or host change (states arrive 20 times a second).
   const key = JSON.stringify([state.host, state.colors, state.players.map((p) => [p.id, p.name])]);
@@ -325,20 +370,31 @@ function renderLobby(state) {
     lobbyKey = key;
     ui.lobbyPlayers.replaceChildren(
       ...state.players.map((p) => {
+        // One line of the class roster (spec 015): the character, the name, the host mark
+        // and, for the host, the hand-over button on every other player's line.
         const item = document.createElement("li");
         item.className = "lobby-chip";
-        item.append(characterChip(playerColor(state, p.id), 36));
+        item.append(characterChip(playerColor(state, p.id), 32));
         const name = document.createElement("span");
         name.className = "lobby-chip-name";
         name.append(p.name); // appended as text: never read as HTML
-        if (p.id === state.host) name.append(hostSymbol());
+        if (p.id === state.host) name.append(hostSymbol(), tag("host", "host"));
         if (p.id === welcome.id) name.append(tag("you", "you"));
         item.append(name);
+        if (isHost && p.id !== welcome.id) {
+          const handOver = document.createElement("button");
+          handOver.type = "button";
+          handOver.className = "make-host";
+          handOver.textContent = "Make host";
+          handOver.setAttribute("aria-label", `Make ${p.name} the host`);
+          // The server checks host, phase and target; a rejection comes back as a toast.
+          handOver.addEventListener("click", () => send({ type: "make_host", target: p.id }));
+          item.append(handOver);
+        }
         return item;
       }),
     );
   }
-  const isHost = state.host === welcome.id;
   const enough = state.players.length >= MIN_PLAYERS;
   ui.startButton.hidden = !isHost;
   ui.startButton.disabled = !enough;
@@ -364,14 +420,21 @@ function describeRole(state) {
   return { title: "You are a Student", fellows: "" };
 }
 
+// The role reveal (spec 015): a letter from the campus with the role's motto and a stamp.
+// Every text is set as text; the look per role is in style.css (data-role).
 function showRoleScreen(roleName, role) {
   ui.roleTitle.textContent = role.title;
   if (roleName === "examiner") {
-    ui.roleDetail.textContent = role.fellows
-      ? `Fellow examiner: ${role.fellows}`
-      : "You are the only examiner.";
+    ui.roleKicker.textContent = "Examination Board · strictly confidential";
+    ui.roleMotto.textContent = "Fail them all";
+    const fellows = role.fellows ? `Fellow examiner: ${role.fellows}.` : "You are the only examiner.";
+    ui.roleDetail.textContent = `Blend in, hand out failed exams and do not get caught. ${fellows}`;
+    ui.roleStamp.textContent = "Undercover";
   } else {
-    ui.roleDetail.textContent = "Stay enrolled and find out who the examiners are.";
+    ui.roleKicker.textContent = "Office of Admissions";
+    ui.roleMotto.textContent = "Survive the semester";
+    ui.roleDetail.textContent = "Finish your to-do list, stay enrolled and find out who the examiners are.";
+    ui.roleStamp.textContent = "Enrolled";
   }
   ui.roleScreen.dataset.role = roleName;
   ui.roleScreen.hidden = false;
@@ -408,7 +471,7 @@ function setActionReason(button, reason, defaultLabel) {
   if (button.getAttribute("aria-label") !== label) button.setAttribute("aria-label", label);
 }
 
-// A timed cooldown (expel, staff door, lights off): the ring sweeps back to full as
+// A timed cooldown (expel, vent, lights off): the ring sweeps back to full as
 // `secondsLeft` counts down to 0, with the number in the middle. `secondsLeft` is always
 // the server's own value; `totalSeconds` only sizes the sweep.
 function setCooldownRing(button, secondsLeft, totalSeconds) {
@@ -483,9 +546,11 @@ function updateExpelButton(state) {
   ui.expelButton.disabled = !alive || cooldown > 0 || !target;
   let reason = "";
   if (!alive) reason = "Ghosts cannot expel";
+  else if (insideVent(state)) reason = "Leave the vent first";
   else if (cooldown > 0) reason = `Ready in ${cooldown} s`;
   else if (!target) reason = "Nobody in range";
   else reason = `Expel ${target.name}`; // the full reason, e.g. on hover; the label stays "Expel"
+  if (insideVent(state)) ui.expelButton.disabled = true;
   setActionReason(ui.expelButton, reason, "Expel");
   setCooldownRing(ui.expelButton, cooldown, EXPEL_COOLDOWN);
 }
@@ -516,12 +581,25 @@ function renderEnd(state) {
     if (byTasks) title = "All tasks done: students win";
     ui.endTitle.textContent = title;
     ui.endScreen.dataset.winner = state.winner;
+    // The story around the clear title (spec 015): a diploma for the students' win, an
+    // exmatriculation letter for the examiners' win. The look is in style.css.
+    if (state.winner === "students") {
+      ui.endKicker.textContent = "Nova Campus · Diploma";
+      ui.endText.textContent = byTasks
+        ? "This certifies that every form is stamped and every errand is done. The class survived the semester."
+        : "This certifies that the class found every undercover examiner and sent them surfing.";
+      ui.endStamp.textContent = "Passed";
+    } else {
+      ui.endKicker.textContent = "Nova Campus · Exmatriculation notice";
+      ui.endText.textContent = "We regret to inform you that the examiners failed them all. Please return your student card at the gate.";
+      ui.endStamp.textContent = "Expelled";
+    }
     const ghosts = new Set(state.ghosts || []);
     ui.endRoles.replaceChildren(
       ...state.players.map((p) => {
         const role = state.roles[p.id];
         const item = document.createElement("li");
-        item.append(colorDot(state, p.id), p.name); // appended as text: never read as HTML
+        item.append(characterChip(playerColor(state, p.id), 24), p.name); // appended as text: never read as HTML
         item.append(tag(role === "examiner" ? "Examiner" : "Student", role));
         // "ghost", not "expelled": a ghost may also have been voted out (spec 006).
         if (ghosts.has(p.id)) item.append(tag("ghost", "ghost"));
@@ -597,17 +675,20 @@ function updateReportAndMeeting(state) {
   ui.meetingButton.hidden = false;
   const alive = isLivingAndPlaying(state);
   const target = alive ? reportTarget(state) : null;
-  ui.reportButton.disabled = !target;
+  const inVent = insideVent(state);
+  ui.reportButton.disabled = !target || inVent;
   let reportReason = "";
   if (!alive) reportReason = "Ghosts cannot report";
+  else if (inVent) reportReason = "Leave the vent first";
   else if (!target) reportReason = "No failed exam within reach";
   setActionReason(ui.reportButton, reportReason, "Report");
 
   const near = alive && nearMeetingTable(state);
   const used = Boolean(state.meeting_used);
-  ui.meetingButton.disabled = !alive || used || !near;
+  ui.meetingButton.disabled = !alive || used || !near || inVent;
   let meetingReason = "";
   if (!alive) meetingReason = "Ghosts cannot call a meeting";
+  else if (inVent) meetingReason = "Leave the vent first";
   else if (used) meetingReason = "Already used this round";
   else if (!near) meetingReason = "Go to the meeting table";
   setActionReason(ui.meetingButton, meetingReason, "Call a meeting");
@@ -629,8 +710,23 @@ ui.reportButton.addEventListener("click", () => {
   ui.reportButton.blur();
 });
 
-ui.meetingButton.addEventListener("click", () => {
+// Key M and the button (spec 015). The server checks everything again; this only explains
+// the two common reasons without a round trip.
+function tryMeeting() {
+  if (!latestState || !isLivingAndPlaying(latestState)) return;
+  if (latestState.meeting_used) {
+    showToast("You have already called a meeting");
+    return;
+  }
+  if (!nearMeetingTable(latestState)) {
+    showToast("Go to the meeting table first");
+    return;
+  }
   send({ type: "meeting" });
+}
+
+ui.meetingButton.addEventListener("click", () => {
+  tryMeeting();
   ui.meetingButton.blur();
 });
 
@@ -647,7 +743,7 @@ function renderMeeting(state) {
 
   const caller = nameOf(meeting.called_by); // added as text: never read as HTML
   ui.meetingReason.textContent =
-    meeting.reason === "report" ? `${caller} found a failed exam` : `${caller} called a meeting`;
+    meeting.reason === "report" ? `${caller} found a failed exam on the floor.` : `${caller} pressed the emergency button.`;
   if (result) renderResult(state, result);
   else renderVoting(state, meeting);
 }
@@ -802,7 +898,7 @@ function buildVotingGrid() {
 }
 
 function renderVoting(state, meeting) {
-  setText(ui.meetingTitle, "Meeting: who is an examiner?");
+  setText(ui.meetingTitle, "Who is an examiner?");
   votingArgs = { state, meeting };
   buildVotingGrid();
 }
@@ -821,7 +917,7 @@ function voteDots(count) {
 }
 
 function renderResult(state, result) {
-  setText(ui.meetingTitle, "Result");
+  setText(ui.meetingTitle, "The faculty has decided");
   const cards = Object.entries(result.votes).map(([playerId, count]) => {
     const card = document.createElement("div");
     card.className = "meeting-player-card";
@@ -930,8 +1026,10 @@ function updateTasks(state) {
   // task (spec 012, part 4) shows "Step n/m: <title>" for its current station; the key
   // includes `step`/`title` too, so the list rebuilds when a step finishes and the next
   // station's title takes over, even though `id`/`done` stay the same.
+  // Not during a meeting (spec 015): the notebook would cover the players standing
+  // around the table on a phone; the shared bar above stays.
   const tasks = state.tasks || [];
-  ui.taskList.hidden = !(inRound && tasks.length > 0);
+  ui.taskList.hidden = !(state.phase === "playing" && tasks.length > 0);
   const key = JSON.stringify(tasks.map((task) => [task.id, task.done, task.step, task.title]));
   if (key !== taskKey) {
     taskKey = key;
@@ -957,9 +1055,10 @@ function updateTasks(state) {
     const inRound = state.phase === "playing";
     const player = inRound && isTaskPlayer(state);
     const target = player ? taskTarget(state) : null;
-    ui.taskButton.disabled = !player || Boolean(state.doing) || !target;
+    ui.taskButton.disabled = !player || Boolean(state.doing) || !target || insideVent(state);
     let reason = "";
     if (inRound && !player) reason = "Ghosts cannot do tasks";
+    else if (insideVent(state)) reason = "Leave the vent first";
     else if (state.doing) reason = "Already doing something";
     else if (!target) reason = "None of your tasks is within reach";
     setActionReason(ui.taskButton, reason, "Use");
@@ -1416,9 +1515,10 @@ function updateLights(state) {
   if (!ui.sabotageButton.hidden) {
     const alive = state.phase === "playing" && state.alive;
     const cooldown = alive ? state.sabotage_cooldown : 0;
-    ui.sabotageButton.disabled = !alive || dark || cooldown > 0;
+    ui.sabotageButton.disabled = !alive || dark || cooldown > 0 || insideVent(state);
     let reason = "";
     if (!alive) reason = "Ghosts cannot sabotage";
+    else if (insideVent(state)) reason = "Leave the vent first";
     else if (dark) reason = "The lights are already off";
     else if (cooldown > 0) reason = `Ready in ${cooldown} s`;
     setActionReason(ui.sabotageButton, reason, "Lights off");
@@ -1466,45 +1566,52 @@ ui.sabotageButton.addEventListener("click", () => {
   ui.sabotageButton.blur();
 });
 
-// --- Staff doors (spec 008, part 6) ---------------------------------------------------
-// The buttons are only a convenience: the server checks role, door and cooldown again.
+// --- Vents (spec 015; they replace the staff doors of spec 008) -------------------------
+// The server decides who is inside which vent and hides them from everyone else. This only
+// shows the own state and sends "vent_enter", "vent_move" and "vent_leave"; the buttons are
+// a convenience, the server checks role, place and cooldown again.
 
-let doorKey = ""; // what the door buttons currently show, to redraw only on changes
+let ventKey = ""; // what the vent cards currently show, to redraw only on changes
 
-// The staff door under the latest server position of a living examiner, or null.
-// REPEATS SERVER RULE: Game._door_under() in server/game.py (the centre is on the tile).
-function doorUnder(state) {
+function insideVent(state) {
+  return Boolean(state && state.phase === "playing" && state.vent);
+}
+
+// The vent under the latest server position of a living examiner, or null.
+// REPEATS SERVER RULE: Game._vent_under() in server/game.py (the centre is on the tile).
+function ventUnder(state) {
   if (!isLivingExaminer(state)) return null;
   const me = state.players.find((p) => p.id === welcome.id);
   if (!me) return null;
   const t = welcome.map.tile_size;
   const col = Math.floor(me.x / t);
   const row = Math.floor(me.y / t);
-  return (welcome.map.staff_doors || []).find((door) => door.x === col && door.y === row) || null;
+  return (welcome.map.vents || []).find((vent) => vent.x === col && vent.y === row) || null;
 }
 
-// The other doors of the network, starting with the one after `here` in the map's list,
-// so pressing V again and again goes round all of them.
-function doorTargets(here) {
-  const doors = welcome.map.staff_doors;
-  const at = doors.indexOf(here);
-  return [...doors.slice(at + 1), ...doors.slice(0, at)];
+// The vent this examiner is inside (the server's `vent` id), or null.
+function currentVent(state) {
+  if (!insideVent(state)) return null;
+  return (welcome.map.vents || []).find((vent) => vent.id === state.vent) || null;
 }
 
-// A small arrow (spec 014), rotated in world space to point from `me` toward `door`.
-function doorArrow(me, door) {
-  const t = welcome.map.tile_size;
-  const dx = (door.x + 0.5) * t - me.x;
-  const dy = (door.y + 0.5) * t - me.y;
-  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-  const svg = svgEl("svg", { viewBox: "0 0 24 24", width: 14, height: 14, class: "door-arrow", "aria-hidden": "true" });
+// The direction from one vent to another in map pixels (y grows downwards).
+function ventDirection(from, to) {
+  return { x: to.x - from.x, y: to.y - from.y };
+}
+
+// A small arrow, rotated in world space to point from the vent `here` toward `vent`.
+function ventArrow(here, vent) {
+  const { x, y } = ventDirection(here, vent);
+  const angle = (Math.atan2(y, x) * 180) / Math.PI;
+  const svg = svgEl("svg", { viewBox: "0 0 24 24", width: 18, height: 18, class: "door-arrow", "aria-hidden": "true" });
   const g = svgEl("g", { transform: `rotate(${angle} 12 12)` });
   g.append(
     svgEl("path", {
       d: "M4 12h13M12 6l6 6-6 6",
       fill: "none",
       stroke: "currentColor",
-      "stroke-width": 2,
+      "stroke-width": 2.4,
       "stroke-linecap": "round",
       "stroke-linejoin": "round",
     }),
@@ -1513,58 +1620,87 @@ function doorArrow(me, door) {
   return svg;
 }
 
-function updateDoors(state) {
-  // The fixed DOOR slot: examiners only, for the whole round (spec 014).
+function updateVents(state) {
+  // The fixed VENT slot: examiners only, for the whole round (spec 014).
   ui.doorItem.hidden = state.role !== "examiner";
   if (ui.doorItem.hidden) {
-    doorKey = "";
+    ventKey = "";
     return;
   }
   const alive = state.phase === "playing" && state.alive;
-  const here = alive ? doorUnder(state) : null;
-  const cooldown = here ? state.door_cooldown : 0;
+  const inside = currentVent(state);
+  const here = inside || (alive ? ventUnder(state) : null);
+  const cooldown = alive && !inside ? state.vent_cooldown : 0;
   ui.doorActionButton.disabled = !alive || !here || cooldown > 0;
   let reason = "";
-  if (!alive) reason = "Ghosts cannot use staff doors";
-  else if (!here) reason = "Not at a staff door";
+  if (!alive) reason = "Ghosts cannot use vents";
+  else if (!here) reason = "Not at a vent";
   else if (cooldown > 0) reason = `Ready in ${cooldown} s`;
-  setActionReason(ui.doorActionButton, reason, "Staff door");
-  setCooldownRing(ui.doorActionButton, cooldown, DOOR_COOLDOWN);
+  setActionReason(ui.doorActionButton, reason, inside ? "Leave the vent" : "Climb into the vent");
+  setText(ui.doorActionLabel, inside ? "Leave vent" : "Vent");
+  ui.doorActionButton.classList.toggle("inside", Boolean(inside));
+  setCooldownRing(ui.doorActionButton, cooldown, VENT_COOLDOWN);
 
-  const key = here ? `${here.id}:${cooldown}:${alive}` : `none:${alive}`;
-  if (key === doorKey) return;
-  doorKey = key;
-  const targets = here ? doorTargets(here) : [];
-  const me = state.players.find((p) => p.id === welcome.id);
+  // While inside: one arrow card per other vent, pointing toward it (spec 015).
+  const key = inside ? inside.id : "";
+  if (key === ventKey) return;
+  ventKey = key;
+  const targets = inside ? welcome.map.vents.filter((vent) => vent !== inside) : [];
   ui.doorButtons.replaceChildren(
-    ...targets.map((door) => {
+    ...targets.map((vent) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "door-card";
-      if (me) button.append(doorArrow(me, door));
-      button.append(door.name); // appended as text: never read as HTML
-      const disabled = cooldown > 0;
-      button.disabled = disabled;
-      if (disabled) button.title = `Ready in ${cooldown} s`;
-      button.addEventListener("click", () => send({ type: "door", to: door.id }));
+      button.append(ventArrow(inside, vent));
+      button.append(vent.name); // appended as text: never read as HTML
+      button.addEventListener("click", () => {
+        send({ type: "vent_move", to: vent.id });
+        button.blur();
+      });
       return button;
     }),
   );
 }
 
-// Key V: travel to the next door of the network.
-function tryDoor() {
-  const here = latestState && doorUnder(latestState);
-  if (!here) return;
-  if (latestState.door_cooldown > 0) {
-    showToast(`Staff door cooldown: ${latestState.door_cooldown} s left`);
+// Key V and the round button: climb in on a vent, climb out when inside.
+function tryVent() {
+  if (!latestState || !isLivingExaminer(latestState)) return;
+  if (insideVent(latestState)) {
+    send({ type: "vent_leave" });
     return;
   }
-  send({ type: "door", to: doorTargets(here)[0].id });
+  if (!ventUnder(latestState)) return;
+  if (latestState.vent_cooldown > 0) {
+    showToast(`Vent cooldown: ${latestState.vent_cooldown} s left`);
+    return;
+  }
+  send({ type: "vent_enter" });
+}
+
+// An arrow key (or WASD) while inside: move to the vent that lies most in that direction.
+// (dx, dy) is the pressed direction, each -1, 0 or 1; two keys together give a diagonal.
+const VENT_KEY_ANGLE = 60; // degrees: a vent further off the pressed direction is not chosen
+function tryVentDirection(dx, dy) {
+  const here = currentVent(latestState);
+  if (!here || (dx === 0 && dy === 0)) return;
+  const pressed = Math.atan2(dy, dx);
+  let best = null;
+  let bestOff = (VENT_KEY_ANGLE * Math.PI) / 180;
+  for (const vent of welcome.map.vents) {
+    if (vent === here) continue;
+    const { x, y } = ventDirection(here, vent);
+    let off = Math.abs(Math.atan2(y, x) - pressed);
+    if (off > Math.PI) off = 2 * Math.PI - off;
+    if (off <= bestOff) {
+      best = vent;
+      bestOff = off;
+    }
+  }
+  if (best) send({ type: "vent_move", to: best.id });
 }
 
 ui.doorActionButton.addEventListener("click", () => {
-  tryDoor();
+  tryVent();
   ui.doorActionButton.blur();
 });
 
@@ -1674,7 +1810,7 @@ class CampusScene extends Phaser.Scene {
     super("campus");
     this.sprites = new Map(); // id -> character from Render.makeCharacter()
     this.exams = new Map(); // failed exam id -> sheet from Render.makeExam()
-    this.taskMarkers = new Map(); // own open task id -> mark from Render.makeTaskMarker()
+    this.taskMarkers = new Map(); // own open task id -> glow from Render.makeTaskGlow()
     this.edgeArrows = new Map(); // own open task id -> arrow from Render.makeEdgeArrow()
     this.lastSent = { dx: 0, dy: 0 };
     // The own character, predicted in whole server ticks (see updateOwn).
@@ -1684,6 +1820,8 @@ class CampusScene extends Phaser.Scene {
     this.tickTime = 0; // seconds of frame time not yet used up by a tick
     this.drawOffset = { x: 0, y: 0 }; // how far the picture still is from the prediction
     this.minigameWasOpen = false; // the mini-game panel's open/closed state one tick ago
+    this.vents = new Map(); // vent id -> hatch from Render.makeVent()
+    this.ventPress = { dx: 0, dy: 0, timer: null }; // arrow keys pressed while inside a vent
   }
 
   create() {
@@ -1692,7 +1830,9 @@ class CampusScene extends Phaser.Scene {
     // the server ("welcome"), so the lit area matches what the server sends.
     const { width, height } = Render.drawMap(this, welcome.map, welcome.sight_grid);
     if (welcome.map.meeting_point) Render.makeMeetingPoint(this, welcome.map, welcome.meeting_table_radius);
-    for (const door of welcome.map.staff_doors || []) Render.makeDoor(this, welcome.map, door);
+    for (const vent of welcome.map.vents || []) this.vents.set(vent.id, Render.makeVent(this, welcome.map, vent));
+    // Every task place of the map as an object (spec 015); own open ones get a glow below.
+    for (const station of Render.taskStations(welcome.map)) Render.makeTaskPlace(this, welcome.map, station);
     this.taskRing = Render.makeTaskRing(this);
     this.darkness = Render.makeDarkness(this, welcome.map, welcome.sight_grid, welcome.vision_radius);
     this.switchMark = welcome.map.light_switch ? Render.makeSwitch(this, welcome.map) : null;
@@ -1704,18 +1844,38 @@ class CampusScene extends Phaser.Scene {
     fitCamera();
     this.scale.on("resize", fitCamera);
 
-    this.keys = this.input.keyboard.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,E,R,F,V,Q");
+    this.keys = this.input.keyboard.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,E,R,F,V,Q,M");
     // On the key event itself, so even a very short tap counts (tryExpel checks the role).
     this.keys.E.on("down", () => tryExpel());
     this.keys.R.on("down", () => tryReport());
+    this.keys.M.on("down", () => tryMeeting());
     this.keys.F.on("down", () => tryUse());
     this.keys.Q.on("down", () => trySabotage());
-    this.keys.V.on("down", () => tryDoor());
+    this.keys.V.on("down", () => tryVent());
+    // Inside a vent the walking keys choose the next vent instead (spec 015).
+    const k = this.keys;
+    for (const [key, dx, dy] of [[k.A, -1, 0], [k.LEFT, -1, 0], [k.D, 1, 0], [k.RIGHT, 1, 0], [k.W, 0, -1], [k.UP, 0, -1], [k.S, 0, 1], [k.DOWN, 0, 1]]) {
+      key.on("down", () => this.ventKeyDown(dx, dy));
+    }
 
     // When the tab loses focus, stop walking (otherwise the server keeps moving us).
     const stop = () => this.sendDirection(0, 0);
     window.addEventListener("blur", stop);
     document.addEventListener("visibilitychange", () => document.hidden && stop());
+  }
+
+  // A walking key went down while inside a vent: collect the keys of the next few
+  // milliseconds (two together are a diagonal), then move to the vent in that direction.
+  ventKeyDown(dx, dy) {
+    if (!insideVent(latestState)) return;
+    const press = this.ventPress;
+    if (dx !== 0) press.dx = dx;
+    if (dy !== 0) press.dy = dy;
+    if (press.timer !== null) return;
+    press.timer = setTimeout(() => {
+      tryVentDirection(press.dx, press.dy);
+      this.ventPress = { dx: 0, dy: 0, timer: null };
+    }, VENT_KEY_WINDOW_MS);
   }
 
   // Sends the direction if it changed. Called once per predicted tick, so at most
@@ -1753,6 +1913,14 @@ class CampusScene extends Phaser.Scene {
     }
     this.frameMeeting(table, this.sprites.get(welcome.id));
 
+    // Vents (spec 015): a hatch the server lists in `open_vents` shows open; the own
+    // character is not drawn while inside, only its eyes in the vent it sits in.
+    const ownVent = insideVent(latestState) ? latestState.vent : null;
+    const openVents = lastPhase === "playing" ? latestState.open_vents || [] : [];
+    for (const [id, hatch] of this.vents) Render.updateVent(hatch, { open: openVents.includes(id), occupied: id === ownVent }, time);
+    const me = this.sprites.get(welcome.id);
+    if (me) me.setVisible(!ownVent);
+
     // Darkness only for the living while playing: ghosts, the lobby and the end screen
     // show the whole map (the server sends them everything as well).
     const own = this.sprites.get(welcome.id);
@@ -1768,9 +1936,9 @@ class CampusScene extends Phaser.Scene {
       Render.updateSwitch(this.switchMark, off, time, near);
     }
 
-    // Tasks: marks on the own open task places and the ring while one runs. The ring
+    // Tasks: a glow on the own open task places and the ring while one runs. The ring
     // moves smoothly from the time the task was first seen; the seconds are the server's.
-    this.syncTaskMarkers(latestState.tasks || [], own);
+    this.syncTaskMarkers(latestState.tasks || [], own, time);
     this.syncEdgeArrows(latestState.tasks || [], lastPhase === "meeting", actionsBottomMargin());
     const doing = lastPhase === "playing" ? latestState.doing : null;
     const fixing = lastPhase === "playing" ? latestState.fixing : null;
@@ -1807,18 +1975,18 @@ class CampusScene extends Phaser.Scene {
     camera.setFollowOffset(own.x - table.x - shiftX, own.y - table.y - shiftY);
   }
 
-  // One mark per own open task; a finished task (and a new round) removes its mark.
-  // A mark fades while the own character stands at it, so it does not cover the face.
-  // Repositioned every frame: a multi-step task's mark must follow its current station once
+  // One glow per own open task place (spec 015); a finished task (and a new round) loses
+  // it. It is faint while the own character stands at it, so it does not cover the face.
+  // Repositioned every frame: a multi-step task's glow must follow its current station once
   // an earlier step is done (spec 012, part 4), the only place this task entry's x/y mean.
-  syncTaskMarkers(tasks, own) {
+  syncTaskMarkers(tasks, own, time) {
     const open = new Map(tasks.filter((task) => !task.done).map((task) => [task.id, task]));
     for (const [id, task] of open) {
-      if (!this.taskMarkers.has(id)) this.taskMarkers.set(id, Render.makeTaskMarker(this, task));
+      if (!this.taskMarkers.has(id)) this.taskMarkers.set(id, Render.makeTaskGlow(this, task));
       const marker = this.taskMarkers.get(id);
       marker.setPosition(task.x, task.y);
-      const near = own && Math.hypot(task.x - own.x, task.y - own.y) <= welcome.task_range;
-      marker.setAlpha(near ? 0.3 : 1);
+      const near = Boolean(own) && Math.hypot(task.x - own.x, task.y - own.y) <= welcome.task_range;
+      Render.updateTaskGlow(marker, time, near);
     }
     for (const [id, marker] of this.taskMarkers) {
       if (!open.has(id)) {
@@ -1924,8 +2092,9 @@ class CampusScene extends Phaser.Scene {
     const minigameOpen = Boolean(minigameChallenge(latestState));
     if (minigameOpen && !this.minigameWasOpen) this.sendDirection(0, 0); // stop right away
     this.minigameWasOpen = minigameOpen;
-    if (lastPhase === "ended" || lastPhase === "meeting" || minigameOpen) {
+    if (lastPhase === "ended" || lastPhase === "meeting" || minigameOpen || insideVent(latestState)) {
       // The server rejects movement now (or, for the panel, this browser stops sending it).
+      // Inside a vent the walking keys choose the next vent instead (ventKeyDown).
       // Sending and predicting nothing keeps the own character where the server put it.
       this.lastSent = { dx: 0, dy: 0 };
     } else {
@@ -2016,7 +2185,7 @@ class CampusScene extends Phaser.Scene {
       if (id === welcome.id) continue;
       const b = newer.players.get(id) || latest.get(id);
       let a = older.players.get(id) || b;
-      // A player the server moved (staff door, meeting) is not drawn gliding across the map.
+      // A player the server moved (meeting, new round) is not drawn gliding across the map.
       if (Math.hypot(b.x - a.x, b.y - a.y) > SNAP_DISTANCE_TILES * welcome.map.tile_size) a = b;
       sprite.setPosition(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f);
       // Walking direction for the animation: where they moved between the two states.

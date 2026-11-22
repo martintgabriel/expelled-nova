@@ -113,10 +113,11 @@ def test_on_the_campus_every_piece_of_furniture_stands_on_a_floor_tile():
 @pytest.mark.parametrize(
     "what, start, furniture",
     [
-        ("a table in the south Courtyard", (8, 23), (10, 23)),
-        ("a tree in the north Courtyard", (6, 15), (8, 15)),
-        ("a café table in the Food Court", (30, 14), (31, 14)),
-        ("a desk in the Library", (29, 22), (32, 22)),
+        # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+        ("a table in the south Courtyard", (12, 23), (14, 23)),
+        ("a tree in the north Courtyard", (10, 15), (12, 15)),
+        ("a café table in the Food Court", (34, 14), (35, 14)),
+        ("a desk in the Library", (33, 22), (36, 22)),
     ],
 )
 def test_a_player_walks_across_a_furniture_tile(what, start, furniture):
@@ -143,11 +144,12 @@ def test_a_furniture_kind_on_a_floor_tile_is_valid_and_walkable(kind):
 @pytest.mark.parametrize(
     "what, start, direction, stopped_at",
     [
-        ("a wall of the Main Entrance", (16, 4), (-1, 0), (16 * TILE + HALF, None)),
-        ("a glass pane of the Student Hall", (14, 16), (0, 1), (None, 17 * TILE - HALF)),
+        # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4. The sea is still column 0.
+        ("a wall of the Main Entrance", (20, 4), (-1, 0), (20 * TILE + HALF, None)),
+        ("a glass pane of the Student Hall", (18, 16), (0, 1), (None, 17 * TILE - HALF)),
         ("the sea", (1, 20), (-1, 0), (1 * TILE + HALF, None)),
-        ("the roof of the Gym", (30, 28), (1, 0), (31 * TILE - HALF, None)),
-        ("the Auditorium screen", (30, 36), (0, 1), (None, 37 * TILE - HALF)),
+        ("the roof of the Gym", (34, 28), (1, 0), (35 * TILE - HALF, None)),
+        ("the Auditorium screen", (34, 36), (0, 1), (None, 37 * TILE - HALF)),
     ],
 )
 def test_walls_glass_the_sea_roofs_and_screens_still_block(what, start, direction, stopped_at):
@@ -290,7 +292,9 @@ def campus_doorways(campus):
 def test_walking_through_every_doorway_of_the_campus_works_without_precise_aiming():
     campus = load_map()
     doorways = campus_doorways(campus)
-    assert len(doorways) >= 20  # the beach path alone has more
+    # Spec 015: the beach is five tiles wide now and no path of one-tile gaps any more
+    # (it alone had 34 of the 38). What is left are its two openings to the Courtyards.
+    assert len(doorways) >= 4
     tried = 0
     for (col, row), (dx, dy) in doorways:
         for off in (-16, -11, -8, 0, 8, 11, 16):
@@ -394,7 +398,9 @@ def test_the_campus_has_a_meeting_point_in_the_middle_of_the_map_and_no_bell():
     col, row = campus["meeting_point"]
     assert type(col) is int and type(row) is int
     assert campus["grid"][row][col] == "."
-    assert abs(col + 0.5 - len(campus["grid"][0]) / 2) <= 4
+    # Spec 015: 4 columns of beach were added in the west only, so the middle of the
+    # buildings lies 2 columns east of the middle of the grid.
+    assert abs(col + 0.5 - (len(campus["grid"][0]) + 4) / 2) <= 4
     assert abs(row + 0.5 - len(campus["grid"]) / 2) <= 4
 
 
@@ -433,12 +439,13 @@ def test_an_examiner_can_call_a_meeting_too():
 def test_a_report_still_works_anywhere_and_does_not_use_up_the_meeting_call():
     game, (examiner,), students = round_on(count=5)
     victim, reporter = students[0], students[1]
-    put(victim, 37, 23)  # in the Library, far from the meeting table
+    # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+    put(victim, 41, 23)  # in the Library, far from the meeting table
     for _ in range(examiner.next_expel_tick - game.tick):
         game.step()
-    put(examiner, 37, 23)
+    put(examiner, 41, 23)
     game.expel(examiner.id, victim.id)
-    put(reporter, 37, 24)
+    put(reporter, 41, 24)
     game.report(reporter.id, game.failed_exams[0].id)
     assert game.snapshot_for(reporter.id)["meeting"]["reason"] == "report"
     assert game.snapshot_for(reporter.id)["meeting_used"] is False
@@ -777,10 +784,11 @@ def test_the_sight_split_is_opaque_walls_against_glass_and_sea():
 @pytest.mark.parametrize(
     "viewer_tile, target_tile, what",
     [
-        ((14, 16), (14, 18), "from the north Courtyard into the Student Hall"),
-        ((16, 22), (16, 20), "from the south Courtyard into the Student Hall"),
-        ((16, 16), (16, 22), "through both glass walls of the Student Hall"),
-        ((32, 18), (32, 20), "across the bookshelf in the Library"),
+        # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+        ((18, 16), (18, 18), "from the north Courtyard into the Student Hall"),
+        ((20, 22), (20, 20), "from the south Courtyard into the Student Hall"),
+        ((20, 16), (20, 22), "through both glass walls of the Student Hall"),
+        ((36, 18), (36, 20), "across the bookshelf in the Library"),
     ],
 )
 def test_on_the_campus_players_see_each_other_through_glass_and_over_furniture(viewer_tile, target_tile, what):
@@ -791,10 +799,11 @@ def test_on_the_campus_players_see_each_other_through_glass_and_over_furniture(v
 @pytest.mark.parametrize(
     "viewer_tile, target_tile, what",
     [
-        ((25, 19), (28, 19), "the wall between the spine and the Library"),
-        ((29, 1), (31, 1), "the wall between the Main Entrance and Student Services"),
-        ((30, 36), (30, 38), "the Auditorium's front wall with its screen"),
-        ((12, 11), (12, 14), "the green roof between Hall B and the north Courtyard"),
+        # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+        ((29, 19), (32, 19), "the wall between the spine and the Library"),
+        ((33, 1), (35, 1), "the wall between the Main Entrance and Student Services"),
+        ((34, 36), (34, 38), "the Auditorium's front wall with its screen"),
+        ((16, 11), (16, 14), "the green roof between Hall B and the north Courtyard"),
     ],
 )
 def test_on_the_campus_opaque_walls_hide_players(viewer_tile, target_tile, what):
@@ -856,7 +865,8 @@ def test_every_place_of_the_game_can_be_reached_from_the_first_spawn():
         for index, station in enumerate(stations):
             label = f"task {task['id']}" if len(stations) == 1 else f"task {task['id']} step {index + 1}"
             places[label] = (station["x"], station["y"])
-    places.update({f"staff door {door['id']}": (door["x"], door["y"]) for door in campus["staff_doors"]})
+    # Spec 015: the four vents replaced the four staff doors (map key "vents").
+    places.update({f"vent {vent['id']}": (vent["x"], vent["y"]) for vent in campus["vents"]})
     places["light switch"] = tuple(campus["light_switch"])
     places["meeting point"] = tuple(campus["meeting_point"])
     assert len(places) == 10 + station_count + 4 + 2
@@ -894,16 +904,17 @@ def test_every_glass_pane_is_a_thin_wall_between_two_walkable_sides():
 @pytest.mark.parametrize(
     "what, tiles",
     [
-        ("lecture hall B to the north Courtyard", [(5, 13), (6, 13)]),
-        ("Hall B to the north Courtyard, west", [(14, 12), (15, 12), (14, 13), (15, 13)]),
-        ("Hall B to the north Courtyard, east", [(19, 12), (20, 12), (19, 13), (20, 13)]),
-        ("the south Courtyard to lecture hall D", [(5, 25), (6, 25)]),
-        ("the south Courtyard to Hall D", [(19, 25), (20, 25), (19, 26), (20, 26)]),
-        ("Hall D to Hall E", [(17, r) for r in range(30, 34)] + [(18, r) for r in range(30, 34)]),
-        ("the spine to the Food Court", [(26, 11), (27, 11), (26, 12), (27, 12), (26, 13), (27, 13)]),
-        ("the meeting point to the Library", [(27, 21), (27, 22)]),
-        ("the Main Entrance to Student Services", [(30, 3), (30, 4)]),
-        ("the plaza to the Auditorium", [(34, 37), (35, 37)]),
+        # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+        ("lecture hall B to the north Courtyard", [(9, 13), (10, 13)]),
+        ("Hall B to the north Courtyard, west", [(18, 12), (19, 12), (18, 13), (19, 13)]),
+        ("Hall B to the north Courtyard, east", [(23, 12), (24, 12), (23, 13), (24, 13)]),
+        ("the south Courtyard to lecture hall D", [(9, 25), (10, 25)]),
+        ("the south Courtyard to Hall D", [(23, 25), (24, 25), (23, 26), (24, 26)]),
+        ("Hall D to Hall E", [(21, r) for r in range(30, 34)] + [(22, r) for r in range(30, 34)]),
+        ("the spine to the Food Court", [(30, 11), (31, 11), (30, 12), (31, 12), (30, 13), (31, 13)]),
+        ("the meeting point to the Library", [(31, 21), (31, 22)]),
+        ("the Main Entrance to Student Services", [(34, 3), (34, 4)]),
+        ("the plaza to the Auditorium", [(38, 37), (39, 37)]),
     ],
 )
 def test_the_doorways_between_the_parts_of_the_campus_are_at_least_two_tiles_wide(what, tiles):
@@ -913,7 +924,8 @@ def test_the_doorways_between_the_parts_of_the_campus_are_at_least_two_tiles_wid
 
 def test_the_way_from_the_main_entrance_into_student_services_is_a_straight_walk():
     # Before, a standing screen on (28, 2-5) stood in front of this door.
-    game, player = walker(load_map(), 26, 3)
+    # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+    game, player = walker(load_map(), 30, 3)
     walk(game, player, 1, 0, 30)
     assert game.area_at(player.x, player.y) == "Student Services"
 
@@ -921,7 +933,8 @@ def test_the_way_from_the_main_entrance_into_student_services_is_a_straight_walk
 def test_the_screens_of_the_campus_hang_on_walls():
     campus = load_map()
     screens = decor_tiles(campus, ["screen"])
-    assert {(c, r) for _, c, r in screens} >= {(27, 37), (30, 5)}
+    # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
+    assert {(c, r) for _, c, r in screens} >= {(31, 37), (34, 5)}
     screen_tiles = {(c, r) for _, c, r in screens}
     for entry in campus["decor"]:
         if entry["kind"] != "screen":
@@ -946,7 +959,8 @@ def test_the_meeting_table_does_not_cover_furniture_or_a_task_place():
         for task in campus["tasks"]
         for station in task.get("steps", [task])
     ]
-    occupied += [(door["x"], door["y"]) for door in campus["staff_doors"]] + [tuple(campus["light_switch"])]
+    # Spec 015: the vents replaced the staff doors.
+    occupied += [(vent["x"], vent["y"]) for vent in campus["vents"]] + [tuple(campus["light_switch"])]
     for col, row in occupied:
         x, y = centre(col, row)
         assert math.hypot(x - cx, y - cy) > game_rules.MEETING_TABLE_RADIUS + TILE / 2, (col, row)

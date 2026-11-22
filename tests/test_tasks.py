@@ -64,16 +64,17 @@ MULTISTEP_MAP = {
 # tuple per station. Replaces spec 004's SPEC_TASKS table (which had "coffee" and
 # "eduroam" with a plain "seconds" wait; spec 012 deletes both and gives every remaining
 # task a mini-game instead). "certificate" has two stations (spec 012, part 4).
+# Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
 SPEC_TASKS = {
     "certificate": [
-        ("Library", 33, 22, "paper_jam"),
-        ("Student Services", 35, 3, "ticket"),
+        ("Library", 37, 22, "paper_jam"),
+        ("Student Services", 39, 3, "ticket"),
     ],
-    "helpdesk": [("Main Entrance", 20, 3, "translate")],
-    "print": [("Library", 37, 20, "paper_jam")],
-    "socket": [("Auditorium", 30, 40, "cable")],
-    "gate": [("Main Entrance", 24, 6, "card")],
-    "nata": [("Courtyard", 19, 23, "seagull")],
+    "helpdesk": [("Main Entrance", 24, 3, "translate")],
+    "print": [("Library", 41, 20, "paper_jam")],
+    "socket": [("Auditorium", 34, 40, "cable")],
+    "gate": [("Main Entrance", 28, 6, "card")],
+    "nata": [("Courtyard", 23, 23, "seagull")],
 }
 
 
