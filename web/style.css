@@ -156,11 +156,32 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
 }
 .panel[hidden], #lobby[hidden] { display: none; }
 
-#lobby { width: 230px; display: flex; flex-direction: column; gap: 8px; }
+#lobby { width: 260px; display: flex; flex-direction: column; gap: 8px; }
 #lobby h2 { font-size: 16px; }
-#lobby-players { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.lobby-count { margin: -4px 0 2px; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
+#lobby-players.lobby-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.lobby-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 4px;
+  border-radius: 999px;
+  background: #343841;
+}
+.chip-figure { display: block; flex-shrink: 0; }
+.lobby-chip-name { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
 #lobby .hint { margin: 0; color: var(--muted); }
-#start-button:disabled { cursor: not-allowed; }
+.lobby-main, .lobby-secondary { width: 100%; }
+.lobby-main { font-size: 17px; padding: 14px 12px; }
+.lobby-main:disabled { cursor: not-allowed; }
+.lobby-secondary { background: #3a3e47; color: var(--text); }
 
 .tag {
   margin-left: 6px;
@@ -172,6 +193,9 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
 }
 .tag.host { background: var(--accent); color: #1d1f24; font-weight: 700; }
 
+/* The host's original symbol (spec 014): a ring with an upward chevron, no text. */
+.host-symbol { display: inline-block; flex-shrink: 0; color: var(--accent); }
+
 #role-badge { font-weight: 600; }
 
 .role-card { text-align: center; }
@@ -179,9 +203,6 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
 #role-screen[data-role="examiner"] .role-card h2 { color: var(--error); }
 
 /* --- Expel, ghosts and end screen (spec 003) --- */
-
-#expel-button { background: var(--error); }
-#expel-button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .banner {
   position: fixed;
@@ -230,9 +251,13 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   border: 1px solid rgba(0, 0, 0, 0.5);
 }
 
-/* --- Meetings and votes (spec 006) --- */
+/* --- The shared action-button component (spec 014) ------------------------------------ */
 
-/* Report, Call a meeting and Expel share the corner (the Expel button sat there alone before). */
+/* Fixed slots in the bottom-right corner. Every button below keeps its place in the DOM
+   for the whole round (hidden only by role, never by momentary availability — see the
+   comment on #actions in index.html), so this plain wrap-and-anchor-to-the-end layout never
+   reshuffles mid-round: the same slot always lands in the same visual spot for a given
+   role and window size. */
 #actions {
   position: fixed;
   right: calc(16px + env(safe-area-inset-right));
@@ -241,21 +266,159 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  align-items: flex-end;
+  gap: 12px;
   z-index: 6;
 }
-#report-button { background: #9fd3ff; }
-#meeting-button { background: #ff8a80; }
-#meeting-button:disabled { opacity: 0.55; cursor: not-allowed; }
-/* At least 56 px high everywhere: a comfortable thumb target on a phone (spec 007). */
-#actions button { min-height: 56px; min-width: 56px; }
+#actions[hidden] { display: none; }
+#actions [hidden] { display: none; }
+
+.action {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-family: inherit;
+  cursor: pointer;
+  overflow: visible;
+  -webkit-tap-highlight-color: transparent;
+}
+.action:disabled { cursor: not-allowed; }
+
+.action-circle {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.action:disabled .action-circle { opacity: 0.4; filter: grayscale(0.4); box-shadow: none; }
+.action-primary .action-circle { width: 84px; height: 84px; }
+
+/* Colours carry meaning and stay the same everywhere they are used (spec 014): use = accent
+   yellow, report/meeting = blue, expel/sabotage = red, door = purple. Each pair clears
+   WCAG AA (>= 4.5:1) for the label text drawn in that colour. */
+.action-yellow .action-circle { background: var(--accent); color: #1d1f24; }
+.action-blue .action-circle { background: #1f5fd4; color: #fff; }
+.action-red .action-circle { background: #c92a2a; color: #fff; }
+.action-purple .action-circle { background: #6b3fd4; color: #fff; }
+
+.action-icon {
+  position: relative;
+  z-index: 1;
+  width: 44%;
+  height: 44%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.action-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.action-primary .action-label { font-size: 12px; color: var(--text); }
+
+/* The cooldown ring: a circular sweep drawn around the button with the seconds left in the
+   middle (expel, staff door, lights off). The one-shot "call a meeting" action has no timer
+   from the server (`meeting_used` is a flag, not a countdown), so its ring is only ever
+   fully drawn (used) or invisible (not used yet), with no number. */
+.action-ring {
+  position: absolute;
+  inset: -6px;
+  transform: rotate(-90deg);
+  pointer-events: none;
+  opacity: 0;
+}
+.ring-track { fill: none; stroke: rgba(255, 255, 255, 0.2); stroke-width: 4; }
+.ring-sweep { fill: none; stroke: #fff; stroke-width: 4; stroke-linecap: round; transition: stroke-dashoffset 0.3s linear; }
+.action-cooldown {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(20, 22, 26, 0.6);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.action-cooldown:empty { display: none; }
+
+/* The keyboard-hint badge: only on keyboard devices (same Controls.isTouch check as the
+   HUD's own keycaps, spec 008 part 9 — reuses .hint-keyboard). */
+.action-key {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  z-index: 2;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 4px;
+  background: #23262e;
+  color: #fff;
+  font: 700 10px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- Staff doors (spec 014): destination cards grouped above the round door button --- */
+
+.action-item { position: relative; display: flex; flex-direction: column; align-items: center; }
+.door-cards {
+  position: absolute;
+  bottom: 100%;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: max-content;
+}
+.door-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(20, 22, 26, 0.9);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.door-card:disabled { opacity: 0.5; cursor: not-allowed; }
+.door-cards:empty { display: none; }
+.door-arrow { flex-shrink: 0; color: var(--accent); }
+
+/* --- Meetings and votes (spec 006, redrawn as cards in spec 014) ---------------------- */
 
 /* Much lighter than the other overlays and with the card at the right side, so everyone
    standing around the meeting table stays visible (spec 011). main.js moves the camera
    so the table shows in the part of the window the card leaves free. */
 #meeting-screen { background: rgba(20, 22, 26, 0.3); justify-content: flex-end; }
 .meeting-card {
-  max-width: min(420px, 50vw);
+  max-width: min(460px, 55vw);
   max-height: calc(100vh - 32px);
   overflow-y: auto;
   scrollbar-width: thin;
@@ -264,35 +427,67 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
 /* A window higher than wide (a phone held upright): the card at the bottom instead. */
 @media (orientation: portrait) {
   #meeting-screen { justify-content: center; align-items: flex-end; }
-  .meeting-card { max-width: 420px; max-height: 60vh; }
+  .meeting-card { max-width: 460px; max-height: 70vh; }
 }
 .meeting-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+/* The big timer at the top (spec 014). */
 .timer {
   flex-shrink: 0;
   white-space: nowrap;
-  font-size: 22px;
+  font-size: 32px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--accent);
 }
-#meeting-players {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+
+.meeting-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+/* While a vote is in flight, locked out until the server answers (spec 014). */
+.meeting-grid.locked { pointer-events: none; opacity: 0.7; }
+.meeting-player-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-#meeting-players li {
-  display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 34px;
+  gap: 4px;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: #343841;
+  color: var(--text);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
 }
-#meeting-players li button { padding: 6px 14px; font-size: 14px; }
-.meeting-card button:disabled { opacity: 0.45; cursor: not-allowed; }
-.count { font-weight: 700; font-variant-numeric: tabular-nums; }
+.meeting-player-card[hidden] { display: none; }
+.meeting-player-card.disabled, .meeting-player-card[aria-disabled="true"] { cursor: not-allowed; opacity: 0.6; }
+.meeting-player-card.ghost { opacity: 0.45; filter: grayscale(0.6); cursor: default; }
+.meeting-player-card .player-name { display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; }
+.meeting-player-card.pending { outline: 2px solid var(--accent); }
+.confirm-prompt { font-size: 12px; color: var(--muted); }
+.confirm-row { display: flex; gap: 6px; width: 100%; }
+.confirm-row button { flex: 1; padding: 6px 4px; font-size: 13px; }
+.confirm-row .cancel-vote { background: #3a3e47; color: var(--text); }
+.voted-stamp {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #3f8c6e;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+.skip-card { grid-column: 1 / -1; flex-direction: row; justify-content: center; gap: 8px; }
+.skip-card .action-icon { width: 20px; height: 20px; }
+.vote-dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; min-height: 8px; }
+.vote-dot { width: 7px; height: 7px; border-radius: 50%; background: #3f8c6e; }
+.meeting-player-card .count { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
 .tag.voted { background: #3f8c6e; color: #fff; }
 .tag.surfing { background: var(--error); color: #1d1f24; font-weight: 700; }
 #meeting-status.verdict { color: var(--text); font-size: 18px; font-weight: 700; }
@@ -329,18 +524,6 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
 #task-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 #task-items li.done { text-decoration: line-through; color: var(--muted); }
 .task-area { display: block; font-size: 12px; color: var(--muted); }
-
-#task-button { background: #4cb963; }
-
-/* --- Lights sabotage (spec 008, part 8) --- */
-#fix-button { background: #f5d547; }
-#sabotage-button { background: #3a3e47; color: var(--text); }
-#sabotage-button:disabled { opacity: 0.55; cursor: not-allowed; }
-
-/* --- Staff doors (spec 008, part 6): one button per destination, in the action bar --- */
-#door-buttons { display: contents; }
-#door-buttons button { background: #596072; color: var(--text); }
-#door-buttons button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 /* --- Mini-game panel (spec 012) --- */
 
@@ -496,5 +679,14 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
   pointer-events: none;
 }
 
-/* Meeting: vote and skip buttons at least 44 px high on every screen. */
-#meeting-players li button, #skip-button { min-height: 44px; }
+/* Meeting cards: at least 44 px high on every screen, the vote/skip touch target (spec 007). */
+.meeting-player-card { min-height: 44px; }
+
+/* Phones: bigger round buttons (spec 014) and a bit more room to grow upward without
+   covering the joystick (left) or an off-screen task's edge arrow (render.js reads the
+   action bar's own rendered height at runtime, so this only has to look right). */
+@media (max-width: 600px) {
+  .action-circle { width: 72px; height: 72px; }
+  .action-primary .action-circle { width: 94px; height: 94px; }
+  #actions { gap: 14px; }
+}

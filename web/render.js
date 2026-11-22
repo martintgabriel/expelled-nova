@@ -754,7 +754,11 @@ const Render = (() => {
   // zoom.
   const ARROW_SIDE_MARGIN = 54;
   const ARROW_TOP_MARGIN = 54;
-  const ARROW_BOTTOM_MARGIN = 150; // clears the joystick (left) and the action buttons (right)
+  // Clears the joystick (left) and the action bar (right). The action bar's own height
+  // depends on the player's role and the window size (spec 014: up to 6 round buttons for
+  // an examiner, 3 for a student), so updateEdgeArrow() takes the real one from main.js and
+  // only falls back to this fixed value before the bar exists.
+  const ARROW_BOTTOM_MARGIN = 150;
   const ARROW_SIZE = 16; // the arrowhead's half-length, in screen px
 
   function makeEdgeArrow(scene) {
@@ -773,8 +777,10 @@ const Render = (() => {
   }
 
   // Call every frame for an own open task. Shows the arrow, clamped just inside the camera's
-  // visible area, only while the task's place is outside that area.
-  function updateEdgeArrow(arrow, task, camera) {
+  // visible area, only while the task's place is outside that area. `bottomMargin` (CSS
+  // px) is the action bar's own measured height plus a gap, from main.js; ARROW_BOTTOM_MARGIN
+  // is only the fallback before that bar exists.
+  function updateEdgeArrow(arrow, task, camera, bottomMargin = ARROW_BOTTOM_MARGIN) {
     const view = camera.worldView;
     const inView = task.x >= view.x && task.x <= view.right && task.y >= view.y && task.y <= view.bottom;
     arrow.setVisible(!inView);
@@ -784,7 +790,7 @@ const Render = (() => {
     const left = view.x + ARROW_SIDE_MARGIN * scale;
     const right = view.right - ARROW_SIDE_MARGIN * scale;
     const top = view.y + ARROW_TOP_MARGIN * scale;
-    const bottom = view.bottom - ARROW_BOTTOM_MARGIN * scale;
+    const bottom = view.bottom - bottomMargin * scale;
     const cx = (left + right) / 2;
     const cy = (top + bottom) / 2;
     const angle = Math.atan2(task.y - cy, task.x - cx);

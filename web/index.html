@@ -60,9 +60,10 @@
 
   <div id="lobby" class="panel" hidden>
     <h2>Lobby</h2>
-    <ul id="lobby-players"></ul>
-    <button id="invite-button" type="button">Invite players</button>
-    <button id="start-button" type="button" hidden>Start game</button>
+    <p id="lobby-count" class="lobby-count"></p>
+    <ul id="lobby-players" class="lobby-chips"></ul>
+    <button id="start-button" type="button" class="lobby-main" hidden>Start game</button>
+    <button id="invite-button" type="button" class="lobby-secondary">Invite players</button>
     <p id="start-hint" class="hint"></p>
   </div>
 
@@ -85,14 +86,128 @@
     </div>
   </div>
 
+  <!-- One shared round-button component for every in-round action (spec 014). Each button
+       always has the same place for the player's role: hidden only when the role never has
+       that action at all (set once, from the role, so it cannot flip mid-round); otherwise
+       always visible and merely greyed out, with the reason as its title/aria-label, so
+       positions never jump. main.js only toggles disabled/title/aria-label and the cooldown
+       ring/number; the icon and label markup below never changes. -->
   <div id="actions">
-    <button id="task-button" type="button" hidden>Do task <span class="key-hint">(F)</span></button>
-    <button id="report-button" type="button" hidden>Report failed exam <span class="key-hint">(R)</span></button>
-    <button id="meeting-button" type="button" hidden>Call a meeting</button>
-    <button id="fix-button" type="button" hidden>Fix the lights <span class="key-hint">(F)</span></button>
-    <button id="sabotage-button" type="button" hidden>Lights off</button>
-    <span id="door-buttons"></span>
-    <button id="expel-button" type="button" hidden>Expel</button>
+    <button id="sabotage-button" type="button" class="action action-red" hidden>
+      <span class="action-circle">
+        <svg class="action-ring" viewBox="0 0 80 80" aria-hidden="true">
+          <circle class="ring-track" cx="40" cy="40" r="35"></circle>
+          <circle class="ring-sweep" cx="40" cy="40" r="35"></circle>
+        </svg>
+        <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 10a3 3 0 1 1 6 0c0 1.7-1 2.4-1.5 3.3-.3.5-.5 1-.5 1.7h-2c0-.7-.2-1.2-.5-1.7C10 12.4 9 11.7 9 10Z"></path>
+          <line x1="10.5" y1="18" x2="13.5" y2="18"></line>
+          <line x1="4" y1="4" x2="20" y2="20"></line>
+        </svg>
+        <span class="action-cooldown"></span>
+        <kbd class="action-key hint-keyboard" aria-hidden="true">Q</kbd>
+      </span>
+      <span class="action-label">Lights off</span>
+    </button>
+
+    <div id="door-item" class="action-item" hidden>
+      <div id="door-buttons" class="door-cards"></div>
+      <button id="door-action-button" type="button" class="action action-purple">
+        <span class="action-circle">
+          <svg class="action-ring" viewBox="0 0 80 80" aria-hidden="true">
+            <circle class="ring-track" cx="40" cy="40" r="35"></circle>
+            <circle class="ring-sweep" cx="40" cy="40" r="35"></circle>
+          </svg>
+          <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="5" y="4" width="9" height="16" rx="1"></rect>
+            <circle cx="11" cy="12" r="0.8" fill="currentColor" stroke="none"></circle>
+            <path d="M15 12 H20 M17 9 L20 12 L17 15"></path>
+          </svg>
+          <span class="action-cooldown"></span>
+          <kbd class="action-key hint-keyboard" aria-hidden="true">V</kbd>
+        </span>
+        <span class="action-label">Door</span>
+      </button>
+    </div>
+
+    <button id="report-button" type="button" class="action action-blue" hidden>
+      <span class="action-circle">
+        <svg class="action-ring" viewBox="0 0 80 80" aria-hidden="true">
+          <circle class="ring-track" cx="40" cy="40" r="35"></circle>
+          <circle class="ring-sweep" cx="40" cy="40" r="35"></circle>
+        </svg>
+        <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <line x1="6" y1="4" x2="6" y2="20"></line>
+          <path d="M6 5 L17 8 L6 12"></path>
+        </svg>
+        <span class="action-cooldown"></span>
+        <kbd class="action-key hint-keyboard" aria-hidden="true">R</kbd>
+      </span>
+      <span class="action-label">Report</span>
+    </button>
+
+    <button id="meeting-button" type="button" class="action action-blue" aria-label="Call a meeting" hidden>
+      <span class="action-circle">
+        <svg class="action-ring" viewBox="0 0 80 80" aria-hidden="true">
+          <circle class="ring-track" cx="40" cy="40" r="35"></circle>
+          <circle class="ring-sweep" cx="40" cy="40" r="35"></circle>
+        </svg>
+        <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 4 C9 4 7 6.5 7 10 V13 C7 15 6 16 5 17 H19 C18 16 17 15 17 13 V10 C17 6.5 15 4 12 4 Z"></path>
+          <path d="M10 19 a2 2 0 0 0 4 0"></path>
+        </svg>
+        <span class="action-cooldown"></span>
+      </span>
+      <span class="action-label">Meeting</span>
+    </button>
+
+    <button id="fix-button" type="button" class="action action-yellow action-primary" hidden>
+      <span class="action-circle">
+        <svg class="action-ring" viewBox="0 0 80 80" aria-hidden="true">
+          <circle class="ring-track" cx="40" cy="40" r="35"></circle>
+          <circle class="ring-sweep" cx="40" cy="40" r="35"></circle>
+        </svg>
+        <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="7"></circle>
+          <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"></circle>
+        </svg>
+        <span class="action-cooldown"></span>
+        <kbd class="action-key hint-keyboard" aria-hidden="true">F</kbd>
+      </span>
+      <span class="action-label">Fix lights</span>
+    </button>
+
+    <button id="task-button" type="button" class="action action-yellow" hidden>
+      <span class="action-circle">
+        <svg class="action-ring" viewBox="0 0 80 80" aria-hidden="true">
+          <circle class="ring-track" cx="40" cy="40" r="35"></circle>
+          <circle class="ring-sweep" cx="40" cy="40" r="35"></circle>
+        </svg>
+        <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="7"></circle>
+          <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"></circle>
+        </svg>
+        <span class="action-cooldown"></span>
+        <kbd class="action-key hint-keyboard" aria-hidden="true">F</kbd>
+      </span>
+      <span class="action-label">Use</span>
+    </button>
+
+    <button id="expel-button" type="button" class="action action-red action-primary" hidden>
+      <span class="action-circle">
+        <svg class="action-ring" viewBox="0 0 80 80" aria-hidden="true">
+          <circle class="ring-track" cx="40" cy="40" r="35"></circle>
+          <circle class="ring-sweep" cx="40" cy="40" r="35"></circle>
+        </svg>
+        <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="8"></circle>
+          <line x1="6.3" y1="6.3" x2="17.7" y2="17.7"></line>
+        </svg>
+        <span class="action-cooldown"></span>
+        <kbd class="action-key hint-keyboard" aria-hidden="true">E</kbd>
+      </span>
+      <span class="action-label">Expel</span>
+    </button>
   </div>
 
   <div id="ghost-banner" class="banner" role="status" hidden>
@@ -112,8 +227,10 @@
         <span id="meeting-timer" class="timer" aria-label="Seconds left"></span>
       </div>
       <p id="meeting-reason"></p>
-      <ul id="meeting-players"></ul>
-      <button id="skip-button" type="button">Skip vote</button>
+      <div id="meeting-players" class="meeting-grid"></div>
+      <!-- A div, not a button: it hosts its own confirm/cancel buttons once tapped (spec
+           014), and a button cannot contain another button. -->
+      <div id="skip-button" class="meeting-player-card skip-card" role="button" tabindex="0">Skip vote</div>
       <p id="meeting-status" role="status"></p>
     </div>
   </div>
