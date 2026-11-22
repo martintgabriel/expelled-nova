@@ -81,7 +81,7 @@ This spec **replaces** two rules from spec 004:
   | `translate` | 30 s |
   | `card` | 30 s |
   | `paper_jam` | 30 s |
-  | `socket` | 30 s |
+  | `cable` | 25 s |
   | `seagull` | 8 s (given by the mini-game's own rule) |
 
 - **Validation stays strict** (type, range, length of `value`; existing `MAX_MESSAGE_BYTES`
@@ -206,13 +206,20 @@ visible `challenge` dict. All six share the cancel/time-limit/validation rules f
    cleared: station done. Tapping anything else (no jam there, or already cleared):
    `"Nothing there."`, no state change. Time-out note: `"Someone else cleared it."`
 
-5. **`socket`** (socket — "Find a free socket", Auditorium)
-   12 sockets (0–11); the challenge picks one `free` socket (`rng.randrange(12)`) and tracks
-   which of the other 11 the player has already tried (`tried`). `value` must be an `int` in
-   `0`–`11`. Visible: `{"kind": "socket", "taken": [...]}` (`free` never appears here before
-   it is tapped). Tapping the free socket: station done. Tapping any other socket (whether
-   new or already known taken): added to `tried` if new, `"Taken."`, no further change.
-   Time-out note: `"All sockets taken. Try again later."`
+5. **`cable`** (socket — "Get your slides on the projector", Auditorium)
+   Five port types exist, each with its own plug shape: HDMI, USB-C, VGA, DisplayPort, Mini
+   DisplayPort. Three rounds. Each round picks one port type for the projector
+   (`rng.choice`) and 4 cable types shown in random order: the matching type plus 3 of the
+   other four (`rng.sample`), shuffled together (`rng.sample(..., 4)`). The challenge tracks
+   `round` (1–3), `port`, `cables` (the 4 shown, in order) and `wrong` (0 or 1, wrong tries
+   since the last reset). `value` must be a `dict` with exactly the integer key `cable`,
+   `0`–`3`. Visible: `{"kind": "cable", "round", "port", "cables", "wrong"}` — nothing is
+   hidden here, unlike every other mini-game: spotting the matching shape is the whole game,
+   not finding a secret. The matching cable: the next round starts (fresh `port`/`cables`,
+   `wrong` unchanged); after round 3, station done. The wrong cable: `"No signal."`, `wrong`
+   goes up by 1; a *second* wrong try since the last reset (`wrong` reaching 2) instead
+   restarts the whole mini-game at round 1 with new random rounds and `wrong` back at 0,
+   `"Two wrong cables. Start again."`. Time-out note: `"Out of time."`
 
 6. **`seagull`** (nata — "Protect your pastel de nata", Courtyard)
    A 3×3 grid (0–8); the challenge tracks the seagull's current `cell` (`rng.randrange(9)`
@@ -246,6 +253,29 @@ visible `challenge` dict. All six share the cancel/time-limit/validation rules f
 - An examiner sees the exact same task list, markers, "Do task" button and mini-game panel as
   a student, and can play through them; nothing in the UI marks them as fake (that would give
   the examiner away).
+
+### Browser-only follow-ups: edge arrows, panel hints, the nata tart
+Three small additions, entirely in `web/`, no server change (the server already sends
+everything these need: `tasks`' `x`/`y`, `doing.challenge.kind`, `task_note`).
+- **Edge arrows** (`render.js`, alongside the existing task marker): for every own open task
+  place (students and examiners, fake tasks included; a multi-step task's *current* step
+  only, same `x`/`y` the task list already uses), a small arrow at the edge of the screen
+  points toward it whenever it is outside the camera's visible area (`camera.worldView`); it
+  is hidden once the place is on screen, since the map marker already covers that. Just the
+  arrowhead shape, nothing else: no task title or other text is drawn under or next to it.
+  Clamped inside the screen with a margin that clears the joystick and the action buttons, at
+  every window size; drawn above the darkness, like the task marker. Hidden during a meeting,
+  the same way the camera stops following the own character then.
+- **Mini-game instruction line**: a one-line hint at the top of the mini-game panel, set as
+  text (never HTML), one fixed sentence per `kind` (`card`/`cable`/`seagull`/`ticket`/
+  `translate`/`paper_jam`), shown for every kind including the three still-placeholder ones.
+  `cable`'s hint: "Drag the matching cable into the projector."
+- **The pastel de nata**: the `seagull` mini-game's panel draws the tart it is defending as a
+  small original inline SVG (no image files) above its 3x3 grid, alongside the existing
+  "Hits: n/5" count. A tap on the seagull's own cell wobbles the tart briefly (a client-side
+  guess at a hit, purely cosmetic). When the time runs out (`task_note` "A seagull took it."),
+  the browser holds the panel open for a short moment showing the tart gone/eaten with the
+  final hit count, instead of the panel just vanishing with the usual toast.
 
 ## Out of scope
 - New task types beyond the six listed; sabotage interactions with tasks beyond the existing
@@ -288,13 +318,15 @@ visible `challenge` dict. All six share the cancel/time-limit/validation rules f
   - **Campus data:** no task in `server/campus.json` is a plain waiting task; every station
     (including both `certificate` stations) is a floor tile in its named area; `certificate`'s
     two stations are at different tiles.
-  - **Per mini-game** (`ticket`, `translate`, `card`, `paper_jam`, `socket`, `seagull`), with a
-    seeded `random.Random`: a correct solution finishes the station; the mini-game's own wrong
-    rule (reroll + note, or no-op + note, or silent miss) happens on a wrong-but-valid value;
-    an invalid value (wrong type, out of range, wrong length, missing) is rejected with a
-    reason and changes nothing; the time limit cancels the station with its note and the
-    station can be started again from the top; `socket`'s challenge never reveals the free
-    socket before it is tapped, in any player's snapshot.
+  - **Per mini-game** (`ticket`, `translate`, `card`, `paper_jam`, `cable`, `seagull`), with a
+    seeded `random.Random`: a correct solution finishes the station (three rounds, for
+    `cable`); the mini-game's own wrong rule (reroll + note, or no-op + note, or silent miss,
+    or `cable`'s own reset back to round 1 on a second wrong try) happens on a
+    wrong-but-valid value; an invalid value (wrong type, out of range, wrong length,
+    wrong/missing/extra keys) is rejected with a reason and changes nothing; the time limit
+    cancels the station with its note and the station can be started again from the top;
+    `cable`'s challenge (like every other mini-game's) is never sent to any player but the
+    one doing it.
   - **Framework:** leaving `TASK_RANGE`, being expelled and a meeting starting all cancel a
     running challenge exactly like before (spec 004/008); `task_cancel` cancels the current
     station and leaves earlier steps/other tasks untouched; `task_input`/`task_cancel` for a
@@ -329,3 +361,16 @@ visible `challenge` dict. All six share the cancel/time-limit/validation rules f
     the task list and map marker following the current station;
   - the "Close" button leaves the task open and startable again, without walking away;
   - an examiner cannot be told apart from a student by their task list, markers or button.
+- Manual check, browser-only follow-ups (no new automated test; nothing server-side changed):
+  - walk far enough from an own open task that it leaves the screen: an edge arrow appears at
+    the screen's edge pointing the right way, inside the margin, clear of the joystick/action
+    buttons on a phone-width window too; walk back until the place is on screen: the arrow
+    hides and the usual map marker is the only thing left; starting a meeting hides every
+    arrow;
+  - a multi-step `certificate` off-screen points to Library first, then to Student Services
+    once the first step is done;
+  - every one of the six mini-game panels (including the three placeholder ones) shows its
+    one-line instruction at the top, as plain text;
+  - the `seagull` panel shows the pastel de nata above the grid; tapping the seagull's cell
+    gives it a brief wobble; left idle to time out, the panel stays open for a moment showing
+    the tart gone, with the last hit count, before it closes.

@@ -342,6 +342,83 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--te
 #door-buttons button { background: #596072; color: var(--text); }
 #door-buttons button:disabled { opacity: 0.55; cursor: not-allowed; }
 
+/* --- Mini-game panel (spec 012) --- */
+
+.minigame-card { text-align: center; }
+.minigame-hint { margin: 0; color: var(--muted); font-size: 13px; }
+.minigame-note { color: var(--error); min-height: 1.2em; }
+.minigame-note[hidden] { display: none; }
+#minigame-content { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+#minigame-content form { display: flex; gap: 8px; }
+.minigame-number {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.minigame-hits { margin: 0; font-weight: 700; color: var(--muted); }
+.minigame-sentence { margin: 0; font-size: 18px; font-style: italic; text-align: center; }
+.minigame-options { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.minigame-options button { width: 100%; }
+#minigame-content input[type="number"] { width: 140px; text-align: center; font-size: 22px; letter-spacing: 4px; }
+.minigame-grid { display: grid; gap: 8px; }
+.minigame-grid button {
+  min-height: 48px;
+  min-width: 48px;
+  font-size: 20px;
+}
+/* The projector/cable mini-game (socket, Auditorium): original SVG plug shapes, no images. */
+.minigame-cable { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; }
+.minigame-cable-status { margin: 0; font-weight: 700; color: var(--muted); }
+.projector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 140px;
+  height: 100px;
+  border-radius: 10px;
+  background: #3a3e47;
+  border: 2px solid var(--muted);
+}
+.cable-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
+.cable {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 8px;
+  cursor: grab;
+}
+.cable.selected { background: rgba(242, 179, 61, 0.25); }
+.cable.dragging { opacity: 0.4; }
+.cable-name { font-size: 11px; color: var(--muted); }
+.cable-plug .plug-shape { fill: #596072; stroke: var(--text); stroke-width: 2; }
+.projector .plug-shape { fill: var(--bg); stroke: var(--accent); stroke-width: 3; }
+.cable-plug.plugged { animation: cable-plug-in 0.35s ease; }
+@keyframes cable-plug-in {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+.cable.shake { animation: cable-shake 0.3s ease; }
+@keyframes cable-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
+
+/* The pastel de nata the seagull is after: original inline SVG, no image files. */
+.nata-tart { display: block; }
+.nata-tart.hit { animation: nata-wobble 0.3s ease; }
+@keyframes nata-wobble {
+  0%, 100% { transform: rotate(0deg); }
+  30% { transform: rotate(-8deg); }
+  60% { transform: rotate(8deg); }
+}
+
 .joke {
   position: fixed;
   left: 50%;

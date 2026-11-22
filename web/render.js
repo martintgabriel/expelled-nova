@@ -743,6 +743,62 @@ const Render = (() => {
     label.setText(`${secondsLeft} s`);
   }
 
+  // --- Edge arrows (spec 012) ---------------------------------------------------------------
+  // A small arrow at the screen's edge for an own open task place the camera cannot currently
+  // see (the map marker above is enough once it can) — just the arrowhead shape, no task
+  // title or other text next to it. Clamped inside a safe rectangle, inset from the camera's
+  // visible area (`camera.worldView`) by a margin that clears the joystick and the action
+  // buttons (style.css) on every window size. The margin is given in CSS pixels and turned
+  // into world units by dividing by the camera's own zoom, which already includes
+  // `pixelRatio` (see cameraZoom()), so the arrow stays the same size on screen regardless of
+  // zoom.
+  const ARROW_SIDE_MARGIN = 54;
+  const ARROW_TOP_MARGIN = 54;
+  const ARROW_BOTTOM_MARGIN = 150; // clears the joystick (left) and the action buttons (right)
+  const ARROW_SIZE = 16; // the arrowhead's half-length, in screen px
+
+  function makeEdgeArrow(scene) {
+    const g = scene.add.graphics();
+    g.fillStyle(OUTLINE, 0.9);
+    g.beginPath();
+    g.moveTo(ARROW_SIZE, 0);
+    g.lineTo(-ARROW_SIZE * 0.6, -ARROW_SIZE * 0.75);
+    g.lineTo(-ARROW_SIZE * 0.6, ARROW_SIZE * 0.75);
+    g.closePath();
+    g.fillPath();
+    g.lineStyle(2, TASK_COLOR, 1).strokePath();
+    const arrow = scene.add.container(0, 0, [g]).setDepth(13).setVisible(false);
+    arrow.parts = { g };
+    return arrow;
+  }
+
+  // Call every frame for an own open task. Shows the arrow, clamped just inside the camera's
+  // visible area, only while the task's place is outside that area.
+  function updateEdgeArrow(arrow, task, camera) {
+    const view = camera.worldView;
+    const inView = task.x >= view.x && task.x <= view.right && task.y >= view.y && task.y <= view.bottom;
+    arrow.setVisible(!inView);
+    if (inView) return;
+
+    const scale = 1 / camera.zoom;
+    const left = view.x + ARROW_SIDE_MARGIN * scale;
+    const right = view.right - ARROW_SIDE_MARGIN * scale;
+    const top = view.y + ARROW_TOP_MARGIN * scale;
+    const bottom = view.bottom - ARROW_BOTTOM_MARGIN * scale;
+    const cx = (left + right) / 2;
+    const cy = (top + bottom) / 2;
+    const angle = Math.atan2(task.y - cy, task.x - cx);
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    // Where the ray from the centre, at this angle, meets the safe rectangle's border.
+    const tx = dx === 0 ? Infinity : (dx > 0 ? right - cx : left - cx) / dx;
+    const ty = dy === 0 ? Infinity : (dy > 0 ? bottom - cy : top - cy) / dy;
+    const t = Math.min(tx, ty);
+    arrow.setPosition(cx + dx * t, cy + dy * t);
+    arrow.setScale(scale);
+    arrow.parts.g.setRotation(angle);
+  }
+
   // --- Darkness outside the lit area (spec 005, spec 010, spec 011) -------------------------
   // This is only the look: the server does not even send what the player cannot see.
   //
@@ -947,6 +1003,8 @@ const Render = (() => {
     makeTaskMarker,
     makeTaskRing,
     updateTaskRing,
+    makeEdgeArrow,
+    updateEdgeArrow,
     makeDarkness,
     updateDarkness,
   };
