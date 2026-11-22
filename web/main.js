@@ -62,6 +62,12 @@ const ui = {
   joke: document.getElementById("joke"),
   jokeTitle: document.getElementById("joke-title"),
   jokeText: document.getElementById("joke-text"),
+  minigamePanel: document.getElementById("minigame-panel"),
+  minigameTitle: document.getElementById("minigame-title"),
+  minigameHint: document.getElementById("minigame-hint"),
+  minigameNote: document.getElementById("minigame-note"),
+  minigameContent: document.getElementById("minigame-content"),
+  minigameClose: document.getElementById("minigame-close"),
   reportButton: document.getElementById("report-button"),
   meetingButton: document.getElementById("meeting-button"),
   ghostBanner: document.getElementById("ghost-banner"),
@@ -227,6 +233,7 @@ function updatePhase(state) {
   updateExpelButton(state);
   updateReportAndMeeting(state);
   updateTasks(state);
+  updateMinigame(state);
   updateDoors(state);
   updateLights(state);
   updateControls(state);
@@ -588,13 +595,17 @@ let doingSeconds = 0; // how long that task takes in all
 let wasAlive = true; // `alive` in the previous state
 let jokeTimer = null;
 
-function isStudentPlaying(state) {
-  return state.phase === "playing" && state.role === "student"; // alive or ghost (R4)
+// Examiners get the same tasks as students now, drawn fake from the same pool (spec 012,
+// part 3): nothing here tells the two roles apart, so an examiner's panel, markers and
+// button look exactly like a student's. Only a ghost examiner cannot do tasks; a ghost
+// student still can (R4).
+function isTaskPlayer(state) {
+  return state.phase === "playing" && (state.role === "student" || state.alive);
 }
 
 // Nearest own open task within task_range of the latest server position.
 function taskTarget(state) {
-  if (!isStudentPlaying(state) || state.doing) return null;
+  if (!isTaskPlayer(state) || state.doing) return null;
   const me = state.players.find((p) => p.id === welcome.id);
   if (!me) return null;
   let best = null;
@@ -622,10 +633,13 @@ function updateTasks(state) {
     ui.taskBar.setAttribute("aria-valuenow", progress.done);
   }
 
-  // The own task list, for students. Titles are added as text, never as HTML.
+  // The own task list, for students. Titles are added as text, never as HTML. A multi-step
+  // task (spec 012, part 4) shows "Step n/m: <title>" for its current station; the key
+  // includes `step`/`title` too, so the list rebuilds when a step finishes and the next
+  // station's title takes over, even though `id`/`done` stay the same.
   const tasks = state.tasks || [];
   ui.taskList.hidden = !(inRound && tasks.length > 0);
-  const key = JSON.stringify(tasks.map((task) => [task.id, task.done]));
+  const key = JSON.stringify(tasks.map((task) => [task.id, task.done, task.step, task.title]));
   if (key !== taskKey) {
     taskKey = key;
     ui.taskItems.replaceChildren(
@@ -635,7 +649,8 @@ function updateTasks(state) {
         const area = document.createElement("span");
         area.className = "task-area";
         area.textContent = task.area;
-        item.append(task.title, area);
+        const label = task.step ? `Step ${task.step}/${task.steps}: ${task.title}` : task.title;
+        item.append(label, area);
         return item;
       }),
     );
@@ -650,9 +665,14 @@ function updateTasks(state) {
   }
   if (lastDoing && !doing) {
     const finished = tasks.find((task) => task.id === lastDoing && task.done);
+    // A wrong-but-valid answer never gets here (the task keeps running); task_note is set
+    // here only by a time-out or an explicit "Close" (task_cancel), which is the more exact
+    // reason than the phase/alive guesses below (spec 012, part 2).
     if (finished) showJoke(finished);
+    else if (state.task_note) showToast(state.task_note);
     else if (state.phase === "meeting") showToast("Task cancelled: a meeting started");
-    else if (wasAlive && !state.alive) showToast("Task cancelled: you were expelled");
+    else if (wasAlive && !state.alive)
+      showToast(`Task cancelled: you were ${sentSurfing ? "sent surfing" : "expelled"}`);
     else if (state.phase === "playing") showToast("Task cancelled: you walked away");
   }
   lastDoing = doing;
@@ -668,7 +688,7 @@ function showJoke(task) {
 }
 
 function tryTask() {
-  if (!latestState || !isStudentPlaying(latestState) || latestState.doing) return;
+  if (!latestState || !isTaskPlayer(latestState) || latestState.doing) return;
   const task = taskTarget(latestState);
   if (!task) {
     showToast("None of your tasks is within reach");
@@ -680,6 +700,362 @@ function tryTask() {
 ui.taskButton.addEventListener("click", () => {
   tryTask();
   ui.taskButton.blur();
+});
+
+// --- Mini-game panel (spec 012) ---------------------------------------------------------
+// One panel shell for every mini-game kind; the server is the only judge of a value, this
+// only shows the challenge and sends "task_input"/"task_cancel". It opens when the own
+// `doing.challenge` first appears and closes when `doing` goes back to null (done, cancelled
+// or timed out) — CampusScene.predictTick() also stops sending "input" messages while it is
+// open, so tapping the panel never walks the character by accident. Builds the content for
+// every one of the six kinds: "card" (gate), "cable" (socket), "seagull" (nata), "ticket"
+// (certificate, step 2), "translate" (helpdesk) and "paper_jam" (print, and certificate
+// step 1).
+let minigameKey = ""; // task id + challenge, so the content rebuilds only when it changes
+let minigameNoteShown = ""; // the task_note last shown, so an unchanged one does not flash
+
+// One short line at the top of the panel, set as text (never HTML): what to do, for every
+// kind, including the three still built from a placeholder below (spec 012).
+const MINIGAME_HINTS = {
+  card: "Type the number on your card.",
+  cable: "Drag the matching cable into the projector.",
+  seagull: "Tap the seagull 5 times.",
+  ticket: "Press when your number is called.",
+  translate: "Pick the right translation.",
+  paper_jam: "Clear all 3 paper jams.",
+};
+
+const NATA_EATEN_MS = 1200; // how long the "gone" tart stays up after a seagull time-out
+let nataEatenTimer = null;
+let nataEaten = false; // showing the tart gone for a moment, instead of just closing the panel
+let lastSeagullChallenge = null; // kept only to still show the final hit count while eaten
+
+// The own running challenge, or null: a plain-wait station (no mini-game) has `doing` but
+// no `doing.challenge`, and must not open the panel.
+function minigameChallenge(state) {
+  return state && state.doing && state.doing.challenge ? state.doing : null;
+}
+
+function updateMinigame(state) {
+  const doing = minigameChallenge(state);
+
+  if (doing && nataEaten) {
+    // A new challenge started before the "eaten" view's own timer closed the panel.
+    nataEaten = false;
+    clearTimeout(nataEatenTimer);
+  }
+  if (doing && doing.challenge.kind === "seagull") lastSeagullChallenge = doing.challenge;
+
+  // The seagull time-out clears `doing` in the very same snapshot that sets this note
+  // (spec 012, part 2: task_note is not tick-scoped), so there is no tick where the panel
+  // is open with this note already set. Catch the transition here instead, and hold the
+  // panel open a moment longer to show the tart gone, rather than it just vanishing.
+  if (!doing && !nataEaten && lastSeagullChallenge && state.task_note === "A seagull took it.") {
+    nataEaten = true;
+    ui.minigamePanel.hidden = false;
+    setText(ui.minigameTitle, "Protect your pastel de nata");
+    setText(ui.minigameHint, MINIGAME_HINTS.seagull);
+    ui.minigameNote.hidden = true;
+    renderSeagullEaten(lastSeagullChallenge);
+    clearTimeout(nataEatenTimer);
+    nataEatenTimer = setTimeout(() => {
+      nataEaten = false;
+      lastSeagullChallenge = null;
+      ui.minigamePanel.hidden = true;
+    }, NATA_EATEN_MS);
+    return;
+  }
+  if (nataEaten) return; // the timer above owns the panel until it fires
+
+  ui.minigamePanel.hidden = !doing;
+  if (!doing) {
+    minigameKey = "";
+    minigameNoteShown = "";
+    lastSeagullChallenge = null;
+    return;
+  }
+  const task = (state.tasks || []).find((t) => t.id === doing.task);
+  setText(ui.minigameTitle, task ? task.title : "");
+  setText(ui.minigameHint, MINIGAME_HINTS[doing.challenge.kind] || "");
+  const key = JSON.stringify([doing.task, doing.challenge]);
+  if (key !== minigameKey) {
+    minigameKey = key;
+    renderChallenge(doing.task, doing.challenge);
+  }
+  const note = state.task_note || "";
+  if (note !== minigameNoteShown) {
+    minigameNoteShown = note;
+    setText(ui.minigameNote, note);
+    ui.minigameNote.hidden = !note;
+  }
+}
+
+function sendTaskInput(taskId, value) {
+  send({ type: "task_input", task: taskId, value });
+}
+
+// Texts are added as text, never as HTML (existing rule); every tap target below also
+// answers a mouse click.
+function renderChallenge(taskId, challenge) {
+  ui.minigameContent.replaceChildren();
+  if (challenge.kind === "card") renderCard(taskId, challenge);
+  else if (challenge.kind === "cable") renderCable(taskId, challenge);
+  else if (challenge.kind === "seagull") renderSeagull(taskId, challenge);
+  else if (challenge.kind === "ticket") renderTicket(taskId, challenge);
+  else if (challenge.kind === "translate") renderTranslate(taskId, challenge);
+  else if (challenge.kind === "paper_jam") renderPaperJam(taskId, challenge);
+}
+
+// certificate, step 2 — "Now serving": press "That's me!" exactly when your number comes up.
+function renderTicket(taskId, challenge) {
+  const number = document.createElement("p");
+  number.className = "minigame-number";
+  number.textContent = String(challenge.number);
+  const counter = document.createElement("p");
+  counter.className = "minigame-hits";
+  counter.textContent = `Now serving: ${challenge.counter}`;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "That's me!";
+  button.addEventListener("click", () => sendTaskInput(taskId, true));
+  ui.minigameContent.append(number, counter, button);
+}
+
+// helpdesk — "Só em português": pick the right English translation of the Portuguese sentence.
+function renderTranslate(taskId, challenge) {
+  const sentence = document.createElement("p");
+  sentence.className = "minigame-sentence";
+  sentence.textContent = challenge.sentence;
+  const options = document.createElement("div");
+  options.className = "minigame-options";
+  challenge.options.forEach((option, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = option;
+    button.addEventListener("click", () => sendTaskInput(taskId, index));
+    options.append(button);
+  });
+  ui.minigameContent.append(sentence, options);
+}
+
+// print, and certificate step 1 — "Paper jam": tap the 3 jammed cells of a 3x3 grid; the
+// others never reveal whether they hide a jam, found or not.
+function renderPaperJam(taskId, challenge) {
+  const cleared = new Set(challenge.cleared || []);
+  const status = document.createElement("p");
+  status.className = "minigame-hits";
+  status.textContent = `Cleared: ${cleared.size}/3`;
+  const grid = document.createElement("div");
+  grid.className = "minigame-grid";
+  grid.style.gridTemplateColumns = "repeat(3, 1fr)";
+  for (let i = 0; i < 9; i++) {
+    const button = document.createElement("button");
+    button.type = "button";
+    const isCleared = cleared.has(i);
+    button.textContent = isCleared ? "✓" : "";
+    button.disabled = isCleared;
+    button.addEventListener("click", () => sendTaskInput(taskId, i));
+    grid.append(button);
+  }
+  ui.minigameContent.append(status, grid);
+}
+
+// gate — "Tap your card": copy the shown number back on a number pad.
+function renderCard(taskId, challenge) {
+  const number = document.createElement("p");
+  number.className = "minigame-number";
+  number.textContent = challenge.number;
+  const form = document.createElement("form");
+  const input = document.createElement("input");
+  input.type = "number";
+  input.inputMode = "numeric";
+  input.min = "0";
+  input.max = "99999";
+  input.required = true;
+  input.setAttribute("aria-label", "Card number");
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.textContent = "Tap card";
+  form.append(input, submit);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    sendTaskInput(taskId, input.value.padStart(5, "0"));
+  });
+  ui.minigameContent.append(number, form);
+  input.focus();
+}
+
+// socket — "Get your slides on the projector": drag (or tap, then tap) the cable whose plug
+// shape matches the projector's port, 3 rounds in a row. Nothing here is secret: the server
+// still decides, but the browser can honestly tell a match from a mismatch itself, since it
+// already has every piece of the challenge (spec 012). Original shapes, drawn as inline SVG
+// polygons, no image files.
+const PLUG_SHAPES = {
+  HDMI: { tag: "polygon", points: "10,46 50,46 50,24 40,14 20,14 10,24" },
+  "USB-C": { tag: "rect", x: 8, y: 20, width: 44, height: 20, rx: 10 },
+  VGA: { tag: "polygon", points: "12,18 48,18 44,46 16,46" },
+  DisplayPort: { tag: "polygon", points: "12,14 40,14 48,22 48,46 12,46" },
+  "Mini DisplayPort": { tag: "polygon", points: "18,20 34,20 40,26 40,42 18,42" },
+};
+
+function plugShape(type, attrs) {
+  const spec = PLUG_SHAPES[type];
+  const { tag, ...shapeAttrs } = spec;
+  return svgEl(tag, { ...shapeAttrs, ...attrs });
+}
+
+// Restarts a CSS animation even if it is already running (a fast double tap/drop).
+function playAnimation(el, className) {
+  el.classList.remove(className);
+  void el.getBoundingClientRect();
+  el.classList.add(className);
+}
+
+function renderCable(taskId, challenge) {
+  const wrap = document.createElement("div");
+  wrap.className = "minigame-cable";
+
+  const status = document.createElement("p");
+  status.className = "minigame-cable-status";
+  status.textContent = `Round ${challenge.round}/3 · Wrong tries ${challenge.wrong}/2`;
+
+  const projectorSvg = svgEl("svg", { viewBox: "0 0 60 60", width: "120", height: "120", class: "cable-plug" });
+  projectorSvg.append(plugShape(challenge.port, { class: "plug-shape port-shape" }));
+  const projector = document.createElement("div");
+  projector.className = "projector";
+  projector.append(projectorSvg);
+
+  const cablesRow = document.createElement("div");
+  cablesRow.className = "cable-row";
+
+  function attempt(index, cableEl) {
+    if (challenge.cables[index] === challenge.port) playAnimation(projectorSvg, "plugged");
+    else playAnimation(cableEl, "shake");
+    sendTaskInput(taskId, { cable: index });
+  }
+
+  projector.addEventListener("dragover", (event) => event.preventDefault());
+  projector.addEventListener("drop", (event) => {
+    event.preventDefault();
+    const index = Number(event.dataTransfer.getData("text/plain"));
+    attempt(index, cablesRow.children[index]);
+  });
+  projector.addEventListener("click", () => {
+    const selected = cablesRow.querySelector(".cable.selected");
+    if (!selected) return;
+    selected.classList.remove("selected");
+    attempt(Number(selected.dataset.index), selected);
+  });
+
+  challenge.cables.forEach((type, index) => {
+    const cableEl = document.createElement("div");
+    cableEl.className = "cable";
+    cableEl.draggable = true;
+    cableEl.tabIndex = 0;
+    cableEl.dataset.index = String(index);
+    cableEl.setAttribute("role", "button");
+    cableEl.setAttribute("aria-label", `${type} cable`);
+    const svg = svgEl("svg", { viewBox: "0 0 60 60", width: "56", height: "56", class: "cable-plug" });
+    svg.append(plugShape(type, { class: "plug-shape" }));
+    const label = document.createElement("span");
+    label.className = "cable-name";
+    label.textContent = type;
+    cableEl.append(svg, label);
+    cableEl.addEventListener("dragstart", (event) => {
+      event.dataTransfer.setData("text/plain", String(index));
+      cableEl.classList.add("dragging");
+    });
+    cableEl.addEventListener("dragend", () => cableEl.classList.remove("dragging"));
+    cableEl.addEventListener("click", () => {
+      const alreadySelected = cableEl.classList.contains("selected");
+      cablesRow.querySelectorAll(".cable.selected").forEach((el) => el.classList.remove("selected"));
+      if (!alreadySelected) cableEl.classList.add("selected");
+    });
+    cablesRow.append(cableEl);
+  });
+
+  wrap.append(status, projector, cablesRow);
+  ui.minigameContent.append(wrap);
+}
+
+// nata — "Protect your pastel de nata": tap the seagull's cell before it jumps away. The
+// tart itself is original artwork, a small inline SVG (no image files, spec 012).
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, value);
+  return el;
+}
+
+// `eaten`: the time-out look, the tart gone and a few crumbs left.
+function renderNataTart(eaten) {
+  const svg = svgEl("svg", { viewBox: "0 0 80 80", width: "72", height: "72", class: "nata-tart" });
+  if (eaten) {
+    svg.append(
+      svgEl("ellipse", { cx: 40, cy: 58, rx: 20, ry: 5, fill: "#b9793a", opacity: "0.3" }),
+      svgEl("circle", { cx: 30, cy: 56, r: 3, fill: "#e9c27a" }),
+      svgEl("circle", { cx: 48, cy: 60, r: 2.5, fill: "#b9793a" }),
+      svgEl("circle", { cx: 40, cy: 50, r: 2, fill: "#7a4a16" }),
+    );
+  } else {
+    svg.append(
+      svgEl("ellipse", { cx: 40, cy: 46, rx: 34, ry: 26, fill: "#e9c27a", stroke: "#b9793a", "stroke-width": 3 }),
+      svgEl("ellipse", { cx: 40, cy: 40, rx: 26, ry: 19, fill: "#e8a33d" }),
+      svgEl("ellipse", {
+        cx: 40, cy: 40, rx: 26, ry: 19, fill: "none",
+        stroke: "#8a5a1e", "stroke-width": 1.5, "stroke-dasharray": "3 4",
+      }),
+      svgEl("ellipse", { cx: 30, cy: 33, rx: 7, ry: 5, fill: "#7a4a16", opacity: "0.55" }),
+      svgEl("ellipse", { cx: 50, cy: 37, rx: 5, ry: 4, fill: "#7a4a16", opacity: "0.45" }),
+    );
+  }
+  return svg;
+}
+
+// A brief wobble on a hit; restarted even on a fast double tap.
+function flinchTart(svg) {
+  svg.classList.remove("hit");
+  void svg.getBBox();
+  svg.classList.add("hit");
+}
+
+function renderSeagull(taskId, challenge) {
+  const tart = renderNataTart(false);
+  const hits = document.createElement("p");
+  hits.className = "minigame-hits";
+  hits.textContent = `Hits: ${challenge.hits}/5`;
+  const grid = document.createElement("div");
+  grid.className = "minigame-grid";
+  grid.style.gridTemplateColumns = "repeat(3, 1fr)";
+  for (let i = 0; i < 9; i++) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = i === challenge.cell ? "\u{1F426}" : "";
+    button.addEventListener("click", () => {
+      if (i === challenge.cell) flinchTart(tart);
+      sendTaskInput(taskId, i);
+    });
+    grid.append(button);
+  }
+  ui.minigameContent.append(tart, hits, grid);
+}
+
+// The seagull time-out view: the tart gone, the hit count frozen at its last value, no grid.
+function renderSeagullEaten(challenge) {
+  ui.minigameContent.replaceChildren();
+  const tart = renderNataTart(true);
+  const hits = document.createElement("p");
+  hits.className = "minigame-hits";
+  hits.textContent = `Hits: ${challenge.hits}/5`;
+  const gone = document.createElement("p");
+  gone.textContent = "A seagull took it.";
+  ui.minigameContent.append(tart, hits, gone);
+}
+
+ui.minigameClose.addEventListener("click", () => {
+  if (latestState && latestState.doing) send({ type: "task_cancel", task: latestState.doing.task });
+  ui.minigameClose.blur();
 });
 
 // --- Lights sabotage (spec 008, part 8) -------------------------------------------------
@@ -935,6 +1311,7 @@ class CampusScene extends Phaser.Scene {
     this.sprites = new Map(); // id -> character from Render.makeCharacter()
     this.exams = new Map(); // failed exam id -> sheet from Render.makeExam()
     this.taskMarkers = new Map(); // own open task id -> mark from Render.makeTaskMarker()
+    this.edgeArrows = new Map(); // own open task id -> arrow from Render.makeEdgeArrow()
     this.lastSent = { dx: 0, dy: 0 };
     // The own character, predicted in whole server ticks (see updateOwn).
     this.predicted = null; // position after the newest predicted tick
@@ -942,6 +1319,7 @@ class CampusScene extends Phaser.Scene {
     this.trail = []; // the last TRAIL_TICKS predicted positions, oldest first
     this.tickTime = 0; // seconds of frame time not yet used up by a tick
     this.drawOffset = { x: 0, y: 0 }; // how far the picture still is from the prediction
+    this.minigameWasOpen = false; // the mini-game panel's open/closed state one tick ago
   }
 
   create() {
@@ -1029,6 +1407,7 @@ class CampusScene extends Phaser.Scene {
     // Tasks: marks on the own open task places and the ring while one runs. The ring
     // moves smoothly from the time the task was first seen; the seconds are the server's.
     this.syncTaskMarkers(latestState.tasks || [], own);
+    this.syncEdgeArrows(latestState.tasks || [], lastPhase === "meeting");
     const doing = lastPhase === "playing" ? latestState.doing : null;
     const fixing = lastPhase === "playing" ? latestState.fixing : null;
     if (own && doing) {
@@ -1066,18 +1445,44 @@ class CampusScene extends Phaser.Scene {
 
   // One mark per own open task; a finished task (and a new round) removes its mark.
   // A mark fades while the own character stands at it, so it does not cover the face.
+  // Repositioned every frame: a multi-step task's mark must follow its current station once
+  // an earlier step is done (spec 012, part 4), the only place this task entry's x/y mean.
   syncTaskMarkers(tasks, own) {
     const open = new Map(tasks.filter((task) => !task.done).map((task) => [task.id, task]));
     for (const [id, task] of open) {
       if (!this.taskMarkers.has(id)) this.taskMarkers.set(id, Render.makeTaskMarker(this, task));
+      const marker = this.taskMarkers.get(id);
+      marker.setPosition(task.x, task.y);
       const near = own && Math.hypot(task.x - own.x, task.y - own.y) <= welcome.task_range;
-      this.taskMarkers.get(id).setAlpha(near ? 0.3 : 1);
+      marker.setAlpha(near ? 0.3 : 1);
     }
     for (const [id, marker] of this.taskMarkers) {
       if (!open.has(id)) {
         marker.destroy();
         this.taskMarkers.delete(id);
       }
+    }
+  }
+
+  // Edge arrows (spec 012): one per own open task, pointing off-screen places out. Hidden
+  // during a meeting, the same way the camera stops following the own character then
+  // (frameMeeting draws the table instead).
+  syncEdgeArrows(tasks, inMeeting) {
+    const open = new Map(tasks.filter((task) => !task.done).map((task) => [task.id, task]));
+    for (const [id, arrow] of this.edgeArrows) {
+      if (!open.has(id)) {
+        arrow.destroy();
+        this.edgeArrows.delete(id);
+      }
+    }
+    if (inMeeting) {
+      for (const arrow of this.edgeArrows.values()) arrow.setVisible(false);
+      return;
+    }
+    const camera = this.cameras.main;
+    for (const [id, task] of open) {
+      if (!this.edgeArrows.has(id)) this.edgeArrows.set(id, Render.makeEdgeArrow(this));
+      Render.updateEdgeArrow(this.edgeArrows.get(id), task, camera);
     }
   }
 
@@ -1149,9 +1554,15 @@ class CampusScene extends Phaser.Scene {
   predictTick() {
     let dx = 0;
     let dy = 0;
-    if (lastPhase === "ended" || lastPhase === "meeting") {
-      // The server rejects movement now and has already stopped everyone. Sending and
-      // predicting nothing keeps the own character where the server put it.
+    // The mini-game panel open/closed, client-side only: the server still accepts movement
+    // during a task exactly as before (spec 012, part 2), so nothing breaks if a message
+    // does slip through, but tapping the panel must not also walk the character.
+    const minigameOpen = Boolean(minigameChallenge(latestState));
+    if (minigameOpen && !this.minigameWasOpen) this.sendDirection(0, 0); // stop right away
+    this.minigameWasOpen = minigameOpen;
+    if (lastPhase === "ended" || lastPhase === "meeting" || minigameOpen) {
+      // The server rejects movement now (or, for the panel, this browser stops sending it).
+      // Sending and predicting nothing keeps the own character where the server put it.
       this.lastSent = { dx: 0, dy: 0 };
     } else {
       ({ dx, dy } = this.readKeys());

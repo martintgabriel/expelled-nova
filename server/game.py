@@ -16,6 +16,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from server import minigames
+
 TICK_RATE = 20  # server updates per second
 SPEED = 160.0  # pixels per second
 STEP = SPEED / TICK_RATE  # pixels per tick (8)
@@ -30,6 +32,7 @@ MAX_MESSAGE_BYTES = 512
 RATE_LIMIT = 30  # messages per second per connection
 MESSAGE_TYPES = {"join", "input", "start", "restart"}  # joining, walking and the round
 MESSAGE_TYPES |= {"expel", "report", "meeting", "vote", "task", "door"}  # actions in a round
+MESSAGE_TYPES |= {"task_input", "task_cancel"}  # answering or closing a task's mini-game
 MESSAGE_TYPES |= {"sabotage", "fix"}  # the lights
 EXPEL_RANGE = 48  # px between centres, about 1.5 tiles
 EXPEL_COOLDOWN = 20  # seconds between two expels by the same examiner
@@ -100,8 +103,11 @@ class Player:
     meeting_used: bool = False  # one call at the meeting table per player per round
     tasks: list = field(default_factory=list)  # ids of this student's tasks (examiners: none)
     tasks_done: list = field(default_factory=list)  # ids of the finished ones
+    tasks_step: dict = field(default_factory=dict)  # task id -> stations finished so far
     doing: str | None = None  # id of the task this player is doing right now
-    doing_done_tick: int = 0  # the tick at which that task is done
+    doing_done_tick: int = 0  # plain-wait stations only: the tick at which that task is done
+    challenge: dict | None = None  # the running mini-game's state (spec 012), or None
+    task_note: str | None = None  # the latest wrong-answer/cancel/time-out message, or None
     fix_done_tick: int | None = None  # while fixing the lights: the tick at which they go on
 
 
@@ -290,13 +296,31 @@ def is_direction(value):
     return type(value) is int and value in (-1, 0, 1)
 
 
+def _normalize_station(raw):
+    """One station of a task, keeping only what the engine needs: a place, a title, an
+    area, and either a mini-game kind (spec 012) or a plain wait (spec 004, test maps only)."""
+    station = {"title": raw["title"], "area": raw["area"], "x": raw["x"], "y": raw["y"]}
+    if "minigame" in raw:
+        station["minigame"] = raw["minigame"]
+    else:
+        station["seconds"] = raw["seconds"]
+    return station
+
+
 class Game:
     def __init__(self, campus, rng=None):
         self.campus = campus
         self.tile = campus["tile_size"]
         self.vision_radius = VISION_TILES * self.tile  # px between centres
         self.grid = campus["grid"]
-        self.tasks = {task["id"]: task for task in campus.get("tasks", [])}  # task places by id
+        self.tasks = {
+            raw["id"]: {
+                "id": raw["id"],
+                "joke": raw.get("joke"),
+                "steps": [_normalize_station(s) for s in raw.get("steps", [raw])],
+            }
+            for raw in campus.get("tasks", [])
+        }  # task id -> {id, joke, steps}; a flat task (no "steps") normalises to one station
         self.doors = {door["id"]: door for door in campus.get("staff_doors", [])}  # by id
         self.sight = sight_grid(campus)  # which tiles block sight; walls never change
         self.lights_out_radius = LIGHTS_OUT_TILES * self.tile  # px, for students in the dark
@@ -371,10 +395,11 @@ class Game:
         for player in self.players.values():
             player.role = EXAMINER if player.id in examiners else STUDENT
             player.next_expel_tick = self.tick + EXPEL_COOLDOWN_TICKS  # first cooldown
-            if player.role == STUDENT:
-                # Different tasks for each student; a map with fewer tasks deals what it has.
-                count = min(TASKS_PER_STUDENT, len(self.tasks))
-                player.tasks = self.rng.sample(list(self.tasks), count)
+            # Different tasks for each player; a map with fewer tasks deals what it has.
+            # Examiners get the same count from the same pool as fake tasks (spec 012,
+            # part 3), which never count towards the task win (see _task_progress).
+            count = min(TASKS_PER_STUDENT, len(self.tasks))
+            player.tasks = self.rng.sample(list(self.tasks), count)
         self.next_sabotage_tick = self.tick + SABOTAGE_COOLDOWN_TICKS  # first cooldown
         self.phase = PLAYING
 
@@ -432,6 +457,8 @@ class Game:
 
         target.alive = False
         target.doing = None  # a running task is cancelled; the ghost may start it again
+        target.challenge = None
+        target.task_note = None
         target.fix_done_tick = None  # and so is fixing the lights
         self.failed_exams.append(FailedExam(f"e{self.next_exam_id}", target.x, target.y))
         self.next_exam_id += 1
@@ -557,6 +584,8 @@ class Game:
         for player in self.players.values():
             player.dx = player.dy = 0
             player.doing = None  # no task runs or finishes during a meeting
+            player.challenge = None
+            player.task_note = None
             player.fix_done_tick = None
         self.lights_on = True  # a meeting turns the lights back on
 
@@ -680,6 +709,8 @@ class Game:
         for player in self.players.values():
             player.dx = player.dy = 0  # movement is rejected now, so nobody keeps walking
             player.doing = None  # and no task keeps running
+            player.challenge = None
+            player.task_note = None
             player.fix_done_tick = None
 
     def restart(self, player_id):
@@ -712,17 +743,25 @@ class Game:
             player.meeting_used = False
             player.tasks = []
             player.tasks_done = []
+            player.tasks_step = {}
             player.doing = None
+            player.challenge = None
+            player.task_note = None
             player.fix_done_tick = None
 
-    # --- Tasks (spec 004) -------------------------------------------------------------
+    # --- Tasks (spec 004, mini-games and fake tasks spec 012) -------------------------
 
     def task(self, player_id, task_id):
-        """A student, alive or ghost, starts one of their own open tasks at its place.
+        """A student or a living examiner starts one of their own open tasks at its
+        current station's place (spec 012, part 4: a multi-step task has more than one).
 
-        The task then runs for its seconds (see _step_tasks). The sender is checked before
-        the task. An unknown task and another player's task get the same reason, so a
-        browser cannot find out other players' tasks by trying ids.
+        A living examiner has fake tasks exactly like a student's real ones (spec 012,
+        part 3), except a ghost examiner cannot start one; a ghost student still can,
+        unchanged (R4). A station with a mini-game creates a challenge (see
+        server/minigames.py); a station without one (test maps only) runs for its
+        seconds, as spec 004 built it. The sender is checked before the task: an unknown
+        task and another player's task get the same reason, so a browser cannot find out
+        other players' tasks by trying.
         """
         player = self.players.get(player_id)
         if player is None:
@@ -733,8 +772,8 @@ class Game:
             raise GameError("Meeting in progress")
         if self.phase != PLAYING:
             raise GameError("The game has not started yet")
-        if player.role != STUDENT:
-            raise GameError("Only students have tasks")
+        if player.role == EXAMINER and not player.alive:
+            raise GameError("Ghosts cannot do tasks")
         if not isinstance(task_id, str):
             raise GameError("Task must be a task id")
         if task_id not in player.tasks:
@@ -747,14 +786,99 @@ class Game:
             raise GameError("You are fixing the lights")
         if self._distance_to_task(player, task_id) > TASK_RANGE:
             raise GameError("Too far from the task")
+        station = self._current_station(player, task_id)
         player.doing = task_id
-        player.doing_done_tick = self.tick + self.tasks[task_id]["seconds"] * TICK_RATE
+        player.task_note = None
+        if "minigame" in station:
+            player.challenge = minigames.make_challenge(station["minigame"], self.rng, self.tick, TICK_RATE)
+        else:
+            player.challenge = None
+            player.doing_done_tick = self.tick + station["seconds"] * TICK_RATE
+
+    def task_input(self, player_id, task_id, value):
+        """An answer to the mini-game of the task the player is currently doing.
+
+        Checked in order: phase, is this the task the player is doing, does its station
+        even have a mini-game, still in range, then whether `value` has the right shape
+        for that mini-game's kind. Each of those is a rejection that changes nothing. A
+        value that is the wrong (but valid) answer is accepted: the mini-game's own rule
+        decides what changes (usually a new challenge) and leaves a short task_note.
+        """
+        player = self.players.get(player_id)
+        if player is None:
+            raise GameError("Unknown player")
+        if self.phase == ENDED:
+            raise GameError("Game is over")
+        if self.phase == MEETING:
+            raise GameError("Meeting in progress")
+        if self.phase != PLAYING:
+            raise GameError("The game has not started yet")
+        if not isinstance(task_id, str):
+            raise GameError("Task must be a task id")
+        if player.doing != task_id:
+            raise GameError("You are not doing this task")
+        if player.challenge is None:
+            raise GameError("This task has no mini-game")
+        if self._distance_to_task(player, task_id) > TASK_RANGE:
+            raise GameError("Too far from the task")
+        try:
+            minigames.validate_value(player.challenge["kind"], value)
+        except ValueError as error:
+            raise GameError(str(error)) from None
+        done, note = minigames.apply_answer(player.challenge, value, self.rng, self.tick, TICK_RATE)
+        if done:
+            player.task_note = None
+            self._finish_step(player, task_id)
+            if self._all_tasks_done():
+                self._end(STUDENTS_WIN)
+        else:
+            player.task_note = note
+
+    def cancel_task(self, player_id, task_id):
+        """Closing the mini-game panel without walking away. Only resets the running
+        station; an earlier finished step of a multi-step task is unaffected."""
+        player = self.players.get(player_id)
+        if player is None:
+            raise GameError("Unknown player")
+        if self.phase == ENDED:
+            raise GameError("Game is over")
+        if self.phase == MEETING:
+            raise GameError("Meeting in progress")
+        if self.phase != PLAYING:
+            raise GameError("The game has not started yet")
+        if not isinstance(task_id, str):
+            raise GameError("Task must be a task id")
+        if player.doing != task_id:
+            raise GameError("You are not doing this task")
+        player.doing = None
+        player.challenge = None
+        player.task_note = "Task cancelled."
+
+    def _current_station(self, player, task_id):
+        """The station of `task_id` the player is on now: the first not-yet-finished one."""
+        steps = self.tasks[task_id]["steps"]
+        index = min(player.tasks_step.get(task_id, 0), len(steps) - 1)
+        return steps[index]
+
+    def _finish_step(self, player, task_id):
+        """The player's current station of `task_id` is done: move on to the next one,
+        or, if that was the last, mark the whole task done. Always clears the running
+        attempt. A multi-step task counts once, at its last station (spec 012, part 4)."""
+        steps = self.tasks[task_id]["steps"]
+        index = min(player.tasks_step.get(task_id, 0), len(steps) - 1)
+        player.tasks_step[task_id] = index + 1
+        if index + 1 >= len(steps):
+            player.tasks_done.append(task_id)
+        player.doing = None
+        player.challenge = None
 
     def _step_tasks(self):
         """Called every tick while playing, after the movement.
 
-        A task whose player is no longer within TASK_RANGE is cancelled: back to zero, still
-        open. A task whose time is up is done, exactly once. Then the task win (R6).
+        A station whose player is no longer within TASK_RANGE is cancelled: back to the
+        start of that station, still open. A mini-game whose time limit is up is cancelled
+        the same way, with a note. A plain-wait station (test maps only) whose time is up is
+        done, exactly once. Then the task win (R6).
         """
         finished = False
         for player in self.players.values():
@@ -762,16 +886,24 @@ class Game:
                 continue
             if self._distance_to_task(player, player.doing) > TASK_RANGE:
                 player.doing = None
-            elif self.tick >= player.doing_done_tick:
-                player.tasks_done.append(player.doing)
-                player.doing = None
+                player.challenge = None
+                player.task_note = None
+                continue
+            if player.challenge is not None:
+                if self.tick >= player.challenge["deadline_tick"]:
+                    player.task_note = minigames.TIMEOUT_NOTES[player.challenge["kind"]]
+                    player.doing = None
+                    player.challenge = None
+                continue
+            if self.tick >= player.doing_done_tick:
+                self._finish_step(player, player.doing)
                 finished = True
         if finished and self._all_tasks_done():
             self._end(STUDENTS_WIN)
 
     def _distance_to_task(self, player, task_id):
-        task = self.tasks[task_id]
-        x, y = self._tile_centre(task["x"], task["y"])
+        station = self._current_station(player, task_id)
+        x, y = self._tile_centre(station["x"], station["y"])
         return math.hypot(x - player.x, y - player.y)
 
     def _task_progress(self):
@@ -784,12 +916,20 @@ class Game:
         return total > 0 and done == total  # a map without tasks has no task win
 
     def _task_for(self, player, task_id):
-        """One of the player's own tasks as they receive it; the joke only once it is done."""
+        """One of the player's own tasks as they receive it: the current station's title
+        and place (spec 012, part 4), with "step"/"steps" added for a multi-step task. The
+        joke only shows once the whole task is done."""
         task = self.tasks[task_id]
-        x, y = self._tile_centre(task["x"], task["y"])
+        steps = task["steps"]
         done = task_id in player.tasks_done
-        entry = {"id": task_id, "title": task["title"], "area": task["area"]}
+        index = len(steps) - 1 if done else min(player.tasks_step.get(task_id, 0), len(steps) - 1)
+        station = steps[index]
+        x, y = self._tile_centre(station["x"], station["y"])
+        entry = {"id": task_id, "title": station["title"], "area": station["area"]}
         entry.update({"x": x, "y": y, "done": done})
+        if len(steps) > 1:
+            entry["step"] = index + 1
+            entry["steps"] = len(steps)
         if done:
             entry["joke"] = task["joke"]
         return entry
@@ -1095,8 +1235,9 @@ class Game:
           (expel and staff door).
         - A ghost (and everyone once the game has ended) sees all players and who is a ghost.
         - Only in ENDED does anyone get other players' roles, together with the winner.
-        - From the start on, everyone gets the shared task progress. A student also gets
-          their own tasks and the one they are doing; never another player's (spec 004).
+        - From the start on, everyone gets the shared task progress (students only, spec
+          004) and their own tasks and the one they are doing, student or examiner alike
+          (spec 012, part 3: an examiner's are fake); never another player's.
         - From the start on, everyone gets whether the lights are on and how far they
           themselves see. A student also gets their own fixing, an examiner the cooldown.
         """
@@ -1123,10 +1264,20 @@ class Game:
                 state["sabotage_cooldown"] = self._seconds_until(self.next_sabotage_tick)
             done, total = self._task_progress()
             state["task_progress"] = {"done": done, "total": total}
-            if me.role == STUDENT:
-                state["tasks"] = [self._task_for(me, task_id) for task_id in me.tasks]
-                state["doing"] = None
-                if me.doing is not None:
+            # Every player has tasks from here on, student or examiner (spec 012, part
+            # 3): an examiner's are fake and never count in task_progress above, but the
+            # shape of what they receive is exactly a student's.
+            state["tasks"] = [self._task_for(me, task_id) for task_id in me.tasks]
+            state["doing"] = None
+            state["task_note"] = me.task_note
+            if me.doing is not None:
+                if me.challenge is not None:
+                    state["doing"] = {
+                        "task": me.doing,
+                        "seconds_left": self._seconds_until(me.challenge["deadline_tick"]),
+                        "challenge": minigames.public_view(me.challenge, self.tick, TICK_RATE),
+                    }
+                else:
                     seconds_left = self._seconds_until(me.doing_done_tick)
                     state["doing"] = {"task": me.doing, "seconds_left": seconds_left}
         if see_ghosts:

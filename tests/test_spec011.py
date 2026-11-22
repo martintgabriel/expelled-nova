@@ -849,11 +849,17 @@ def test_every_place_of_the_game_can_be_reached_from_the_first_spawn():
     campus = load_map()
     reachable = walkable_from(campus, campus["spawns"][0])
     places = {f"spawn {index}": tuple(spawn) for index, spawn in enumerate(campus["spawns"])}
-    places.update({f"task {task['id']}": (task["x"], task["y"]) for task in campus["tasks"]})
+    station_count = 0
+    for task in campus["tasks"]:
+        stations = task.get("steps") or [task]
+        station_count += len(stations)
+        for index, station in enumerate(stations):
+            label = f"task {task['id']}" if len(stations) == 1 else f"task {task['id']} step {index + 1}"
+            places[label] = (station["x"], station["y"])
     places.update({f"staff door {door['id']}": (door["x"], door["y"]) for door in campus["staff_doors"]})
     places["light switch"] = tuple(campus["light_switch"])
     places["meeting point"] = tuple(campus["meeting_point"])
-    assert len(places) == 10 + 8 + 4 + 2
+    assert len(places) == 10 + station_count + 4 + 2
     for name, tile in places.items():
         assert tile in reachable, name
     # ... and so can every floor tile and every piece of furniture.
@@ -935,7 +941,11 @@ def test_the_meeting_table_does_not_cover_furniture_or_a_task_place():
     campus = load_map()
     cx, cy = table_centre()
     occupied = [(c, r) for _, c, r in decor_tiles(campus, FURNITURE + ["beanbag"])]
-    occupied += [(task["x"], task["y"]) for task in campus["tasks"]]
+    occupied += [
+        (station["x"], station["y"])
+        for task in campus["tasks"]
+        for station in task.get("steps", [task])
+    ]
     occupied += [(door["x"], door["y"]) for door in campus["staff_doors"]] + [tuple(campus["light_switch"])]
     for col, row in occupied:
         x, y = centre(col, row)

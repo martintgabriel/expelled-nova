@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from server import game as rules
+from server import minigames
 from server.game import TICK_RATE, Game, GameError, load_map, parse_message
 from server.main import app
 
@@ -43,17 +44,43 @@ TASK_MAP = {
 # A map without tasks, like the maps of the earlier specs.
 PLAIN_MAP = {key: value for key, value in TASK_MAP.items() if key != "tasks"}
 
-# The task places of spec 004: id -> (area, column, row, seconds).
-SPEC_TASKS = {
-    "certificate": ("Student Services", 35, 3, 8),  # tiles of the spec 009 campus
-    "helpdesk": ("Main Entrance", 20, 3, 6),
-    "print": ("Library", 37, 20, 7),
-    "coffee": ("Food Court", 37, 12, 5),
-    "eduroam": ("Courtyard", 12, 15, 6),
-    "socket": ("Auditorium", 30, 40, 5),
-    "gate": ("Main Entrance", 24, 6, 5),
-    "nata": ("Courtyard", 19, 23, 5),
+# A map with one 2-step task ("cert"), far apart, for testing the multi-step engine
+# (spec 012, part 4) on its own, independent of the real campus's "certificate".
+MULTISTEP_MAP = {
+    **{key: value for key, value in TASK_MAP.items() if key != "tasks"},
+    "tasks": [
+        {
+            "id": "cert",
+            "joke": "Two stamps later.",
+            "steps": [
+                {"title": "Step A", "area": "Hall", "x": 6, "y": 2, "minigame": "paper_jam"},
+                {"title": "Step B", "area": "Hall", "x": 20, "y": 10, "minigame": "ticket"},
+            ],
+        },
+    ],
 }
+
+# The task places of spec 012: id -> a list of (area, column, row, mini-game kind), one
+# tuple per station. Replaces spec 004's SPEC_TASKS table (which had "coffee" and
+# "eduroam" with a plain "seconds" wait; spec 012 deletes both and gives every remaining
+# task a mini-game instead). "certificate" has two stations (spec 012, part 4).
+SPEC_TASKS = {
+    "certificate": [
+        ("Library", 33, 22, "paper_jam"),
+        ("Student Services", 35, 3, "ticket"),
+    ],
+    "helpdesk": [("Main Entrance", 20, 3, "translate")],
+    "print": [("Library", 37, 20, "paper_jam")],
+    "socket": [("Auditorium", 30, 40, "socket")],
+    "gate": [("Main Entrance", 24, 6, "card")],
+    "nata": [("Courtyard", 19, 23, "seagull")],
+}
+
+
+def stations_of(task):
+    """A task's stations as raw campus.json dicts: its "steps" list, or itself as the
+    only station (a one-station task, spec 012 part 4)."""
+    return task["steps"] if "steps" in task else [task]
 
 
 # --- Helpers ----------------------------------------------------------------------
@@ -158,26 +185,72 @@ def assert_rejected(game, action, reason):
     assert full_state(game) == before
 
 
+def multistep_round(count=4, seed=0):
+    """A started game on MULTISTEP_MAP: every player is dealt its one task, "cert"."""
+    game = Game(MULTISTEP_MAP, rng=random.Random(seed))
+    players = [game.join(f"Player {i}") for i in range(count)]
+    game.start(players[0].id)
+    students = [p for p in players if p.role == "student"]
+    return game, students
+
+
+def multistep_place(index):
+    """The centre of MULTISTEP_MAP's "cert" station `index` (0 or 1), in pixels."""
+    station = MULTISTEP_MAP["tasks"][0]["steps"][index]
+    return (station["x"] + 0.5) * TILE, (station["y"] + 0.5) * TILE
+
+
+def solve_paper_jam(game, player, task_id):
+    for cell in list(player.challenge["jams"]):
+        game.task_input(player.id, task_id, cell)
+
+
+def solve_ticket(game, player, task_id):
+    wait(game, player.challenge["number"] * TICK_RATE)
+    game.task_input(player.id, task_id, True)
+
+
 # --- Map data ---------------------------------------------------------------------
 
 
-def test_the_campus_has_the_eight_task_places_of_spec_004():
+def test_the_campus_has_the_six_task_places_of_spec_012():
+    # Replaces spec 004's test of the same shape: "coffee" and "eduroam" are gone (no
+    # mini-game fits them), every remaining task has a "minigame" kind instead of a plain
+    # "seconds" wait (spec 012, part 1), and "certificate" has two stations instead of
+    # one flat place (spec 012, part 4), so there is no single flat table any more.
     tasks = load_map()["tasks"]
-    assert len({task["id"] for task in tasks}) == len(tasks) == 8  # unique ids
-    assert {t["id"]: (t["area"], t["x"], t["y"], t["seconds"]) for t in tasks} == SPEC_TASKS
+    assert len({task["id"] for task in tasks}) == len(tasks) == 6  # unique ids
+    found = {
+        task["id"]: [(s["area"], s["x"], s["y"], s["minigame"]) for s in stations_of(task)]
+        for task in tasks
+    }
+    assert found == SPEC_TASKS
 
 
-def test_every_campus_task_is_on_a_floor_tile_in_its_area_and_takes_5_to_10_seconds():
+def test_no_campus_task_is_a_plain_waiting_task_and_every_station_is_a_floor_tile():
+    # Replaces spec 004's test of the same shape, which checked a "seconds" wait on every
+    # task; spec 012 requires a mini-game kind instead (the engine still accepts a plain
+    # wait, but only test maps use it), checked on every station of every task, including
+    # both of "certificate"'s stations (spec 012, part 4).
     campus = load_map()
     game = Game(campus)
     for task in campus["tasks"]:
-        x, y = (task["x"] + 0.5) * TILE, (task["y"] + 0.5) * TILE
-        assert campus["grid"][task["y"]][task["x"]] == ".", task["id"]
-        assert not game.blocked(x, y), task["id"]
-        assert game.area_at(x, y) == task["area"], task["id"]
-        assert 5 <= task["seconds"] <= 10, task["id"]
-        assert task["title"] and task["joke"], task["id"]
-        assert [task["x"], task["y"]] != campus["meeting_point"], task["id"]
+        assert task["joke"], task["id"]
+        for station in stations_of(task):
+            assert "seconds" not in station, task["id"]
+            assert station["minigame"] in minigames.KINDS, task["id"]
+            x, y = (station["x"] + 0.5) * TILE, (station["y"] + 0.5) * TILE
+            assert campus["grid"][station["y"]][station["x"]] == ".", task["id"]
+            assert not game.blocked(x, y), task["id"]
+            assert game.area_at(x, y) == station["area"], task["id"]
+            assert station["title"], task["id"]
+            assert [station["x"], station["y"]] != campus["meeting_point"], task["id"]
+
+
+def test_certificates_two_stations_are_at_different_tiles():
+    steps = next(t for t in load_map()["tasks"] if t["id"] == "certificate")["steps"]
+    assert len(steps) == 2
+    assert (steps[0]["x"], steps[0]["y"]) != (steps[1]["x"], steps[1]["y"])
 
 
 def test_the_task_constants():
@@ -189,15 +262,15 @@ def test_the_task_constants():
 
 
 @pytest.mark.parametrize("count", [4, 7, 10])
-def test_every_student_gets_three_different_tasks_and_examiners_none(count):
+def test_every_player_gets_three_different_tasks_from_the_same_pool(count):
+    # Replaces spec 004's test of the same shape: examiners now get TASKS_PER_STUDENT
+    # fake tasks too, from the same pool as students (spec 012, part 3).
     game, examiners, students = new_round(count)
     known = {task["id"] for task in TASK_MAP["tasks"]}
-    for student in students:
-        assert len(student.tasks) == len(set(student.tasks)) == TASKS_PER_STUDENT
-        assert set(student.tasks) <= known
-        assert student.tasks_done == [] and student.doing is None
-    for examiner in examiners:
-        assert examiner.tasks == []
+    for player in (*examiners, *students):
+        assert len(player.tasks) == len(set(player.tasks)) == TASKS_PER_STUDENT
+        assert set(player.tasks) <= known
+        assert player.tasks_done == [] and player.doing is None
 
 
 def test_the_same_seed_deals_the_same_tasks():
@@ -209,7 +282,7 @@ def test_the_same_seed_deals_the_same_tasks():
     assert len({json.dumps(dealt(seed)) for seed in range(10)}) > 1  # and it is random
 
 
-def test_on_the_campus_every_student_gets_three_of_the_eight_tasks():
+def test_on_the_campus_every_student_gets_three_of_the_six_tasks():
     game, _, students = new_round(10, campus=load_map())
     for student in students:
         assert len(set(student.tasks)) == TASKS_PER_STUDENT
@@ -306,6 +379,95 @@ def test_two_students_can_do_the_same_task_place_at_the_same_time():
     assert progress(game, first)["done"] == 2  # both count, in the same tick
 
 
+# --- Fake tasks for examiners (spec 012, part 3) ------------------------------------
+
+
+def test_an_examiners_fake_task_behaves_exactly_like_a_students_real_one():
+    game, (examiner,), students = new_round(4)
+    task_id = examiner.tasks[0]
+    do_task(game, examiner, task_id)
+    assert entry(game, examiner, task_id)["done"] is True
+    assert entry(game, examiner, task_id)["joke"]
+
+
+def test_finishing_an_examiners_fake_task_never_counts_or_ends_the_game():
+    game, (examiner,), students = new_round(4)
+    do_task(game, examiner, examiner.tasks[0])
+    assert examiner.tasks_done == [examiner.tasks[0]]
+    assert game.phase == "playing"
+    for player in game.players.values():
+        assert progress(game, player) == {"done": 0, "total": 9}  # only students count
+
+
+def test_a_ghost_examiner_cannot_start_a_task_but_a_ghost_student_still_can():
+    # R4, unchanged: the ghost-student half is already covered by
+    # test_a_ghost_student_can_start_and_finish_their_own_task.
+    game, examiners, students = new_round(7)
+    target = examiners[0]
+    surf(game, target, students)
+    go_to(game, target, target.tasks[0])
+    assert_rejected(game, lambda: game.task(target.id, target.tasks[0]), "Ghosts cannot do tasks")
+
+
+# --- Multi-step tasks (spec 012, part 4) --------------------------------------------
+
+
+def test_the_second_station_cannot_be_started_before_the_first_is_done_and_only_at_its_place():
+    game, students = multistep_round()
+    student = students[0]
+    student.x, student.y = multistep_place(1)  # standing at the second station already
+    assert_rejected(game, lambda: game.task(student.id, "cert"), "Too far from the task")
+
+
+def test_finishing_the_first_station_moves_the_task_to_the_second_stations_place_and_title():
+    game, students = multistep_round()
+    student = students[0]
+    student.x, student.y = multistep_place(0)
+    game.task(student.id, "cert")
+    solve_paper_jam(game, student, "cert")
+    assert student.tasks_step.get("cert") == 1
+    assert student.tasks_done == []  # not finished yet
+    assert doing(game, student) is None  # a new "task" message is needed for the next step
+    moved = entry(game, student, "cert")
+    assert moved["done"] is False
+    assert (moved["step"], moved["steps"]) == (2, 2)
+    assert moved["title"] == "Step B"
+    assert (moved["x"], moved["y"]) == multistep_place(1)
+    assert progress(game, student) == {"done": 0, "total": 3}  # 3 students, 1 task each
+
+
+def test_cancelling_the_second_station_leaves_the_first_stations_completion_in_place():
+    game, students = multistep_round()
+    student = students[0]
+    student.x, student.y = multistep_place(0)
+    game.task(student.id, "cert")
+    solve_paper_jam(game, student, "cert")
+    student.x, student.y = multistep_place(1)
+    game.task(student.id, "cert")
+    game.cancel_task(student.id, "cert")
+    assert student.tasks_step.get("cert") == 1  # the first step's completion survives
+    assert doing(game, student) is None
+    assert game.snapshot_for(student.id)["task_note"] == "Task cancelled."
+    game.task(student.id, "cert")  # the second station can be started again
+    assert doing(game, student)["task"] == "cert"
+
+
+def test_finishing_the_second_station_finishes_the_task_once_and_reveals_the_joke():
+    game, students = multistep_round()
+    student = students[0]
+    student.x, student.y = multistep_place(0)
+    game.task(student.id, "cert")
+    solve_paper_jam(game, student, "cert")
+    student.x, student.y = multistep_place(1)
+    game.task(student.id, "cert")
+    solve_ticket(game, student, "cert")
+    assert student.tasks_done == ["cert"]
+    assert progress(game, student) == {"done": 1, "total": 3}  # 3 students, 1 task each
+    done = entry(game, student, "cert")
+    assert done["done"] is True
+    assert done["joke"] == "Two stamps later."
+
+
 # --- What each player receives -----------------------------------------------------
 
 
@@ -385,16 +547,51 @@ def task_after_the_end():
     return game, lambda: game.task(students[0].id, students[0].tasks[0])
 
 
-def task_by_an_examiner():
-    game, (examiner,), _ = new_round(4)
-    go_to(game, examiner, "t1")
-    return game, lambda: game.task(examiner.id, "t1")
+def surf(game, target, voters):
+    """Vote `target` off at a meeting called by someone else, running it to the end.
+
+    Every living player must have voted for the voting to close on the next tick
+    (otherwise it would only close once MEETING_SECONDS have passed): `voters` vote for
+    `target`, everyone else still alive (including `target`) skips.
+    """
+    caller = next(p for p in voters if p.id != target.id)
+    game.call_meeting(caller.id)
+    for voter in voters:
+        game.vote(voter.id, target.id)
+    for player in game.players.values():
+        if player.alive and player.id not in game.meeting.votes:
+            game.vote(player.id, "skip")
+    game.step()  # the voting closes
+    wait(game, rules.RESULT_SECONDS * TICK_RATE)
+
+
+def task_by_a_ghost_examiner():
+    # A living examiner now has real fake tasks (spec 012, part 3), so only a ghost
+    # examiner is always rejected (R4): one examiner is surfed, the other stays alive
+    # so the game keeps playing.
+    game, examiners, students = new_round(7)
+    target = examiners[0]
+    surf(game, target, students)
+    go_to(game, target, target.tasks[0])
+    return game, lambda: game.task(target.id, target.tasks[0])
 
 
 def unknown_task_by_an_examiner():
     # The sender is checked before the task: an examiner learns nothing about task ids.
     game, (examiner,), _ = new_round(4)
     return game, lambda: game.task(examiner.id, "no-such-task")
+
+
+def another_players_task_by_an_examiner():
+    for seed in range(200):
+        game, examiners, students = new_round(4, seed)
+        examiner = examiners[0]
+        others_tasks = [t for s in students for t in s.tasks if t not in examiner.tasks]
+        if others_tasks:
+            break
+    task_id = others_tasks[0]
+    go_to(game, examiner, task_id)
+    return game, lambda: game.task(examiner.id, task_id)
 
 
 def another_students_task():
@@ -457,8 +654,9 @@ def task_by_an_unknown_player():
         (task_in_the_lobby, "The game has not started yet"),
         (task_in_a_meeting, "Meeting in progress"),
         (task_after_the_end, "Game is over"),
-        (task_by_an_examiner, "Only students have tasks"),
-        (unknown_task_by_an_examiner, "Only students have tasks"),
+        (task_by_a_ghost_examiner, "Ghosts cannot do tasks"),
+        (unknown_task_by_an_examiner, "Not one of your tasks"),
+        (another_players_task_by_an_examiner, "Not one of your tasks"),
         (another_students_task, "Not one of your tasks"),
         (unknown_task_id, "Not one of your tasks"),
         (task_already_done, "Task already done"),
@@ -738,11 +936,10 @@ def test_no_snapshot_contains_another_players_tasks_in_any_phase():
         for player in game.players.values():
             snapshot = game.snapshot_for(player.id)
             assert all(set(p) == PLAYER_KEYS for p in snapshot["players"])
-            if player.role == "student":
-                assert [task["id"] for task in snapshot["tasks"]] == player.tasks
-            else:
-                assert "tasks" not in snapshot and "doing" not in snapshot
-                assert "task_progress" in snapshot
+            # Both roles have real tasks now (spec 012, part 3): each player's own
+            # snapshot shows exactly their own, never another player's, real or fake.
+            assert [task["id"] for task in snapshot["tasks"]] == player.tasks
+            assert "task_progress" in snapshot
 
     check()  # playing
     do_task(game, students[0], students[0].tasks[0])
@@ -781,15 +978,17 @@ def test_finishing_a_task_shows_the_others_only_the_shared_progress():
         assert view == before[player_id]
 
 
-def test_an_examiner_cannot_tell_who_has_which_task_by_trying():
-    game, (examiner,), students = new_round(4)
-    reasons = set()
-    for task_id in ["t1", "t2", "t3", "t4", "t5", "t6", "no-such-task"]:
-        go_to(game, examiner, "t1")
-        with pytest.raises(GameError) as error:
-            game.task(examiner.id, task_id)
-        reasons.add(str(error.value))
-    assert reasons == {"Only students have tasks"}
+def test_an_examiner_cannot_tell_another_players_task_from_an_unknown_id():
+    # Replaces spec 004's test of the same shape: a living examiner now has real tasks
+    # of their own (spec 012, part 3), so the stronger guarantee is the student one
+    # (test_a_student_cannot_tell_another_students_task_from_an_unknown_id), applied here.
+    game, action = another_players_task_by_an_examiner()
+    with pytest.raises(GameError) as other:
+        action()
+    game, action = unknown_task_by_an_examiner()
+    with pytest.raises(GameError) as unknown:
+        action()
+    assert str(other.value) == str(unknown.value) == "Not one of your tasks"
 
 
 def test_a_student_cannot_tell_another_students_task_from_an_unknown_id():
@@ -815,6 +1014,10 @@ def receive_until(ws, predicate, limit=5 * TICK_RATE):
 
 
 def test_a_student_does_a_task_over_the_websocket_and_everyone_sees_the_progress(fresh_game):
+    # Seed 1 deals the real campus: Ada (joins first) is a student with "gate" (the
+    # "card" mini-game) as her first task, Bo is the examiner (same seed as the
+    # equivalent test in test_minigames.py).
+    fresh_game.rng = random.Random(1)
     with TestClient(app) as client:
         with (
             client.websocket_connect("/ws") as a,
@@ -835,17 +1038,20 @@ def test_a_student_does_a_task_over_the_websocket_and_everyone_sees_the_progress
                 for ws in clients
             ]
             roles = [state["role"] for state in states]
-            assert all(("tasks" in state) == (state["role"] == "student") for state in states)
+            # Every player has real tasks now, student or examiner (spec 012, part 3).
+            assert all("tasks" in state for state in states)
             assert all(state["task_progress"] == {"done": 0, "total": 9} for state in states)
 
             me = roles.index("student")
             ws, player = clients[me], fresh_game.players[ids[me]]
             task = states[me]["tasks"][0]
-            other = clients[roles.index("examiner")]
+            other_index = roles.index("examiner")
+            other, other_player = clients[other_index], fresh_game.players[ids[other_index]]
 
-            other.send_json({"type": "task", "task": task["id"]})
+            not_the_examiners_task = next(t for t in SPEC_TASKS if t not in other_player.tasks)
+            other.send_json({"type": "task", "task": not_the_examiners_task})
             error = receive_until(other, lambda m: m["type"] == "error")
-            assert error["reason"] == "Only students have tasks"
+            assert error["reason"] == "Not one of your tasks"
             ws.send_json({"type": "task", "task": "no-such-task"})
             error = receive_until(ws, lambda m: m["type"] == "error")
             assert error["reason"] == "Not one of your tasks"
@@ -854,8 +1060,14 @@ def test_a_student_does_a_task_over_the_websocket_and_everyone_sees_the_progress
             ws.send_json({"type": "task", "task": task["id"]})
             running = receive_until(ws, lambda m: m["type"] == "state" and m["doing"])
             assert running["doing"]["task"] == task["id"]
-            player.doing_done_tick = fresh_game.tick + 2  # skip the waiting
+            assert running["doing"]["challenge"]["kind"] == "card"
 
+            wrong_number = "00000" if player.challenge["number"] != "00000" else "11111"
+            ws.send_json({"type": "task_input", "task": task["id"], "value": wrong_number})
+            after_wrong = receive_until(ws, lambda m: m["type"] == "state" and m.get("task_note"))
+            assert after_wrong["task_note"] == "Beep. Red."
+
+            ws.send_json({"type": "task_input", "task": task["id"], "value": player.challenge["number"]})
             done = receive_until(
                 ws, lambda m: m["type"] == "state" and any(t["done"] for t in m["tasks"])
             )
@@ -866,4 +1078,5 @@ def test_a_student_does_a_task_over_the_websocket_and_everyone_sees_the_progress
                 other, lambda m: m["type"] == "state" and m["task_progress"]["done"] == 1
             )
             assert seen["task_progress"] == {"done": 1, "total": 9}
-            assert "tasks" not in seen
+            # The examiner's own (fake) tasks, never the student's.
+            assert [t["id"] for t in seen["tasks"]] == other_player.tasks

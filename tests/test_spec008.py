@@ -1127,7 +1127,8 @@ def test_the_campus_has_three_or_four_staff_doors_on_reachable_floor_tiles():
             continue
         seen.add((col, row))
         todo += [(col + 1, row), (col - 1, row), (col, row + 1), (col, row - 1)]
-    taken = [campus["meeting_point"]] + campus["spawns"] + [[t["x"], t["y"]] for t in campus["tasks"]]
+    taken = [campus["meeting_point"]] + campus["spawns"]
+    taken += [[s["x"], s["y"]] for t in campus["tasks"] for s in t.get("steps", [t])]
     for door in staff_doors:
         assert set(door) == {"id", "name", "x", "y"}
         assert door["id"] and door["name"]
@@ -1872,11 +1873,13 @@ def test_the_campus_light_switch_is_a_free_floor_tile_in_student_services():
     assert campus["grid"][row][col] == "."
     assert game.area_at((col + 0.5) * TILE, (row + 0.5) * TILE) == "Student Services"
     taken = [campus["meeting_point"]] + campus["spawns"]
-    taken += [[t["x"], t["y"]] for t in campus["tasks"]] + [[d["x"], d["y"]] for d in campus["staff_doors"]]
+    taken += [[s["x"], s["y"]] for t in campus["tasks"] for s in t.get("steps", [t])]
+    taken += [[d["x"], d["y"]] for d in campus["staff_doors"]]
     assert [col, row] not in taken
     # No task place is within reach of the switch, so one key can serve both.
     for task in campus["tasks"]:
-        assert max(abs(task["x"] - col), abs(task["y"] - row)) * TILE > 2 * SWITCH_RANGE, task["id"]
+        for station in task.get("steps", [task]):
+            assert max(abs(station["x"] - col), abs(station["y"] - row)) * TILE > 2 * SWITCH_RANGE, task["id"]
 
 
 def test_the_lights_constants():

@@ -155,7 +155,7 @@ def test_bell_staff_doors_and_light_switch_are_free_reachable_floor_tiles():
     game = Game(campus)
     reachable = walk_distances(campus, campus["spawns"][0])
     spawns = {tuple(s) for s in campus["spawns"]}
-    tasks = {(t["x"], t["y"]) for t in campus["tasks"]}
+    tasks = {(s["x"], s["y"]) for t in campus["tasks"] for s in t.get("steps", [t])}
     places = [tuple(campus["meeting_point"]), tuple(campus["light_switch"])]
     places += [(d["x"], d["y"]) for d in campus["staff_doors"]]
     for place in places:
