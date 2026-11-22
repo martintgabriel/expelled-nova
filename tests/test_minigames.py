@@ -30,7 +30,7 @@ MINIGAME_MAP = {
         {"id": "translate", "title": "Helpdesk", "area": "Hall", "x": 9, "y": 2, "minigame": "translate", "joke": "Joke translate"},
         {"id": "card", "title": "Gate", "area": "Hall", "x": 12, "y": 2, "minigame": "card", "joke": "Joke card"},
         {"id": "paper_jam", "title": "Printer", "area": "Hall", "x": 15, "y": 2, "minigame": "paper_jam", "joke": "Joke jam"},
-        {"id": "socket", "title": "Socket", "area": "Hall", "x": 18, "y": 2, "minigame": "socket", "joke": "Joke socket"},
+        {"id": "socket", "title": "Socket", "area": "Hall", "x": 18, "y": 2, "minigame": "cable", "joke": "Joke socket"},
         {"id": "seagull", "title": "Nata", "area": "Hall", "x": 21, "y": 2, "minigame": "seagull", "joke": "Joke seagull"},
     ],
 }
@@ -353,59 +353,97 @@ def test_paper_jam_times_out_and_can_be_started_again():
     assert doing(game, student)["task"] == "paper_jam"
 
 
-# --- socket --------------------------------------------------------------------------
+# --- cable (projector) ----------------------------------------------------------------
 
 
-def test_socket_the_free_one_finishes_it():
+def correct_cable_index(challenge):
+    return challenge["cables"].index(challenge["port"])
+
+
+def wrong_cable_index(challenge):
+    return (correct_cable_index(challenge) + 1) % 4
+
+
+def test_cable_three_correct_rounds_in_a_row_finishes_it():
     game, _, students = round_with("socket")
     student = students[0]
     start_task(game, student, "socket")
-    game.task_input(student.id, "socket", student.challenge["free"])
+    for round_number in range(1, 4):
+        assert student.challenge["round"] == round_number
+        index = correct_cable_index(student.challenge)
+        game.task_input(student.id, "socket", {"cable": index})
     assert entry(game, student, "socket")["done"] is True
 
 
-def test_socket_a_taken_one_is_marked_and_does_not_finish_it():
+def test_cable_a_wrong_cable_gives_no_signal_and_counts_one_wrong_try():
     game, _, students = round_with("socket")
     student = students[0]
     start_task(game, student, "socket")
-    free = student.challenge["free"]
-    taken = (free + 1) % 12
-    game.task_input(student.id, "socket", taken)
-    assert note_of(game, student) == "Taken."
-    assert doing(game, student)["challenge"]["taken"] == [taken]
+    index = wrong_cable_index(student.challenge)
+    game.task_input(student.id, "socket", {"cable": index})
+    assert note_of(game, student) == "No signal."
+    assert student.challenge["wrong"] == 1
+    assert student.challenge["round"] == 1  # the round is not reset by the first wrong try
     assert entry(game, student, "socket")["done"] is False
 
 
-def test_socket_never_reveals_the_free_socket_before_it_is_tapped():
-    game, (examiner,), students = round_with("socket")
+def test_cable_a_second_wrong_try_restarts_at_round_one_with_new_rounds():
+    game, _, students = round_with("socket")
     student = students[0]
     start_task(game, student, "socket")
-    free = student.challenge["free"]
-    taken = (free + 1) % 12
-    game.task_input(student.id, "socket", taken)
-    view = doing(game, student)["challenge"]
-    assert "free" not in view
-    assert view == {"kind": "socket", "taken": [taken]}
-    assert student.challenge["free"] == free  # unchanged: only the wrong tap is recorded
+    for _ in range(2):
+        index = wrong_cable_index(student.challenge)
+        game.task_input(student.id, "socket", {"cable": index})
+    assert note_of(game, student) == "Two wrong cables. Start again."
+    assert student.challenge["round"] == 1
+    assert student.challenge["wrong"] == 0
+    assert entry(game, student, "socket")["done"] is False
 
 
-@pytest.mark.parametrize("value", [-1, 12, "0", 1.0, None, True])
-def test_socket_invalid_values_are_rejected_and_change_nothing(value):
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"cable": -1},
+        {"cable": 4},
+        {"cable": "0"},
+        {"cable": 1.0},
+        {"cable": True},
+        {},
+        {"cable": 0, "extra": 0},
+        {"from": 0},
+        [0],
+        0,
+        None,
+    ],
+)
+def test_cable_invalid_values_are_rejected_and_change_nothing(value):
     game, _, students = round_with("socket")
     student = students[0]
     start_task(game, student, "socket")
     assert_rejected(game, lambda: game.task_input(student.id, "socket", value), "Invalid value")
 
 
-def test_socket_times_out_and_can_be_started_again():
+def test_cable_times_out_and_can_be_started_again():
     game, _, students = round_with("socket")
     student = students[0]
     start_task(game, student, "socket")
-    wait(game, minigames.TIME_LIMITS["socket"] * TICK_RATE)
+    wait(game, minigames.TIME_LIMITS["cable"] * TICK_RATE)
     assert doing(game, student) is None
-    assert note_of(game, student) == minigames.TIMEOUT_NOTES["socket"]
+    assert note_of(game, student) == minigames.TIMEOUT_NOTES["cable"]
     start_task(game, student, "socket")
     assert doing(game, student)["task"] == "socket"
+
+
+def test_cable_challenge_is_never_sent_to_any_other_player():
+    game, examiners, students = round_with("socket", count=7)
+    student = students[0]
+    start_task(game, student, "socket")
+    for other_id, other in game.players.items():
+        snapshot = game.snapshot_for(other_id)
+        if other is student:
+            assert snapshot["doing"]["challenge"]["kind"] == "cable"
+        else:
+            assert snapshot["doing"] is None
 
 
 # --- seagull -------------------------------------------------------------------------

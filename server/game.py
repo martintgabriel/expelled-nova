@@ -401,6 +401,7 @@ class Game:
             count = min(TASKS_PER_STUDENT, len(self.tasks))
             player.tasks = self.rng.sample(list(self.tasks), count)
         self.next_sabotage_tick = self.tick + SABOTAGE_COOLDOWN_TICKS  # first cooldown
+        self._place_on_spawns()
         self.phase = PLAYING
 
     def _free_spawn(self):
@@ -410,6 +411,14 @@ class Game:
             if self._tile_centre(col, row) not in taken:
                 return col, row
         return self.campus["spawns"][0]
+
+    def _place_on_spawns(self):
+        """Put every player on a different spawn point, in join order, and stop them
+        walking (used when a round starts and when it resets, spec 013)."""
+        spawns = self.campus["spawns"]
+        for index, player in enumerate(self.players.values()):
+            player.x, player.y = self._tile_centre(*spawns[index % len(spawns)])
+            player.dx = player.dy = 0
 
     def _tile_centre(self, col, row):
         return (col + 0.5) * self.tile, (row + 0.5) * self.tile
@@ -732,10 +741,8 @@ class Game:
         self.meeting = None
         self.lights_on = True
         self.next_sabotage_tick = 0
-        spawns = self.campus["spawns"]
-        for index, player in enumerate(self.players.values()):
-            player.x, player.y = self._tile_centre(*spawns[index % len(spawns)])
-            player.dx = player.dy = 0
+        self._place_on_spawns()
+        for player in self.players.values():
             player.role = None
             player.alive = True
             player.next_expel_tick = 0
