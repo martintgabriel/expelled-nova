@@ -3,9 +3,9 @@ can be tested directly, like server/game.py.
 
 Each kind has a time limit, a function that builds a fresh challenge with the game's rng,
 a function that validates and applies a player's answer, and a function that builds the
-player-visible view of a challenge (hiding whatever must stay secret, e.g. which socket is
-free). server/game.py owns the player's state (which task, which step) and calls into this
-module only for what happens inside one station's challenge.
+player-visible view of a challenge (hiding whatever must stay secret, e.g. which cell has a
+paper jam before it is found). server/game.py owns the player's state (which task, which
+step) and calls into this module only for what happens inside one station's challenge.
 """
 
 TIME_LIMITS = {
@@ -13,7 +13,7 @@ TIME_LIMITS = {
     "translate": 30,
     "card": 30,
     "paper_jam": 30,
-    "socket": 30,
+    "cable": 25,
     "seagull": 8,
 }
 
@@ -22,7 +22,7 @@ TIMEOUT_NOTES = {
     "translate": "The queue moved on.",
     "card": "The gate locks again.",
     "paper_jam": "Someone else cleared it.",
-    "socket": "All sockets taken. Try again later.",
+    "cable": "Out of time.",
     "seagull": "A seagull took it.",
 }
 
@@ -37,6 +37,9 @@ SENTENCES = [
     ("Quando abre a secretaria?", "When does the office open?"),
 ]
 
+# The five projector/cable port types of the "cable" mini-game (socket, Auditorium).
+PORT_TYPES = ["HDMI", "USB-C", "VGA", "DisplayPort", "Mini DisplayPort"]
+
 INVALID_VALUE = "Invalid value for this task"
 
 
@@ -50,8 +53,8 @@ def make_challenge(kind, rng, tick, tick_rate):
         challenge = {"kind": kind, "number": _new_card_number(rng)}
     elif kind == "paper_jam":
         challenge = {"kind": kind, "jams": rng.sample(range(9), 3), "cleared": []}
-    elif kind == "socket":
-        challenge = {"kind": kind, "free": rng.randrange(12), "tried": []}
+    elif kind == "cable":
+        challenge = {"kind": kind, "round": 1, "wrong": 0, **_new_cable_round(rng)}
     elif kind == "seagull":
         challenge = {"kind": kind, "cell": rng.randrange(9), "hits": 0}
     else:
@@ -73,6 +76,13 @@ def _new_card_number(rng):
     return f"{rng.randrange(100000):05d}"
 
 
+def _new_cable_round(rng):
+    port = rng.choice(PORT_TYPES)
+    others = [kind for kind in PORT_TYPES if kind != port]
+    wrong_three = rng.sample(others, 3)
+    return {"port": port, "cables": rng.sample([port] + wrong_three, 4)}
+
+
 def validate_value(kind, value):
     """Raise ValueError if `value` has the wrong type, range or length for `kind`."""
     if kind == "ticket":
@@ -83,8 +93,13 @@ def validate_value(kind, value):
         ok = isinstance(value, str) and len(value) == 5 and value.isascii() and value.isdigit()
     elif kind in ("paper_jam", "seagull"):
         ok = type(value) is int and 0 <= value <= 8
-    elif kind == "socket":
-        ok = type(value) is int and 0 <= value <= 11
+    elif kind == "cable":
+        ok = (
+            type(value) is dict
+            and set(value) == {"cable"}
+            and type(value["cable"]) is int
+            and 0 <= value["cable"] <= 3
+        )
     else:
         ok = False
     if not ok:
@@ -107,8 +122,8 @@ def apply_answer(challenge, value, rng, tick, tick_rate):
         return _apply_card(challenge, value, rng)
     if kind == "paper_jam":
         return _apply_paper_jam(challenge, value)
-    if kind == "socket":
-        return _apply_socket(challenge, value)
+    if kind == "cable":
+        return _apply_cable(challenge, value, rng)
     if kind == "seagull":
         return _apply_seagull(challenge, value, rng)
     raise ValueError(f"Unknown mini-game kind: {kind}")
@@ -149,12 +164,21 @@ def _apply_paper_jam(challenge, value):
     return False, "Nothing there."
 
 
-def _apply_socket(challenge, value):
-    if value == challenge["free"]:
-        return True, None
-    if value not in challenge["tried"]:
-        challenge["tried"].append(value)
-    return False, "Taken."
+def _apply_cable(challenge, value, rng):
+    index = value["cable"]
+    if challenge["cables"][index] == challenge["port"]:
+        challenge["round"] += 1
+        if challenge["round"] > 3:
+            return True, None
+        challenge.update(_new_cable_round(rng))
+        return False, None
+    challenge["wrong"] += 1
+    if challenge["wrong"] >= 2:
+        challenge["round"] = 1
+        challenge["wrong"] = 0
+        challenge.update(_new_cable_round(rng))
+        return False, "Two wrong cables. Start again."
+    return False, "No signal."
 
 
 def _apply_seagull(challenge, value, rng):
@@ -180,8 +204,14 @@ def public_view(challenge, tick, tick_rate):
         return {"kind": kind, "number": challenge["number"]}
     if kind == "paper_jam":
         return {"kind": kind, "cleared": list(challenge["cleared"])}
-    if kind == "socket":
-        return {"kind": kind, "taken": list(challenge["tried"])}
+    if kind == "cable":
+        return {
+            "kind": kind,
+            "round": challenge["round"],
+            "port": challenge["port"],
+            "cables": list(challenge["cables"]),
+            "wrong": challenge["wrong"],
+        }
     if kind == "seagull":
         return {"kind": kind, "cell": challenge["cell"], "hits": challenge["hits"]}
     raise ValueError(f"Unknown mini-game kind: {kind}")

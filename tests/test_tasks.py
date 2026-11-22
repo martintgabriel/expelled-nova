@@ -71,7 +71,7 @@ SPEC_TASKS = {
     ],
     "helpdesk": [("Main Entrance", 20, 3, "translate")],
     "print": [("Library", 37, 20, "paper_jam")],
-    "socket": [("Auditorium", 30, 40, "socket")],
+    "socket": [("Auditorium", 30, 40, "cable")],
     "gate": [("Main Entrance", 24, 6, "card")],
     "nata": [("Courtyard", 19, 23, "seagull")],
 }
