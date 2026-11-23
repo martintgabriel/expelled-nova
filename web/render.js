@@ -50,6 +50,14 @@ const Render = (() => {
   const FAN_RAYS = 48; // evenly spread rays, so the lit area is round where no wall is near
   const RAY_NUDGE = 0.0001; // radians: one more ray just left and right of every wall corner
 
+  // The Segway security guard (spec 027). His cone is a hard-edged wedge in its own colour,
+  // never the player's own soft circular fog edge, so the two are never mistaken for one
+  // another.
+  const GUARD_CONE_COLOR = 0xfff4c2;
+  const GUARD_CONE_ALPHA = 0.3;
+  const GUARD_VEST_COLOR = 0xe8a317;
+  const GUARD_BOARD_COLOR = 0x2b2d33;
+
   // --- Colours -----------------------------------------------------------------------
 
   function colorOf(number) {
@@ -1077,6 +1085,69 @@ const Render = (() => {
     arrow.parts.g.setRotation(angle);
   }
 
+  // --- The Segway security guard (spec 027) -----------------------------------------------
+  // An original character, our own shapes only: a helmet, a "SECURITY" vest, standing on a
+  // two-wheeled board he leans on. Created once state.guard first appears and destroyed when
+  // it is absent, exactly like syncSprites() already does for other players' characters.
+  // Returns { sprite, cone }: `sprite` is a normal container, moved with setPosition() and
+  // animated with animateGuard() like any character; `cone` is a separate graphics object (it
+  // draws in world coordinates, like the darkness's own lit/cut graphics, not relative to a
+  // moving container) redrawn every frame with drawGuardCone().
+  function makeGuard(scene) {
+    const shadow = scene.add.ellipse(0, 19, 30, 8, 0x000000, 0.3);
+    const board = scene.add.graphics();
+    board.fillStyle(OUTLINE).fillRoundedRect(-13, 9, 26, 7, 3);
+    board.fillStyle(GUARD_BOARD_COLOR).fillRoundedRect(-11, 10, 22, 5, 2);
+    const wheels = [-1, 1].map((side) => scene.add.circle(side * 10, 16, 6, OUTLINE));
+    const handle = scene.add.graphics();
+    handle.lineStyle(3, GUARD_BOARD_COLOR).lineBetween(-8, 9, -8, -15).lineBetween(-8, -15, 3, -15);
+    const legs = scene.add.rectangle(0, 1, 10, 12, 0x33363d);
+    const vestOutline = scene.add.circle(0, -11, 13, OUTLINE);
+    const vest = scene.add.circle(0, -11, 11.5, GUARD_VEST_COLOR);
+    const stripe = scene.add.rectangle(0, -11, 20, 3, 0xffffff, 0.85);
+    const eyes = [-1, 1].map((side) => scene.add.ellipse(side * 4, -13, 4.6, 5.8, 0xffffff));
+    const pupils = [-1, 1].map((side) => scene.add.circle(side * 4, -12.6, 1.4, OUTLINE));
+    const helmet = scene.add.graphics();
+    helmet.fillStyle(OUTLINE).fillEllipse(0, -23, 19, 13);
+    helmet.fillStyle(0xf2f2f2).fillEllipse(0, -24, 16, 10);
+    helmet.fillStyle(OUTLINE, 0.9).fillRect(-9, -21, 18, 2.5);
+    const label = scene.add
+      .text(0, -41, "SECURITY", {
+        fontFamily: FONT,
+        fontSize: "9px",
+        fontStyle: "bold",
+        color: "#ffe9a8",
+        stroke: "#101216",
+        strokeThickness: 3,
+        resolution: TEXT_RESOLUTION,
+      })
+      .setOrigin(0.5, 1);
+
+    const figure = scene.add.container(0, 0, [
+      board,
+      ...wheels,
+      handle,
+      legs,
+      vestOutline,
+      vest,
+      stripe,
+      ...eyes,
+      ...pupils,
+      helmet,
+    ]);
+    const sprite = scene.add.container(0, 0, [shadow, figure, label]).setDepth(1.5);
+    sprite.look = { figure };
+    const cone = scene.add.graphics().setDepth(0.7); // below every character, above the floor
+    return { sprite, cone };
+  }
+
+  // Call every frame with whether he is paused. Driving, the whole figure has a small wobble
+  // (a Segway leaning into its turns); paused, it stands still. The cone, not the figure,
+  // turns with his facing (see drawGuardCone).
+  function animateGuard(sprite, paused, time) {
+    sprite.look.figure.setRotation(paused ? 0 : Math.sin(time / 180) * 0.06);
+  }
+
   // --- Darkness outside the lit area (spec 005, spec 010, spec 011) -------------------------
   // This is only the look: the server does not even send what the player cannot see.
   //
@@ -1184,27 +1255,18 @@ const Render = (() => {
     return edges;
   }
 
-  // Rays from (x, y) in all directions that matter: FAN_RAYS evenly spread ones and, for
-  // both ends of every nearby edge, one straight at the end and one just left and right of
-  // it (the last two decide whether the light stops at the corner or passes it). Each ray
-  // ends at the nearest edge it hits, or after `reach` pixels. Returns where the rays end,
-  // in order around the circle, as {x, y}.
-  function castRays(edges, x, y, reach) {
-    const near = edges.filter(
+  // The edges close enough to (x, y) that a ray of length `reach` could meet one.
+  function nearEdges(edges, x, y, reach) {
+    return edges.filter(
       (e) => e.x2 >= x - reach && e.x1 <= x + reach && e.y2 >= y - reach && e.y1 <= y + reach,
     );
-    const angles = [];
-    for (let i = 0; i < FAN_RAYS; i++) angles.push((i / FAN_RAYS) * 2 * Math.PI - Math.PI);
-    for (const e of near) {
-      for (const [cornerX, cornerY] of [[e.x1, e.y1], [e.x2, e.y2]]) {
-        const angle = Math.atan2(cornerY - y, cornerX - x);
-        for (const nudged of [angle - RAY_NUDGE, angle, angle + RAY_NUDGE]) {
-          // Kept between -PI and PI, so sorting puts the rays in order around the circle.
-          angles.push(Math.atan2(Math.sin(nudged), Math.cos(nudged)));
-        }
-      }
-    }
-    angles.sort((a, b) => a - b);
+  }
+
+  // Where each of `angles` (radians from (x, y)) ends: the nearest edge of `near` it hits, or
+  // `reach` pixels out. The one piece of raycasting math both castRays() (a full circle, for
+  // the player's own lit area) and castGuardCone() (spec 027: a narrow wedge) share, so the
+  // guard's cone stops at a wall's face exactly the way the player's own vision already does.
+  function castFromAngles(near, x, y, reach, angles) {
     return angles.map((angle) => {
       const dx = Math.cos(angle);
       const dy = Math.sin(angle);
@@ -1225,6 +1287,56 @@ const Render = (() => {
     });
   }
 
+  // Rays from (x, y) in all directions that matter: FAN_RAYS evenly spread ones and, for
+  // both ends of every nearby edge, one straight at the end and one just left and right of
+  // it (the last two decide whether the light stops at the corner or passes it). Each ray
+  // ends at the nearest edge it hits, or after `reach` pixels. Returns where the rays end,
+  // in order around the circle, as {x, y}.
+  function castRays(edges, x, y, reach) {
+    const near = nearEdges(edges, x, y, reach);
+    const angles = [];
+    for (let i = 0; i < FAN_RAYS; i++) angles.push((i / FAN_RAYS) * 2 * Math.PI - Math.PI);
+    for (const e of near) {
+      for (const [cornerX, cornerY] of [[e.x1, e.y1], [e.x2, e.y2]]) {
+        const angle = Math.atan2(cornerY - y, cornerX - x);
+        for (const nudged of [angle - RAY_NUDGE, angle, angle + RAY_NUDGE]) {
+          // Kept between -PI and PI, so sorting puts the rays in order around the circle.
+          angles.push(Math.atan2(Math.sin(nudged), Math.cos(nudged)));
+        }
+      }
+    }
+    angles.sort((a, b) => a - b);
+    return castFromAngles(near, x, y, reach, angles);
+  }
+
+  // Spec 027: the guard's cone, built the exact same way as the player's own lit area above
+  // (the same nearby-edge corners, nudged the same way, finished by the one shared
+  // castFromAngles()) but only across `spanDegrees` around `facing`, not the full circle, and
+  // only `reach` pixels deep. A wall corner outside the span is left out, so the fan never
+  // bulges past the edges of the wedge. Returns the ray ends in order across the wedge, from
+  // its left edge to its right edge (not all the way round: a wedge has two open edges, a
+  // full circle has none).
+  function castGuardCone(edges, x, y, reach, facing, spanDegrees) {
+    const half = ((spanDegrees * Math.PI) / 180) / 2;
+    const centre = Math.atan2(Math.sin(facing), Math.cos(facing)); // kept between -PI and PI
+    const near = nearEdges(edges, x, y, reach);
+    const offsets = [-half, half]; // the wedge's own two straight edges
+    for (let i = 1; i < FAN_RAYS; i++) offsets.push(-half + (i / FAN_RAYS) * 2 * half);
+    for (const e of near) {
+      for (const [cornerX, cornerY] of [[e.x1, e.y1], [e.x2, e.y2]]) {
+        const angle = Math.atan2(cornerY - y, cornerX - x);
+        // The corner's angle relative to facing, wrapped the short way round (spec 027: so a
+        // facing near +-180 degrees does not miscount a nearby corner as far outside the cone).
+        const relative = Math.atan2(Math.sin(angle - centre), Math.cos(angle - centre));
+        for (const nudged of [relative - RAY_NUDGE, relative, relative + RAY_NUDGE]) {
+          if (nudged >= -half && nudged <= half) offsets.push(nudged);
+        }
+      }
+    }
+    offsets.sort((a, b) => a - b);
+    return castFromAngles(near, x, y, reach, offsets.map((offset) => centre + offset));
+  }
+
   // Works out the lit area around (x, y): a triangle from (x, y) to every two neighbouring
   // ray ends. Together they are the visibility polygon, with straight shadow edges where a
   // ray passes a wall corner, ending exactly at the faces of the walls. It is drawn into
@@ -1240,6 +1352,19 @@ const Render = (() => {
       cut.fillTriangle(x, y, a.x, a.y, b.x, b.y);
     });
     for (const wall of darkness.walls) cut.fillRect(wall.x, wall.y, wall.width, wall.height);
+  }
+
+  // The guard's cone (spec 027): a fan of triangles from his centre across the wedge
+  // castGuardCone() found, stopping exactly where it does (a wall's face), never wrapped
+  // into a full circle like drawLitArea()'s. `edges` is the same sightEdges() data the
+  // player's own darkness already built once per map; the guard needs no map data of his own.
+  function drawGuardCone(g, edges, x, y, facing, spanDegrees, reach) {
+    const ends = castGuardCone(edges, x, y, reach, facing, spanDegrees);
+    g.clear();
+    g.fillStyle(GUARD_CONE_COLOR, GUARD_CONE_ALPHA);
+    for (let i = 0; i < ends.length - 1; i++) {
+      g.fillTriangle(x, y, ends[i].x, ends[i].y, ends[i + 1].x, ends[i + 1].y);
+    }
   }
 
   // Call every frame with the own character's place: keeps the rim centred on it, lets
@@ -1290,5 +1415,8 @@ const Render = (() => {
     updateEdgeArrow,
     makeDarkness,
     updateDarkness,
+    makeGuard,
+    animateGuard,
+    drawGuardCone,
   };
 })();

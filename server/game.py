@@ -17,7 +17,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from server import minigames
+from server import guard, minigames
 
 TICK_RATE = 20  # server updates per second
 SPEED = 160.0  # pixels per second
@@ -69,6 +69,17 @@ RESULT_TICKS = RESULT_SECONDS * TICK_RATE  # 100
 PLAYER_COLORS = range(MAX_PLAYERS)
 HAT_COUNT = 10  # spec 022: hat numbers 0-9, drawn by web/hats.js; 0 is the graduation cap
 
+# The Segway security guard (spec 027): a hazard, never a player (see server/guard.py).
+GUARD_SPEED = 1.6 * SPEED  # px/s: faster than any player, so nobody can outrun or escort him
+GUARD_STEP = GUARD_SPEED / TICK_RATE  # px/tick
+GUARD_VISION_TILES = 4  # a smaller, narrower view than a player's own (VISION_TILES = 6)
+GUARD_CONE_DEGREES = 70
+GUARD_PAUSE_CHANCE = 0.25  # checked once with self.rng each time he arrives at a waypoint
+GUARD_PAUSE_SECONDS = (1, 3)  # (min, max), both inclusive, drawn with self.rng
+GUARD_SWEEP_DEGREES = 25  # how far his facing sweeps either side of sweep_base while paused
+GUARD_SWEEP_TICKS = TICK_RATE * 2  # one full left-right-left sweep, in ticks
+GUARD_MIN_START_TILES = 10  # how far his starting waypoint must lie from every spawn
+
 # Game phases.
 LOBBY = "lobby"  # before the start: players join and walk around
 PLAYING = "playing"
@@ -82,6 +93,7 @@ EXAMINER = "examiner"
 # Why a meeting was called, and the vote for nobody.
 REPORT = "report"
 BUTTON = "button"  # the emergency button on the meeting table
+SECURITY = "security"  # spec 027: the guard saw an expel; caught names the examiner
 SKIP = "skip"
 
 # Winners, shown on the end screen.
@@ -140,6 +152,7 @@ class Meeting:
     votes: dict = field(default_factory=dict)  # voter id -> target id or SKIP
     result: dict | None = None  # set when the voting closes
     result_ends: int = 0  # the tick at which play resumes (set together with the result)
+    caught: str | None = None  # spec 027: the examiner id the security guard saw, or None
 
 
 # Map decor (spec 009): only changes how the map looks, never a rule. Solid kinds must lie
@@ -236,6 +249,8 @@ def validate_campus(campus):
             raise ValueError(f"Label {text!r}: x and y must be numbers")
         if not (0 <= x < cols and 0 <= y < rows):
             raise ValueError(f"Label {text!r} lies outside the grid")
+    if "guard_route" in campus:
+        guard.build_route(campus, campus["tile_size"], PLAYER_HALF)
 
 
 def validate_nickname(raw):
@@ -332,8 +347,15 @@ def _normalize_station(raw):
 
 class Game:
     def __init__(self, campus, rng=None):
-        self.campus = campus
         self.tile = campus["tile_size"]
+        # Spec 027: the guard's own route is built from the map here and then kept out of
+        # self.campus (the same dict server/main.py sends verbatim as welcome.map), so no
+        # browser, in any role, can ever receive the waypoints or the connections.
+        self._guard_route = guard.build_route(campus, self.tile, PLAYER_HALF)
+        self.campus = {key: value for key, value in campus.items() if key != "guard_route"}
+        self.guard_vision_radius = GUARD_VISION_TILES * self.tile
+        self.guard = None  # a GuardState while PLAYING on a map with a guard_route, else None
+        self.security_witnessed = False  # set True on the ENDED state (see expel())
         self.vision_radius = VISION_TILES * self.tile  # px between centres
         self.grid = campus["grid"]
         self.tasks = {
@@ -485,6 +507,25 @@ class Game:
         self.next_sabotage_tick = self.tick + SABOTAGE_COOLDOWN_TICKS  # first cooldown
         self._place_on_spawns()
         self.phase = PLAYING
+        self.security_witnessed = False
+        self.guard = self._spawn_guard()
+
+    def _spawn_guard(self):
+        """A fresh GuardState on a waypoint at least GUARD_MIN_START_TILES from every spawn
+        (spec 027), or None on a map with no guard_route."""
+        if self._guard_route is None:
+            return None
+        spawn_centres = [self._tile_centre(*spawn) for spawn in self.campus["spawns"]]
+        far_enough = GUARD_MIN_START_TILES * self.tile
+        start_ids = [
+            wid
+            for wid, point in self._guard_route.items()
+            if all(
+                math.hypot(point["x"] - sx, point["y"] - sy) >= far_enough
+                for sx, sy in spawn_centres
+            )
+        ]
+        return guard.start_guard(self._guard_route, self.rng, start_ids or list(self._guard_route))
 
     def _free_spawn(self):
         """First spawn point nobody is standing on (falls back to the first one)."""
@@ -556,7 +597,31 @@ class Game:
         self.failed_exams.append(FailedExam(f"e{self.next_exam_id}", target.x, target.y))
         self.next_exam_id += 1
         examiner.next_expel_tick = self.tick + EXPEL_COOLDOWN_TICKS
+        # Spec 027: checked here, both their centres still exactly where the expel left them,
+        # before _check_win() can end the round or a new meeting can move anyone.
+        seen_by_guard = self._seen_by_guard(examiner.x, examiner.y) or self._seen_by_guard(
+            target.x, target.y
+        )
         self._check_win()
+        if self.phase == ENDED:
+            if seen_by_guard:
+                self.security_witnessed = True
+        elif seen_by_guard:
+            self._start_meeting(SECURITY, examiner, caught=examiner.id)
+
+    def _seen_by_guard(self, x, y):
+        """Whether the guard sees the point (x, y): within his vision radius, within his cone
+        angle of his facing, and a clear sight_clear line to his centre. Never shrunk by the
+        lights (spec 027): he carries his own light."""
+        if self.guard is None:
+            return False
+        if math.hypot(x - self.guard.x, y - self.guard.y) > self.guard_vision_radius:
+            return False
+        angle_to = math.atan2(y - self.guard.y, x - self.guard.x)
+        difference = (angle_to - self.guard.facing + math.pi) % (2 * math.pi) - math.pi
+        if abs(difference) > math.radians(GUARD_CONE_DEGREES) / 2:
+            return False
+        return self.sight_clear(self.guard.x, self.guard.y, x, y)
 
     def _cooldown_left(self, player):
         """Whole seconds until the player may expel, rounded up (0 = ready)."""
@@ -704,12 +769,15 @@ class Game:
             raise GameError(INSIDE_VENT)
         return player
 
-    def _start_meeting(self, reason, caller):
+    def _start_meeting(self, reason, caller, caught=None):
         """Everyone, ghosts too, goes to their place around the meeting table and stands
         still. Whoever is inside a vent is taken out first (spec 015) and placed like
-        everyone else."""
+        everyone else. `caught` (spec 027): the examiner id the security guard saw, for a
+        SECURITY meeting only."""
         self.phase = MEETING
-        self.meeting = Meeting(reason, caller.id, voting_ends=self.tick + MEETING_TICKS)
+        self.meeting = Meeting(
+            reason, caller.id, voting_ends=self.tick + MEETING_TICKS, caught=caught
+        )
         self.vent_open = {}
         for player in self.players.values():
             player.vent = None
@@ -841,6 +909,7 @@ class Game:
         self.phase = ENDED
         self.winner = winner
         self.meeting = None  # a player leaving can end the game during a meeting
+        self.guard = None  # spec 027: he does not exist once the round has ended
         self.vent_open = {}
         for player in self.players.values():
             player.vent = None  # everyone is shown on the end screen
@@ -867,6 +936,8 @@ class Game:
         self.winner = None
         self.failed_exams = []
         self.meeting = None
+        self.guard = None  # spec 027: he does not exist in the lobby
+        self.security_witnessed = False
         self.lights_on = True
         self.next_sabotage_tick = 0
         self.vent_open = {}
@@ -1195,6 +1266,18 @@ class Game:
             if player.dx == 0 and player.dy == 0:
                 continue
             self._walk(player)
+        if self.phase == PLAYING and self.guard is not None:
+            guard.step_guard(
+                self.guard,
+                self._guard_route,
+                GUARD_STEP,
+                GUARD_PAUSE_CHANCE,
+                GUARD_PAUSE_SECONDS,
+                TICK_RATE,
+                (math.radians(GUARD_SWEEP_DEGREES), GUARD_SWEEP_TICKS),
+                self.rng,
+                self.tick,
+            )
         if self.phase == PLAYING:
             self._step_tasks()
         if self.phase == PLAYING:  # the last task may just have ended the game
@@ -1363,7 +1446,7 @@ class Game:
         exams = [
             e for e in self.failed_exams if viewer is None or self._in_sight(viewer, e.x, e.y)
         ]
-        return {
+        state = {
             "type": "state",
             "tick": self.tick,
             "phase": self.phase,
@@ -1379,6 +1462,18 @@ class Game:
             "failed_exams": [{"id": e.id, "x": round(e.x, 1), "y": round(e.y, 1)} for e in exams],
             "open_vents": open_vents,
         }
+        # Spec 027: present only when the guard exists and, for a living player while
+        # playing, only when that player's own sight (their own radius, their own line of
+        # sight, shrunk by the lights if the lights are off) reaches him. A ghost, the lobby,
+        # a meeting and the end screen use no viewer and so always get him when he exists.
+        if self.guard is not None and (viewer is None or self._in_sight(viewer, self.guard.x, self.guard.y)):
+            state["guard"] = {
+                "x": round(self.guard.x, 1),
+                "y": round(self.guard.y, 1),
+                "facing": round(self.guard.facing, 3),
+                "paused": self.guard.paused,
+            }
+        return state
 
     def snapshot_for(self, player_id):
         """What one player may know: the shared snapshot plus their own role and state.
@@ -1452,6 +1547,8 @@ class Game:
         if self.phase == ENDED:
             state["winner"] = self.winner
             state["roles"] = {p.id: p.role for p in self.players.values()}
+            # Spec 027: True only when the expel that ended the game was itself seen.
+            state["security_witnessed"] = self.security_witnessed
         return state
 
     def _meeting_for(self, me):
@@ -1461,6 +1558,7 @@ class Game:
         return {
             "reason": meeting.reason,
             "called_by": meeting.called_by,
+            "caught": meeting.caught,  # spec 027: None for a report or a button meeting
             "living": [p.id for p in self.players.values() if p.alive],
             "voted": [p.id for p in self.players.values() if p.id in meeting.votes],
             "my_vote": meeting.votes.get(me.id),

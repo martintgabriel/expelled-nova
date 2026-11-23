@@ -133,7 +133,8 @@ def test_the_welcome_message_carries_the_servers_sight_grid(fresh_game):
     campus = load_map()
     assert welcome["sight_grid"] == fresh_game.sight == game_rules.sight_grid(campus)
     assert [len(row) for row in welcome["sight_grid"]] == [len(row) for row in campus["grid"]]
-    assert welcome["map"] == campus  # the map itself is sent unchanged
+    # Spec 027: except guard_route, kept out of every browser's map, in any role.
+    assert welcome["map"] == {k: v for k, v in campus.items() if k != "guard_route"}
 
 
 def test_the_browser_works_with_the_servers_sight_grid():
