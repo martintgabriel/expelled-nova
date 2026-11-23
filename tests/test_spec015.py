@@ -366,9 +366,10 @@ def test_every_coordinate_moved_east_by_the_same_offset():
     assert campus["light_switch"] == [39 + OFFSET, 6]
     # Spec 021 added two stations after the old seven; those keep their moved places.
     assert stations(campus)[: len(OLD_STATIONS)] == [(col + OFFSET, row) for col, row in OLD_STATIONS]
-    areas = {a["name"]: (a["x"], a["y"], a["w"], a["h"]) for a in campus["areas"] if a["name"] != "Courtyard"}
+    # Spec 018: the two courtyards are named "Upper Courtyard" and "Lower Courtyard".
+    areas = {a["name"]: (a["x"], a["y"], a["w"], a["h"]) for a in campus["areas"] if not a["name"].endswith("Courtyard")}
     assert areas == {name: (x + OFFSET, y, w, h) for name, (x, y, w, h) in OLD_AREAS.items()}
-    courtyards = [(a["x"], a["y"], a["w"], a["h"]) for a in campus["areas"] if a["name"] == "Courtyard"]
+    courtyards = [(a["x"], a["y"], a["w"], a["h"]) for a in campus["areas"] if a["name"].endswith("Courtyard")]
     assert courtyards == [(3 + OFFSET, 14, 20, 3), (3 + OFFSET, 22, 20, 3)]
 
 
