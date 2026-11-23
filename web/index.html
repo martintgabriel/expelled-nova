@@ -319,6 +319,16 @@
     </div>
   </div>
 
+  <!-- Campus map (spec 018): left of the mute button, shown once the welcome message has
+       arrived (before that there is no map to show). The icon is plain inline SVG. -->
+  <button id="map-button" type="button" class="help-button map-button" aria-label="Campus map" aria-expanded="false" title="Campus map (C)" hidden>
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path>
+      <line x1="9" y1="4" x2="9" y2="17.5" stroke="currentColor" stroke-width="1.5"></line>
+      <line x1="15" y1="6.5" x2="15" y2="20" stroke="currentColor" stroke-width="1.5"></line>
+    </svg>
+  </button>
+
   <!-- Mute (spec 016): always next to the "?" button, on every screen. The two icon states
        are plain inline SVG (no images); main.js toggles which one is hidden. -->
   <button id="mute-button" type="button" class="help-button mute-button" aria-label="Mute sound" title="Mute sound">
@@ -371,8 +381,10 @@
           <li class="hint-keyboard"><kbd class="key">R</kbd> report a failed exam &middot; <kbd class="key">M</kbd> call a meeting at the table</li>
           <li class="hint-keyboard"><kbd class="key">E</kbd> expel &middot; <kbd class="key">V</kbd> vent &middot; <kbd class="key">Q</kbd> lights off (examiners only)</li>
           <li class="hint-keyboard"><kbd class="key">H</kbd> this handbook &middot; <kbd class="key">Esc</kbd> close it</li>
+          <li class="hint-keyboard"><kbd class="key">C</kbd> campus map, to say where you were</li>
           <li class="hint-touch" hidden>Drag the joystick (bottom left) to walk.</li>
           <li class="hint-touch" hidden>Tap the round buttons (bottom right) to act. A grey button tells you why it is not possible right now.</li>
+          <li class="hint-touch" hidden>The map button (top right) shows the whole campus, to say where you were.</li>
         </ul>
       </section>
 
@@ -417,11 +429,27 @@
     </div>
   </div>
 
+  <!-- The campus map (spec 018): built like the handbook. main.js puts the SVG from
+       campusmap.js into #map-slot once; it shows the campus and the own position only. -->
+  <div id="map-panel" class="overlay help-overlay map-overlay" hidden>
+    <div class="card map-card" role="dialog" aria-modal="true" aria-label="Campus map">
+      <button id="map-close" type="button" class="help-close" aria-label="Close">&times;</button>
+      <p class="doc-kicker">Nova campus &middot; site plan</p>
+      <h2 id="map-title">Campus map</h2>
+      <p id="map-where" class="map-where" hidden></p>
+      <div id="map-slot" class="map-slot"></div>
+      <!-- The own open tasks, numbered like their green markers on the map. main.js fills
+           it as text from the own snapshot, only while playing. -->
+      <ol id="map-tasks" class="map-tasks" aria-label="Your open tasks" hidden></ol>
+    </div>
+  </div>
+
   <script src="vendor/phaser.min.js"></script>
   <script src="render.js"></script>
   <script src="controls.js"></script>
   <script src="sound.js"></script>
   <script src="music.js"></script>
+  <script src="campusmap.js"></script>
   <script src="main.js"></script>
 </body>
 </html>
