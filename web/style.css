@@ -237,6 +237,11 @@ button:disabled { opacity: 0.55; box-shadow: none; cursor: not-allowed; }
 .help-section ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 .help-keys { list-style: none; padding-left: 0 !important; }
 .help-keys kbd.key { margin-right: 2px; }
+/* The music switch (spec 017): a label and a small On/Off button; Off looks like plain paper. */
+.help-music { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.help-music-label { color: var(--ink); font-size: 14px; font-weight: 700; }
+.music-switch { min-width: 64px; padding: 6px 12px; font-size: 14px; }
+.music-switch[aria-checked="false"] { background: var(--paper-shade); color: var(--ink-soft); }
 
 /* --- Join screen (spec 015): a student ID card ------------------------------------------ */
 
