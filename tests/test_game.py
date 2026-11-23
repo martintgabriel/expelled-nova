@@ -345,7 +345,9 @@ def test_campus_map_is_valid():
         "Food Court",
         "Auditorium",
         "Student Services",
-        "Courtyard",
+        # Spec 018: the two courtyards are named apart.
+        "Upper Courtyard",
+        "Lower Courtyard",
     }
     for area in campus["areas"]:
         assert 0 <= area["x"] and area["x"] + area["w"] <= width

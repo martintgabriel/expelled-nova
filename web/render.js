@@ -161,7 +161,7 @@ const Render = (() => {
     const rect = (col, row, color, alpha = 1) => g.fillStyle(color, alpha).fillRect(col * t, row * t, t, t);
     const tint = (col, row) => {
       const area = areaAt(col, row);
-      if (area && area.name !== "Courtyard") rect(col, row, Phaser.Display.Color.HexStringToColor(area.color).color, 0.31);
+      if (area && !area.name.endsWith("Courtyard")) rect(col, row, Phaser.Display.Color.HexStringToColor(area.color).color, 0.31);
     };
     // Calls draw(col, row, x, y) for every tile, row by row.
     const eachTile = (draw) => {
@@ -257,7 +257,7 @@ const Render = (() => {
       const outdoor = ["grass", "terrace", "paving"].find((kind) => has(col, row, kind));
       g.fillStyle(outdoor ? OUTDOOR_FLOOR[outdoor][0] : FLOOR_A).fillRect(x, y, w, h);
       const area = areaAt(col, row);
-      if (!outdoor && area && area.name !== "Courtyard") {
+      if (!outdoor && area && !area.name.endsWith("Courtyard")) {
         g.fillStyle(Phaser.Display.Color.HexStringToColor(area.color).color, 0.31).fillRect(x, y, w, h);
       }
     }
@@ -517,6 +517,7 @@ const Render = (() => {
         .setAlpha(0.9);
     }
     for (const label of map.labels || []) {
+      if (label.only_on_map) continue; // spec 018: the campus map's names of the table and the switch
       scene.add
         .text(label.x * t, label.y * t, label.text.toUpperCase(), nameStyle("10px")) // added as text, never HTML
         .setLetterSpacing(1)

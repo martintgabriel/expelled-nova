@@ -111,6 +111,13 @@ const ui = {
   muteButton: document.getElementById("mute-button"),
   muteIconOn: document.getElementById("mute-icon-on"),
   muteIconOff: document.getElementById("mute-icon-off"),
+  musicSwitch: document.getElementById("music-switch"),
+  mapButton: document.getElementById("map-button"),
+  mapPanel: document.getElementById("map-panel"),
+  mapClose: document.getElementById("map-close"),
+  mapWhere: document.getElementById("map-where"),
+  mapSlot: document.getElementById("map-slot"),
+  mapTasks: document.getElementById("map-tasks"),
 };
 
 // --- Hints and key labels by input device, not by screen width (spec 007) -----------
@@ -135,6 +142,7 @@ ui.inviteClose.addEventListener("click", () => {
 // Only in the browser: it shows static text from index.html and does not pause the game.
 
 function setHelpOpen(open) {
+  if (open) setMapOpen(false); // one overlay at a time (spec 018)
   ui.helpPanel.hidden = !open;
   ui.helpButton.setAttribute("aria-expanded", String(open));
   if (open) ui.helpClose.focus();
@@ -153,15 +161,80 @@ ui.helpClose.addEventListener("click", () => {
 ui.helpPanel.addEventListener("click", (event) => {
   if (event.target === ui.helpPanel) setHelpOpen(false);
 });
+// --- Campus map (spec 018): the map button, key C, closed with Esc, the cross or a click
+// next to the card. Only in the browser, like the handbook: it does not pause the game.
+// campusmap.js draws it once from welcome.map; later main.js only gives it the own position.
+
+function setMapOpen(open) {
+  if (open && ui.mapSlot.childElementCount === 0) return; // no map before the welcome message
+  if (open) setHelpOpen(false); // one overlay at a time
+  ui.mapPanel.hidden = !open;
+  ui.mapButton.setAttribute("aria-expanded", String(open));
+  if (open) {
+    updateMapWhere(latestState);
+    updateMapTasks(latestState);
+    ui.mapClose.focus();
+  } else {
+    ui.mapButton.blur(); // keys go back to walking
+  }
+}
+
+// "You are in: <area>" under the map's title: the own area from the own snapshot, only
+// while playing, hidden in a corridor (no area) and in the lobby, a meeting or at the end.
+function updateMapWhere(state) {
+  const area = state && state.phase === "playing" ? state.area : null;
+  ui.mapWhere.hidden = !area;
+  if (area) setText(ui.mapWhere, `You are in: ${area}`);
+}
+
+// The own open tasks on the map: green numbered markers on their places and, under the map,
+// the same numbers with what each task is and where, so a player knows a task before
+// walking to it. Only from the own snapshot (state.tasks is never anyone else's; an
+// examiner's are fake but look exactly the same), and only while playing.
+let mapTaskKey = ""; // what the map shows now, to redraw only on a change
+function updateMapTasks(state) {
+  const open = state && state.phase === "playing" ? (state.tasks || []).filter((task) => !task.done) : [];
+  const key = JSON.stringify(open.map((task) => [task.id, task.step, task.x, task.y, task.title]));
+  if (key === mapTaskKey) return;
+  mapTaskKey = key;
+  CampusMap.setTasks(open);
+  ui.mapTasks.replaceChildren(
+    ...open.map((task) => {
+      const item = document.createElement("li");
+      const step = task.steps ? ` · step ${task.step} of ${task.steps}` : "";
+      item.textContent = `${task.title} · ${task.area}${step}`;
+      return item;
+    }),
+  );
+  ui.mapTasks.hidden = open.length === 0;
+}
+
+ui.mapButton.addEventListener("click", () => {
+  Sound.play("click");
+  setMapOpen(ui.mapPanel.hidden);
+});
+ui.mapClose.addEventListener("click", () => {
+  Sound.play("click");
+  setMapOpen(false);
+});
+ui.mapPanel.addEventListener("click", (event) => {
+  if (event.target === ui.mapPanel) setMapOpen(false);
+});
+
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !ui.helpPanel.hidden) {
     setHelpOpen(false);
+    return;
+  }
+  if (event.key === "Escape" && !ui.mapPanel.hidden) {
+    setMapOpen(false);
     return;
   }
   // Not while typing (the nickname, a mini-game's number) and not with a modifier key.
   const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
   if (typing || event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
   if (event.key === "h" || event.key === "H") setHelpOpen(ui.helpPanel.hidden);
+  if (event.key === "c" || event.key === "C") setMapOpen(ui.mapPanel.hidden);
 });
 
 // --- Mute (spec 016): next to the "?" button, on every screen; remembered per browser ----
@@ -242,6 +315,8 @@ function send(message) {
 function handleMessage(message) {
   if (message.type === "welcome") {
     welcome = message;
+    ui.mapSlot.append(CampusMap.build(welcome.map)); // once: opening the map never rebuilds it
+    ui.mapButton.hidden = false;
     ui.joinScreen.hidden = true;
     ui.hud.hidden = false;
     startGame();
@@ -265,6 +340,10 @@ function handleMessage(message) {
     while (snapshots.length > welcome.tick_rate) snapshots.shift();
     updateHud(message);
     updatePhase(message);
+    if (!ui.mapPanel.hidden) {
+      updateMapWhere(message);
+      updateMapTasks(message);
+    }
   }
 }
 
@@ -2259,6 +2338,14 @@ class CampusScene extends Phaser.Scene {
       if (this.footstepTicks % FOOTSTEP_TICKS === 0) Sound.play("footstep");
     } else {
       this.footstepTicks = 0;
+    }
+    // Sea waves (spec 017), from the own predicted position only, never another player's.
+    Music.setBeach(beachCloseness(this.predicted));
+    // The campus map's marker (spec 018): the own predicted position in the own colour,
+    // only while the map is open and the round is on; never anyone else's.
+    if (!ui.mapPanel.hidden) {
+      if (lastPhase === "playing") CampusMap.setYou(this.predicted, Render.colorCss(latestState.colors[welcome.id]));
+      else CampusMap.setYou(null);
     }
     this.trail.push({ ...this.predicted });
     if (this.trail.length > TRAIL_TICKS) this.trail.shift();

@@ -211,6 +211,13 @@ button:disabled { opacity: 0.55; box-shadow: none; cursor: not-allowed; }
   align-items: center;
   justify-content: center;
 }
+/* Campus map (spec 018): the same circle, one slot left of mute. */
+.map-button {
+  right: calc(102px + env(safe-area-inset-right));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .help-overlay { z-index: 35; padding-top: 16px; }
 .help-card { max-width: 560px; max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); gap: 12px; }
 .help-close {
@@ -330,7 +337,7 @@ button:disabled { opacity: 0.55; box-shadow: none; cursor: not-allowed; }
   position: fixed;
   top: calc(12px + env(safe-area-inset-top));
   left: calc(12px + env(safe-area-inset-left));
-  max-width: calc(100vw - 76px); /* leaves the corner to the "?" button */
+  max-width: calc(100vw - 168px); /* leaves the corner to the map, mute and "?" buttons (spec 018) */
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -458,8 +465,8 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
 .panel {
   position: fixed;
   top: calc(12px + env(safe-area-inset-top));
-  right: calc(108px + env(safe-area-inset-right)); /* next to the "?" and mute buttons */
-  max-width: calc(100vw - 132px);
+  right: calc(154px + env(safe-area-inset-right)); /* next to the map, mute and "?" buttons */
+  max-width: calc(100vw - 178px);
   padding: 10px 14px;
   border: 1px solid var(--rule);
   border-radius: 4px;
@@ -1078,6 +1085,55 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
   background: rgba(247, 240, 220, 0.85);
   pointer-events: none;
 }
+
+/* --- Campus map (spec 018): the handbook's overlay with a site plan in it ------------------ */
+.map-card { max-width: 760px; gap: 8px; }
+.map-card h2 { padding-right: 44px; font-size: 26px; }
+.map-card .doc-kicker { padding-right: 44px; }
+.map-where { margin: 0; font-family: var(--mono); font-size: 13px; color: var(--ink-soft); }
+.map-slot { width: 100%; }
+/* The plan fits the card's width and the window's height, whichever is smaller. */
+.campus-map {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: calc(100vh - 260px); /* leaves room for the title, "You are in" and the task list */
+  max-height: calc(100dvh - 260px);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: #e6e5e1;
+}
+/* Names in ink with a paper halo, so they stay readable on walls, sea and areas alike. */
+.campus-map .map-name {
+  fill: #2b2d33; /* dark grey, like the rest of the plan */
+  font-family: var(--sans);
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+  paint-order: stroke;
+  stroke: #f4f4f2;
+  stroke-width: 0.22px;
+  stroke-linejoin: round;
+}
+.campus-map .map-area-name { letter-spacing: 0.04px; }
+.campus-map .map-place { fill: #4a4d54; font-style: italic; }
+.campus-map .map-table { fill: #7d8087; stroke: #2b2d33; stroke-width: 0.15px; }
+.campus-map .map-switch { fill: #b9bbc0; stroke: #2b2d33; stroke-width: 0.12px; }
+/* The own open tasks: the green of the task glow in the game (render.js TASK_COLOR). */
+.campus-map .map-task { fill: #4cb963; stroke: #1d1f24; stroke-width: 0.12px; }
+.campus-map .map-task-number {
+  fill: #1d1f24; /* 7.6:1 on the green */
+  font-family: var(--sans);
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+/* The list under the map: the same numbers in the same green, then what and where. */
+.map-tasks { margin: 0; padding-left: 26px; font-size: 14px; color: var(--ink); }
+.map-tasks li { margin: 2px 0; }
+.map-tasks li::marker { color: #1d6b43; font-weight: 700; }
+.campus-map .map-you-ring { fill: #fffaf0; stroke: var(--ink); stroke-width: 0.15px; }
+.campus-map .map-you-dot { stroke: var(--ink); stroke-width: 0.1px; }
 
 /* --- Narrow windows: the lobby roster under the HUD instead of next to it ------------------- */
 
