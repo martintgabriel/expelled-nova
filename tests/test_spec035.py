@@ -77,7 +77,7 @@ def test_the_examiners_still_win_when_a_student_is_missing():
 def test_the_guard_sees_more_and_drives_a_little_slower():
     assert rules.GUARD_VISION_TILES == 6
     assert rules.GUARD_CONE_DEGREES == 100
-    assert rules.GUARD_SPEED == 1.3 * SPEED
+    assert rules.GUARD_SPEED == 1.2 * SPEED  # spec 034 set the speed
 
 
 def test_the_router_has_its_own_label_and_mark():

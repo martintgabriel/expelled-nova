@@ -30,7 +30,8 @@ or missing place names, a too open west side, and too few reasons to go west. Bu
      time. `state["fire_missing"]`: the ids, while it shows.
    - If the time runs out before every living student is in, the examiners win (unchanged).
 5. **Security guard:** a bigger view (6 tiles instead of 4, a 100° cone instead of 70°) and
-   a little slower (1.3× a player's speed instead of 1.6×), so players can see him coming.
+   a little slower (spec 034 already set 1.2× a player's speed; this spec keeps it), so
+   players can see him coming.
    His random route stays.
 6. **Sea waves in the lobby too:** the waves play in the lobby like in a round (still
    louder the closer to the beach), and quietly anywhere in the lobby.
