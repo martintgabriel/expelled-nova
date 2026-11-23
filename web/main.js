@@ -29,6 +29,8 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * 35; // matches r="35" on .ring-sweep in
 
 const ui = {
   joinScreen: document.getElementById("join-screen"),
+  expelledStamp: document.getElementById("expelled-stamp"),
+  expelledLine: document.getElementById("expelled-line"),
   joinForm: document.getElementById("join-form"),
   nickname: document.getElementById("nickname"),
   hatPrev: document.getElementById("hat-prev"),
@@ -78,6 +80,11 @@ const ui = {
   controlSabotage: document.getElementById("control-sabotage"),
   sabotageButton: document.getElementById("sabotage-button"),
   lightsBanner: document.getElementById("lights-banner"),
+  meetingChat: document.getElementById("meeting-chat"),
+  chatLog: document.getElementById("chat-log"),
+  chatForm: document.getElementById("chat-form"),
+  chatInput: document.getElementById("chat-input"),
+  emergencyBanner: document.getElementById("emergency-banner"),
   switchArea: document.getElementById("switch-area"),
   taskBar: document.getElementById("task-bar"),
   taskBarFill: document.getElementById("task-bar-fill"),
@@ -182,6 +189,10 @@ function setMapOpen(open) {
   if (open) setSoundOpen(false);
   ui.mapPanel.hidden = !open;
   ui.mapButton.setAttribute("aria-expanded", String(open));
+  if (!open) {
+    CampusMap.setSabotageChoices(null); // spec 023: the menu is only for one choice
+    document.getElementById("map-title").textContent = "Campus map";
+  }
   if (open) {
     updateMapWhere(latestState);
     updateMapTasks(latestState);
@@ -524,6 +535,7 @@ function handleMessage(message) {
     // Keep about one second of history.
     while (snapshots.length > welcome.tick_rate) snapshots.shift();
     updateHud(message);
+    renderMeetingChat(message); // spec 029
     updatePhase(message);
     if (!ui.mapPanel.hidden) {
       updateMapWhere(message);
@@ -697,6 +709,7 @@ function updatePhase(state) {
   if (state.phase === "playing" && previousPhase === "playing" && wasAliveForExpelSound && !state.alive) {
     Sound.play("expel");
     Sound.play("expelVoice"); // spec 020: "Expelled!"
+    showExpelledStamp("An examiner caught you. You are a ghost now."); // spec 032
   }
   wasAliveForExpelSound = state.alive;
   checkExpelSound(state);
@@ -1003,12 +1016,28 @@ function tryExpel() {
 // start the cooldown (the only way it can go from 0 to not-0 while still playing), instead
 // of assuming the click succeeded. handleMessage's "error" branch clears pendingExpel on a
 // rejection, so a target that stepped out of range in the meantime plays no sound at all.
+// Spec 032: the red "EXPELLED!" stamp, only ever from the two places above that already
+// belong to the examiner who expelled and the student who was expelled.
+let expelledStampTimer = null;
+function showExpelledStamp(line) {
+  ui.expelledLine.textContent = line;
+  ui.expelledStamp.hidden = false;
+  ui.expelledStamp.classList.remove("show");
+  void ui.expelledStamp.offsetWidth; // restart the animation
+  ui.expelledStamp.classList.add("show");
+  clearTimeout(expelledStampTimer);
+  expelledStampTimer = setTimeout(() => {
+    ui.expelledStamp.hidden = true;
+  }, 1600);
+}
+
 function checkExpelSound(state) {
   if (!pendingExpel || state.phase !== "playing") return;
   if (state.expel_cooldown > 0) {
     pendingExpel = false;
     Sound.play("expel");
     Sound.play("expelVoice"); // spec 020: "Expelled!"
+    showExpelledStamp("You expelled a student."); // spec 032
   }
 }
 
@@ -1029,6 +1058,7 @@ function renderEnd(state) {
     // The task win is the only way a round ends with every task done (spec 004).
     const progress = state.task_progress;
     const byTasks = state.winner === "students" && progress.total > 0 && progress.done === progress.total;
+    const byFire = state.winner === "examiners" && state.fire_lost; // spec 023
     let title = state.winner === "students" ? "Students win!" : "Examiners win!";
     if (byTasks) title = "All tasks done: students win";
     ui.endTitle.textContent = title;
@@ -1043,7 +1073,9 @@ function renderEnd(state) {
       ui.endStamp.textContent = "Passed";
     } else {
       ui.endKicker.textContent = "Nova Campus · Exmatriculation notice";
-      ui.endText.textContent = "We regret to inform you that the examiners failed them all. Please return your student card at the gate.";
+      ui.endText.textContent = byFire
+        ? "The building burned down. Exams cancelled forever. Not everyone made it to the assembly point."
+        : "We regret to inform you that the examiners failed them all. Please return your student card at the gate.";
       ui.endStamp.textContent = "Expelled";
     }
     const ghosts = new Set(state.ghosts || []);
@@ -1657,6 +1689,7 @@ const MINIGAME_HINTS = {
   print_file: "Print exactly the file the group chat asks for.", // spec 024
   cert_file: "Print exactly the file the office asks for.", // spec 024
   chat: "Answer the Helpdesk in Portuguese.", // spec 024
+  nata: "Tap the seagulls before they reach your pastel.", // spec 031
 };
 
 const NATA_EATEN_MS = 1200; // how long the "gone" tart stays up after a seagull time-out
@@ -1713,13 +1746,16 @@ function updateMinigame(state) {
   setText(ui.minigameHint, MINIGAME_HINTS[doing.challenge.kind] || "");
   // Spec 021: the surf wave's phase changes every tick; leave it out of the key so the
   // panel (and its button) is not rebuilt 20 times a second, and only move the wave.
-  const { phase, ...stable } = doing.challenge;
-  const key = JSON.stringify([doing.task, doing.challenge.kind === "surf" ? stable : doing.challenge]);
+  // Spec 031: the same for the seagulls' clock ("age") and the bite count.
+  const { phase, age, bites, ...stable } = doing.challenge;
+  const moving = doing.challenge.kind === "surf" || doing.challenge.kind === "nata";
+  const key = JSON.stringify([doing.task, moving ? stable : doing.challenge]);
   if (key !== minigameKey) {
     minigameKey = key;
     renderChallenge(doing.task, doing.challenge);
   }
   if (doing.challenge.kind === "surf") moveWave(doing.challenge);
+  if (doing.challenge.kind === "nata") syncNata(doing.challenge);
   const note = state.task_note || "";
   if (note !== minigameNoteShown) {
     minigameNoteShown = note;
@@ -1750,6 +1786,74 @@ function renderChallenge(taskId, challenge) {
   else if (challenge.kind === "surf") renderSurf(taskId, challenge);
   else if (challenge.kind === "print_file" || challenge.kind === "cert_file") renderFilePick(taskId, challenge);
   else if (challenge.kind === "chat") renderChat(taskId, challenge);
+  else if (challenge.kind === "nata") renderNata(taskId, challenge);
+}
+
+// nata (spec 031) — you hold your pastel de nata, seagulls swoop in from all sides; tap
+// them away. The server sends the whole flight plan and how many ticks have passed ("age");
+// this only animates it between two snapshots. Which taps count is decided on the server.
+let nataView = null; // { gulls: [{button, ...plan}], age0, t0, tickMs, counter, frame }
+const NATA_DIRECTIONS = [0, 45, 90, 135, 180, 225, 270, 315];
+
+function renderNata(taskId, challenge) {
+  if (nataView) cancelAnimationFrame(nataView.frame);
+  const counter = document.createElement("p");
+  counter.className = "minigame-hits";
+  const sky = document.createElement("div");
+  sky.className = "nata-sky";
+  const tart = renderNataTart(false);
+  tart.classList.add("nata-center");
+  sky.append(tart);
+  const gulls = challenge.gulls.map((plan, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "nata-gull";
+    button.textContent = "\u{1F426}";
+    button.setAttribute("aria-label", "Shoo the seagull");
+    button.hidden = true;
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault(); // a tap counts at once, without waiting for the click
+      Sound.play("seagullHit");
+      flinchTart(tart);
+      sendTaskInput(taskId, index);
+    });
+    sky.append(button);
+    return { ...plan, button };
+  });
+  ui.minigameContent.append(counter, sky);
+  nataView = { gulls, counter, age0: challenge.age, t0: performance.now(), tickMs: 1000 / welcome.tick_rate, frame: 0 };
+  syncNata(challenge);
+  animateNata();
+}
+
+// Every snapshot: the server's clock and the counts, so the animation never drifts.
+function syncNata(challenge) {
+  if (!nataView) return;
+  nataView.age0 = challenge.age;
+  nataView.t0 = performance.now();
+  nataView.counter.textContent = `Shooed: ${challenge.shooed}/${challenge.goal} · Bites: ${challenge.bites}/2`;
+  challenge.gulls.forEach((plan, i) => {
+    if (nataView.gulls[i]) nataView.gulls[i].shooed = plan.shooed;
+  });
+}
+
+function animateNata() {
+  if (!nataView || !nataView.counter.isConnected) {
+    nataView = null; // the panel closed or shows another game
+    return;
+  }
+  const age = nataView.age0 + (performance.now() - nataView.t0) / nataView.tickMs;
+  for (const gull of nataView.gulls) {
+    const progress = (age - gull.spawn) / gull.fly;
+    const flying = !gull.shooed && progress >= 0 && progress < 1;
+    gull.button.hidden = !flying;
+    if (!flying) continue;
+    const angle = (NATA_DIRECTIONS[gull.from] * Math.PI) / 180;
+    const distance = 46 * (1 - progress); // percent of the sky, from its edge to the pastel
+    gull.button.style.left = `${50 + Math.cos(angle) * distance}%`;
+    gull.button.style.top = `${50 + Math.sin(angle) * distance}%`;
+  }
+  nataView.frame = requestAnimationFrame(animateNata);
 }
 
 // print_file and cert_file (spec 024) — a message says which file to print; four almost
@@ -2163,15 +2267,36 @@ function isLivingStudent(state) {
   return state.phase === "playing" && state.role === "student" && state.alive;
 }
 
-// Can this player start fixing now: a living student in the dark, within switch_range of
-// the latest server position, and not busy.
+// Can this player start fixing now: a living player in the dark (spec 033: examiners too),
+// within switch_range of the latest server position, and not busy or in a vent.
 function canFix(state) {
-  if (!isLivingStudent(state) || state.lights_on || state.fixing || state.doing) return false;
+  if (state.phase !== "playing" || !state.alive || state.vent) return false;
+  if (state.fixing || state.doing) return false;
+  const target = fixTarget(state);
+  if (!target) return false;
   const me = state.players.find((p) => p.id === welcome.id);
   if (!me) return false;
   const t = welcome.map.tile_size;
-  const [col, row] = welcome.map.light_switch;
-  return Math.hypot((col + 0.5) * t - me.x, (row + 0.5) * t - me.y) <= welcome.switch_range;
+  return Math.hypot((target.x + 0.5) * t - me.x, (target.y + 0.5) * t - me.y) <= welcome.switch_range;
+}
+
+// What can be fixed right now (spec 023): the light switch while the lights are off, the
+// router while the Wi-Fi is down, or null.
+function fixTarget(state) {
+  const kind = state.emergency ? state.emergency.kind : null;
+  if (kind === "lights" && welcome.map.light_switch) {
+    const [x, y] = welcome.map.light_switch;
+    return { x, y, label: "Fix the lights" };
+  }
+  if (kind === "wifi") {
+    const router = sabotagePlace("wifi");
+    return router ? { x: router.x, y: router.y, label: "Restart router" } : null;
+  }
+  return null;
+}
+
+function sabotagePlace(kind) {
+  return (welcome.map.sabotages || []).find((s) => s.kind === kind) || null;
 }
 
 // The name of the area the switch is in, for the banner (from the map's areas).
@@ -2190,24 +2315,27 @@ function updateLights(state) {
   // over from #task-button (updateTasks) while fixing is actually possible, the same
   // priority tryUse() gives it, so the slot never shows both at once. Once shown it is
   // always available, by definition of canFix(), so there is nothing to grey out here.
-  ui.fixButton.hidden = state.role !== "student" || !welcome.map.light_switch || !canFix(state);
+  ui.fixButton.hidden = !canFix(state);
   if (!ui.fixButton.hidden) {
     ui.fixButton.disabled = false;
-    setActionReason(ui.fixButton, "", "Fix the lights");
+    setActionReason(ui.fixButton, "", fixTarget(state).label);
   }
+  updateEmergency(state);
 
-  // The fixed LIGHTS OFF slot: examiners only, for the whole round.
+  // The fixed SABOTAGE slot: examiners only, for the whole round. Spec 023: it opens the
+  // sabotage menu on the map (or turns off the lights on a map without the menu).
   ui.sabotageButton.hidden = state.role !== "examiner" || !welcome.map.light_switch;
   if (!ui.sabotageButton.hidden) {
     const alive = state.phase === "playing" && state.alive;
     const cooldown = alive ? state.sabotage_cooldown : 0;
-    ui.sabotageButton.disabled = !alive || dark || cooldown > 0 || insideVent(state);
+    const running = Boolean(state.emergency);
+    ui.sabotageButton.disabled = !alive || running || cooldown > 0 || insideVent(state);
     let reason = "";
     if (!alive) reason = "Ghosts cannot sabotage";
     else if (insideVent(state)) reason = "Leave the vent first";
-    else if (dark) reason = "The lights are already off";
+    else if (running) reason = "An emergency is already running";
     else if (cooldown > 0) reason = `Ready in ${cooldown} s`;
-    setActionReason(ui.sabotageButton, reason, "Lights off");
+    setActionReason(ui.sabotageButton, reason, welcome.map.sabotages ? "Sabotage" : "Lights off");
     setCooldownRing(ui.sabotageButton, cooldown, SABOTAGE_COOLDOWN);
   }
 
@@ -2225,15 +2353,50 @@ function updateLights(state) {
 
 function trySabotage() {
   if (!latestState || !isLivingExaminer(latestState)) return;
-  if (latestState.lights_on === false) {
-    showToast("The lights are already off");
+  if (latestState.emergency) {
+    showToast("An emergency is already running");
     return;
   }
   if (latestState.sabotage_cooldown > 0) {
-    showToast(`Lights cooldown: ${latestState.sabotage_cooldown} s left`);
+    showToast(`Sabotage cooldown: ${latestState.sabotage_cooldown} s left`);
     return;
   }
-  send({ type: "sabotage" });
+  if (!welcome.map.sabotages) {
+    send({ type: "sabotage", kind: "lights" });
+    return;
+  }
+  // Spec 023: choose on the map, like in the original genre. The server checks again.
+  setMapOpen(true);
+  document.getElementById("map-title").textContent = "Choose a sabotage";
+  CampusMap.setSabotageChoices(welcome.map.sabotages, (kind) => {
+    Sound.play("click");
+    send({ type: "sabotage", kind });
+    setMapOpen(false);
+  });
+}
+
+// Spec 023: the banner, the red border and the map mark of the fire alarm and the Wi-Fi
+// outage, for everyone (the lights keep their own banner, spec 008).
+let lastEmergencyKind = null;
+function updateEmergency(state) {
+  const emergency = state.phase === "playing" ? state.emergency : null;
+  const kind = emergency ? emergency.kind : null;
+  if (kind === "fire" && lastEmergencyKind !== "fire") Sound.play("fireAlarm");
+  if (kind === "wifi" && lastEmergencyKind !== "wifi") Sound.play("lightsOut");
+  lastEmergencyKind = kind;
+  document.body.classList.toggle("fire-alarm", kind === "fire");
+  ui.emergencyBanner.hidden = kind !== "fire" && kind !== "wifi";
+  if (kind === "fire") {
+    const s = emergency.seconds_left;
+    const clock = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    setText(ui.emergencyBanner, `FIRE ALARM! Everyone to the assembly point on the EDP Plaza. ${clock} · Evacuated ${emergency.evacuated}/${emergency.students}`);
+  } else if (kind === "wifi") {
+    setText(ui.emergencyBanner, "eduroam is down: no tasks. Restart the router in the Library.");
+  }
+  let area = null;
+  if (kind === "fire") area = sabotagePlace("fire").assembly;
+  else if (kind === "wifi") area = { ...sabotagePlace("wifi"), w: 1, h: 1 };
+  CampusMap.setEmergencyMark(area);
 }
 
 // Key F: fix the lights at the switch, otherwise do a task (no task place is that close).
@@ -2515,6 +2678,59 @@ function beachCloseness(pos) {
   return Math.min(1, Math.max(0, (BEACH_RANGE_TILES - nearest) / (BEACH_RANGE_TILES - 1)));
 }
 
+// --- Meeting chat (spec 029) ---------------------------------------------------------------
+// The server keeps the messages and checks every rule; this shows them and sends "chat".
+let chatKey = "";
+let campusScene = null; // set in CampusScene.create(), to switch its keys off while typing
+
+function renderMeetingChat(state) {
+  const inMeeting = state.phase === "meeting" && Array.isArray(state.chat);
+  ui.meetingChat.hidden = !inMeeting;
+  if (!inMeeting) {
+    chatKey = "";
+    return;
+  }
+  const canChat = state.alive && state.meeting && state.meeting.result === null;
+  ui.chatForm.hidden = !canChat;
+  const key = JSON.stringify(state.chat);
+  if (key === chatKey) return;
+  chatKey = key;
+  ui.chatLog.replaceChildren(
+    ...state.chat.map((message) => {
+      const item = document.createElement("li");
+      const name = document.createElement("strong");
+      name.textContent = `${nameOf(message.from)}: `; // plain text, never HTML
+      const color = playerColor(state, message.from);
+      if (color !== undefined) name.style.color = Render.colorCss(color);
+      const text = document.createElement("span");
+      text.textContent = message.text; // plain text, never HTML
+      item.append(name, text);
+      return item;
+    }),
+  );
+  ui.chatLog.scrollTop = ui.chatLog.scrollHeight;
+}
+
+ui.chatForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const text = ui.chatInput.value.trim();
+  if (!text) return;
+  send({ type: "chat", text });
+  ui.chatInput.value = "";
+});
+
+// While typing, the game's keys (W, A, S, D, E, …) must neither act nor swallow the letters.
+ui.chatInput.addEventListener("focus", () => {
+  if (!campusScene) return;
+  campusScene.input.keyboard.disableGlobalCapture();
+  campusScene.input.keyboard.enabled = false;
+});
+ui.chatInput.addEventListener("blur", () => {
+  if (!campusScene) return;
+  campusScene.input.keyboard.enableGlobalCapture();
+  campusScene.input.keyboard.enabled = true;
+});
+
 class CampusScene extends Phaser.Scene {
   constructor() {
     super("campus");
@@ -2537,12 +2753,14 @@ class CampusScene extends Phaser.Scene {
   }
 
   create() {
+    campusScene = this; // spec 029: the chat switches the keys off while typing
     // The map is drawn from the server's data; the darkness covers what the own character
     // has no line of sight to. The vision radius and the tiles that block sight come from
     // the server ("welcome"), so the lit area matches what the server sends.
     const { width, height } = Render.drawMap(this, welcome.map, welcome.sight_grid);
     if (welcome.map.meeting_point) Render.makeMeetingPoint(this, welcome.map, welcome.meeting_table_radius);
     Render.makeGym(this, welcome.map); // spec 025: people working out under a skylight
+    Render.makeSabotagePlaces(this, welcome.map); // spec 023: assembly point and router
     for (const vent of welcome.map.vents || []) this.vents.set(vent.id, Render.makeVent(this, welcome.map, vent));
     // Every task place of the map as an object (spec 015); own open ones get a glow below.
     for (const station of Render.taskStations(welcome.map)) Render.makeTaskPlace(this, welcome.map, station);

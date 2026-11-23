@@ -1202,7 +1202,8 @@ def test_the_examiner_sees_the_sabotage_cooldown_and_students_do_not():
         snapshot = game.snapshot_for(student.id)
         assert "sabotage_cooldown" not in snapshot
         assert snapshot["fixing"] is None
-    assert "fixing" not in game.snapshot_for(examiner.id)
+    # Spec 033: an examiner can fix too, so their snapshot has "fixing" as well.
+    assert game.snapshot_for(examiner.id)["fixing"] is None
 
 
 # --- Rejected: each leaves the whole state unchanged ---------------------------------------------
@@ -1365,7 +1366,6 @@ def fix_by_an_unknown_player():
         (sabotage_by_the_other_examiner_while_the_lights_are_off, "The lights are already off"),
         (sabotage_by_an_unknown_player, "Unknown player"),
         (sabotage_on_a_map_without_a_switch, "This map has no light switch"),
-        (fix_by_an_examiner, "Only students can fix the lights"),
         (fix_by_a_ghost_student, "Ghosts cannot fix the lights"),
         (fix_while_the_lights_are_on, "The lights are on"),
         (fix_one_pixel_out_of_reach, "Too far from the light switch"),

@@ -229,5 +229,50 @@ const CampusMap = (() => {
     if (svgRoot) svgRoot.classList.toggle("dark", Boolean(on));
   }
 
-  return { build, setYou, setTasks, setDark };
+  // Spec 023: the sabotage menu. `places` is the map's "sabotages" list (kind, x, y, name)
+  // or null to remove it; `onPick(kind)` runs when one marker is tapped. Only ever shown on
+  // an examiner's own map, while they choose.
+  let sabotageLayer = null;
+  const SABOTAGE_ICONS = { lights: "\u{1F4A1}", fire: "\u{1F525}", wifi: "\u{1F4F6}" };
+  function setSabotageChoices(places, onPick) {
+    if (!svgRoot) return;
+    if (sabotageLayer) sabotageLayer.remove();
+    sabotageLayer = null;
+    svgRoot.classList.toggle("choosing", Boolean(places));
+    if (!places) return;
+    sabotageLayer = node("g", { class: "map-sabotages" });
+    for (const place of places) {
+      const x = place.x + 0.5;
+      const y = place.y + 0.5;
+      const marker = node("g", { class: "map-sabotage", "role": "button", tabindex: 0, "aria-label": place.name });
+      marker.append(node("circle", { cx: x, cy: y, r: 1.6, class: "map-sabotage-ring" }));
+      marker.append(text(x, y + 0.05, SABOTAGE_ICONS[place.kind] || "!", 1.5, "map-sabotage-icon"));
+      marker.append(text(x, y + 2.6, place.name, 0.8, "map-name map-sabotage-name"));
+      const pick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onPick(place.kind);
+      };
+      marker.addEventListener("click", pick);
+      marker.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") pick(event);
+      });
+      sabotageLayer.append(marker);
+    }
+    svgRoot.append(sabotageLayer);
+  }
+
+  // Spec 023: during the fire alarm the assembly point, during a Wi-Fi outage the router,
+  // highlighted on everyone's map. `area` is {x, y, w, h} in tiles, or null.
+  let emergencyMark = null;
+  function setEmergencyMark(area) {
+    if (!svgRoot) return;
+    if (emergencyMark) emergencyMark.remove();
+    emergencyMark = null;
+    if (!area) return;
+    emergencyMark = node("rect", { x: area.x, y: area.y, width: area.w, height: area.h, class: "map-emergency" });
+    svgRoot.insertBefore(emergencyMark, taskLayer);
+  }
+
+  return { build, setYou, setTasks, setDark, setSabotageChoices, setEmergencyMark };
 })();

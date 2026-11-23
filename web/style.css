@@ -1266,7 +1266,7 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
 .vote-dot { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
 
 /* Spec 021: the surf mini-game. */
-.surf-sea { position: relative; height: 56px; margin: 8px 0 12px; border-radius: 8px; background: linear-gradient(#7cc3e8, #2f80c3); overflow: hidden; }
+.surf-sea { position: relative; align-self: stretch; width: 100%; min-width: 240px; height: 56px; margin: 8px 0 12px; border-radius: 8px; background: linear-gradient(#7cc3e8, #2f80c3); overflow: hidden; }
 .surf-crest { position: absolute; top: 0; bottom: 0; background: rgba(255, 255, 255, 0.25); }
 .surf-crest.now { background: rgba(255, 255, 255, 0.55); }
 .surf-wave, .surf-board { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 30px; line-height: 1; }
@@ -1305,3 +1305,38 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
 /* Spec 024: a speech bubble for the group chat and the Helpdesk; file names in monospace. */
 .minigame-bubble { margin: 6px 0; padding: 8px 10px; border-radius: 10px; background: var(--paper-light, #fffaf0); border: 1px solid var(--rule, #c9bfa3); font-size: 14px; }
 .file-options button { font-family: var(--mono, monospace); font-size: 12px; text-align: left; word-break: break-all; }
+
+/* Spec 031: the pastel in the middle of the sky, seagulls flying in from the edges. */
+.nata-sky { position: relative; align-self: stretch; width: 100%; min-width: 240px; height: 220px; border-radius: 10px; background: linear-gradient(#bfe3f7, #f6e7b8); overflow: hidden; touch-action: none; }
+.nata-sky .nata-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.nata-gull { position: absolute; transform: translate(-50%, -50%); width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.55); font-size: 26px; line-height: 44px; cursor: pointer; }
+
+/* Spec 032: the red "EXPELLED!" stamp in the middle of the screen. */
+#expelled-stamp { position: fixed; inset: 0; z-index: 25; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+#expelled-stamp[hidden] { display: none; }
+.expelled-word { margin: 0; padding: 6px 22px; border: 6px solid var(--stamp-red); border-radius: 10px; color: var(--stamp-red); background: rgba(255, 250, 240, 0.9); font-family: var(--serif); font-size: clamp(40px, 9vw, 84px); font-weight: 900; letter-spacing: 4px; transform: rotate(-8deg); }
+.expelled-line { margin: 14px 0 0; padding: 4px 10px; border-radius: 6px; background: rgba(16, 18, 22, 0.75); color: #fff; font-size: 16px; font-weight: 700; }
+#expelled-stamp.show .expelled-word { animation: stamp-in 0.35s cubic-bezier(0.2, 1.6, 0.4, 1); }
+@keyframes stamp-in { from { transform: rotate(-8deg) scale(2.2); opacity: 0; } to { transform: rotate(-8deg) scale(1); opacity: 1; } }
+
+/* Spec 023: the sabotage menu on the map, the emergency banner and the fire alarm border. */
+.campus-map.choosing { cursor: crosshair; }
+.map-sabotage { cursor: pointer; }
+.map-sabotage-ring { fill: #c0392b; fill-opacity: 0.85; stroke: #fffaf0; stroke-width: 0.25px; }
+.map-sabotage:hover .map-sabotage-ring, .map-sabotage:focus .map-sabotage-ring { fill: #e74c3c; }
+.map-sabotage-icon { text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.map-sabotage-name { font-weight: 800; pointer-events: none; }
+.map-emergency { fill: #e74c3c; fill-opacity: 0.45; stroke: #c0392b; stroke-width: 0.3px; animation: emergency-blink 1s steps(2) infinite; }
+@keyframes emergency-blink { 50% { fill-opacity: 0.15; } }
+.emergency-banner { background: #c0392b; color: #fff; font-weight: 800; }
+body.fire-alarm::after { content: ""; position: fixed; inset: 0; z-index: 24; pointer-events: none; box-shadow: inset 0 0 0 8px rgba(231, 76, 60, 0.85); animation: fire-border 0.8s steps(2) infinite; }
+@keyframes fire-border { 50% { box-shadow: inset 0 0 0 8px rgba(231, 76, 60, 0.15); } }
+
+/* Spec 029: the meeting chat under the voting cards. */
+.meeting-chat { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--rule); }
+.chat-log { list-style: none; margin: 0 0 6px; padding: 0; max-height: 120px; overflow-y: auto; font-size: 13px; text-align: left; }
+.chat-log li { margin: 2px 0; word-break: break-word; }
+.chat-log strong { text-shadow: 0 0 1px rgba(0, 0, 0, 0.6); }
+.chat-form { display: flex; gap: 6px; }
+.chat-form input { flex: 1; min-width: 0; padding: 6px 8px; font-size: 14px; }
+.chat-form[hidden] { display: none; }

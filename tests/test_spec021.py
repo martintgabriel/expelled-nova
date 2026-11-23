@@ -145,3 +145,14 @@ def test_a_player_can_play_the_tray_task_to_the_end():
     assert "tray" in student.tasks_done
     with pytest.raises(GameError):
         game.task_input(student.id, "tray", 0)
+
+
+def test_the_surf_sea_takes_the_panel_width():
+    # Bug fix (23 Nov): the panel centres its content, so without its own width the sea
+    # (whose children are all absolutely positioned) shrank to 0 px and no wave was visible.
+    from pathlib import Path
+    import re
+
+    style = (Path(__file__).resolve().parent.parent / "web" / "style.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.surf-sea \{([^}]*)\}", style).group(1)
+    assert "width: 100%" in rule

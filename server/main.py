@@ -180,6 +180,8 @@ async def websocket_endpoint(ws: WebSocket):
                     connections[player_id] = ws
                 elif message["type"] == "start":
                     game.start(player_id)
+                elif message["type"] == "chat":
+                    game.chat(player_id, message.get("text"))
                 elif message["type"] == "settings":
                     game.set_settings(player_id, message)
                 elif message["type"] == "make_host":
@@ -191,7 +193,7 @@ async def websocket_endpoint(ws: WebSocket):
                 elif message["type"] == "meeting":
                     game.call_meeting(player_id)
                 elif message["type"] == "sabotage":
-                    game.sabotage(player_id)
+                    game.sabotage(player_id, message.get("kind", "lights"))
                 elif message["type"] == "fix":
                     game.fix(player_id)
                 elif message["type"] == "vent_enter":

@@ -57,6 +57,11 @@
   "spawns": [[22, 4], [24, 4], [26, 4], [28, 4], [30, 4], [23, 6], [25, 6], [27, 6], [29, 6], [31, 6]],
   "meeting_point": [28, 21],
   "light_switch": [43, 6],
+  "sabotages": [
+    {"kind": "lights", "x": 43, "y": 6, "name": "Lights · Student Services"},
+    {"kind": "fire", "x": 38, "y": 33, "name": "Fire alarm · EDP Plaza", "assembly": {"x": 36, "y": 32, "w": 5, "h": 4}},
+    {"kind": "wifi", "x": 33, "y": 19, "name": "Wi-Fi router · Library"}
+  ],
   "vents": [
     {"id": "lecture-hall", "name": "Lecture Hall B", "x": 7, "y": 10},
     {"id": "student-services", "name": "Student Services", "x": 43, "y": 1},
@@ -72,7 +77,7 @@
     {"id": "print", "title": "Print your assignment", "area": "Library", "x": 41, "y": 20, "minigame": "print_file", "joke": "Printed. Your group already submitted the old version."},
     {"id": "socket", "title": "Get your slides on the projector", "area": "Auditorium", "x": 34, "y": 40, "minigame": "cable", "joke": "Projector works. Your laptop battery doesn't."},
     {"id": "gate", "title": "Tap your student card at the gate", "area": "Main Entrance", "x": 28, "y": 6, "minigame": "card", "joke": "Beep. Red. Beep. Red. Beep. Green."},
-    {"id": "nata", "title": "Eat your pastel de nata in the sun", "area": "Lower Courtyard", "x": 23, "y": 23, "minigame": "seagull", "joke": "A seagull took it. Task counts anyway."},
+    {"id": "nata", "title": "Eat your pastel de nata in the sun", "area": "Lower Courtyard", "x": 23, "y": 23, "minigame": "nata", "joke": "Six seagulls shooed. The seventh is watching you."},
     {"id": "tray", "title": "Fill your tray at the Cafeteria", "area": "Food Court", "x": 41, "y": 12, "minigame": "tray", "joke": "Soup of the day: the same as yesterday."},
     {"id": "surf", "title": "Catch a wave at Carcavelos", "area": "Beach", "x": 3, "y": 19, "minigame": "surf", "joke": "Three waves ridden. Class? What class?"}
   ],

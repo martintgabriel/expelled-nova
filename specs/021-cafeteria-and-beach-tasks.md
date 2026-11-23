@@ -37,3 +37,8 @@ Replacing the paper-jam and seagull games, a longer helpdesk conversation (later
   were dealt (seed 1 → 4, same roles and first task), and the station-area check, since the
   beach is sand and not an area (spec 015).
 - All tests pass; locally both tasks can be played to the end.
+
+## Changes after the merge
+- Bug fix (23 Nov): the surf panel's sea had no width of its own and shrank to 0 px inside
+  the centred mini-game panel, so the wave could not be seen. It now takes the panel's
+  full width (`tests/test_spec021.py::test_the_surf_sea_takes_the_panel_width`).
