@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from server.game import (
     CORNER_SLIDE,
     EXPEL_RANGE,
+    GUARD_CONE_DEGREES,
     MEETING_RANGE,
     MEETING_TABLE_RADIUS,
     PLAYER_HALF,
@@ -159,6 +160,8 @@ async def websocket_endpoint(ws: WebSocket):
                             "switch_range": SWITCH_RANGE,
                             "lights_out_radius": game.lights_out_radius,
                             "vision_radius": game.vision_radius,
+                            "guard_vision_radius": game.guard_vision_radius,
+                            "guard_cone_degrees": GUARD_CONE_DEGREES,
                         }
                     )
                     connections[player_id] = ws

@@ -110,6 +110,7 @@ const ui = {
   endKicker: document.getElementById("end-kicker"),
   endText: document.getElementById("end-text"),
   endStamp: document.getElementById("end-stamp"),
+  endSecurityNote: document.getElementById("end-security-note"),
   restartButton: document.getElementById("restart-button"),
   restartHint: document.getElementById("restart-hint"),
   helpButton: document.getElementById("help-button"),
@@ -443,7 +444,9 @@ function handleMessage(message) {
     const players = new Map(message.players.map((p) => [p.id, p]));
     // Only a ghost (or everyone after the end) receives the ghost list; the living
     // do not even receive the ghosts' positions.
-    snapshots.push({ time: performance.now(), players, ghosts: new Set(message.ghosts || []) });
+    // Spec 027: "guard" is missing whenever he is out of this player's own sight (or does
+    // not exist), kept here per snapshot so updateGuard() can interpolate him like any player.
+    snapshots.push({ time: performance.now(), players, ghosts: new Set(message.ghosts || []), guard: message.guard || null });
     latestState = message;
     for (const p of message.players) knownNames.set(p.id, p.name);
     for (const [id, color] of Object.entries(message.colors)) knownColors.set(id, color);
@@ -572,6 +575,8 @@ function updatePhase(state) {
     Sound.play("meetingChime");
     // A report also sounds the alarm, for everyone at once (spec 017).
     if (state.meeting && state.meeting.reason === "report") Sound.play("reportAlarm");
+    // Spec 027: a security catch sounds its own short alarm, for everyone at once.
+    if (state.meeting && state.meeting.reason === "security") Sound.play("securityAlarm");
     knownVoted = new Set();
   }
   // The end of a round, once, for everyone (spec 017). Spec 020: the sound tells which
@@ -913,9 +918,18 @@ function checkExpelSound(state) {
 
 function renderEnd(state) {
   // Redraw only when something on the end screen changes.
-  const key = JSON.stringify([state.winner, state.roles, state.ghosts, state.colors, state.players.map((p) => [p.id, p.name])]);
+  const key = JSON.stringify([
+    state.winner,
+    state.roles,
+    state.ghosts,
+    state.colors,
+    state.security_witnessed,
+    state.players.map((p) => [p.id, p.name]),
+  ]);
   if (key !== endKey) {
     endKey = key;
+    // Spec 027: one added short note when the expel that ended the game was itself seen.
+    ui.endSecurityNote.hidden = !state.security_witnessed;
     // The task win is the only way a round ends with every task done (spec 004).
     const progress = state.task_progress;
     const byTasks = state.winner === "students" && progress.total > 0 && progress.done === progress.total;
@@ -1103,8 +1117,14 @@ function renderMeeting(state) {
   pendingVote = null; // a real change from the server always clears a half-made pick
 
   const caller = nameOf(meeting.called_by); // added as text: never read as HTML
-  ui.meetingReason.textContent =
-    meeting.reason === "report" ? `${caller} found a failed exam on the floor.` : `${caller} pressed the emergency button.`;
+  if (meeting.reason === "report") {
+    ui.meetingReason.textContent = `${caller} found a failed exam on the floor.`;
+  } else if (meeting.reason === "security") {
+    // Spec 027: named exactly as called_by's name is read above, appended as text only.
+    ui.meetingReason.textContent = `Campus Security caught ${nameOf(meeting.caught)} handing out a failing exam!`;
+  } else {
+    ui.meetingReason.textContent = `${caller} pressed the emergency button.`;
+  }
   if (result) renderResult(state, result);
   else renderVoting(state, meeting);
 }
@@ -1117,7 +1137,7 @@ function canActuallyVote(state, meeting) {
 // colour, their name, a "you" marker and a "VOTED" stamp once they have voted. Ghosts are
 // greyed out and not votable. Tapping a votable card opens a confirm/cancel step inside
 // it, instead of sending the vote straight away.
-function buildPlayerCard(state, playerId, { isGhost, hasVoted, canVote }) {
+function buildPlayerCard(state, playerId, { isGhost, hasVoted, canVote, caughtBySecurity }) {
   const card = document.createElement("div");
   card.className = "meeting-player-card" + (isGhost ? " ghost" : "");
   card.append(characterChip(playerColor(state, playerId), 40, playerHat(state, playerId)));
@@ -1126,6 +1146,12 @@ function buildPlayerCard(state, playerId, { isGhost, hasVoted, canVote }) {
   name.append(nameOf(playerId)); // appended as text: never read as HTML
   if (playerId === welcome.id) name.append(tag("you", "you"));
   card.append(name);
+  if (caughtBySecurity) {
+    const stamp = document.createElement("span");
+    stamp.className = "caught-stamp";
+    stamp.textContent = "Caught by security";
+    card.append(stamp);
+  }
   if (hasVoted) {
     const stamp = document.createElement("span");
     stamp.className = "voted-stamp";
@@ -1244,10 +1270,18 @@ function buildVotingGrid() {
       // No confirm step on the own card: the server rejects a vote for yourself (spec
       // 008, part 2).
       canVote: canVote && playerId !== welcome.id,
+      caughtBySecurity: playerId === meeting.caught,
     }),
   );
   for (const playerId of ghostIds) {
-    cards.push(buildPlayerCard(state, playerId, { isGhost: true, hasVoted: false, canVote: false }));
+    cards.push(
+      buildPlayerCard(state, playerId, {
+        isGhost: true,
+        hasVoted: false,
+        canVote: false,
+        caughtBySecurity: playerId === meeting.caught,
+      }),
+    );
   }
   cards.push(buildSkipCard(canVote));
   ui.meetingPlayers.replaceChildren(...cards);
@@ -2398,6 +2432,7 @@ class CampusScene extends Phaser.Scene {
     this.vents = new Map(); // vent id -> hatch from Render.makeVent()
     this.ventPress = { dx: 0, dy: 0, timer: null }; // arrow keys pressed while inside a vent
     this.footstepTicks = 0; // ticks walked since the last footstep sound (spec 016)
+    this.guard = null; // { sprite, cone } from Render.makeGuard(), spec 027, or null
   }
 
   create() {
@@ -2482,6 +2517,8 @@ class CampusScene extends Phaser.Scene {
     this.syncExams(latestState.failed_exams);
     this.updateOwn(latest.get(welcome.id), deltaMs / 1000);
     this.updateOthers(latest);
+    this.syncGuard(latestState.guard);
+    this.updateGuard(time);
     // In a meeting everyone looks at the meeting table (spec 011).
     const table = lastPhase === "meeting" ? meetingTable() : null;
     for (const [id, sprite] of this.sprites) {
@@ -2787,6 +2824,48 @@ class CampusScene extends Phaser.Scene {
       // Walking direction for the animation: where they moved between the two states.
       sprite.walk = { dx: direction(b.x - a.x), dy: direction(b.y - a.y) };
     }
+  }
+
+  // Spec 027: created once state.guard first appears, destroyed once it is absent (a map
+  // with no guard_route, or he is simply out of this player's own sight right now).
+  syncGuard(guard) {
+    if (guard && !this.guard) {
+      this.guard = Render.makeGuard(this);
+    } else if (!guard && this.guard) {
+      this.guard.sprite.destroy();
+      this.guard.cone.destroy();
+      this.guard = null;
+    }
+  }
+
+  // Interpolated between snapshots the same way updateOthers() already draws other players,
+  // including snapping instead of gliding on a jump bigger than a tick could cover (a meeting
+  // moving everyone, or the guard first coming into sight somewhere far from where he last
+  // was out of it). The cone is rebuilt every frame from the server's own sight-blocking
+  // edges (this.darkness.edges), the same data the player's own lit area already uses.
+  updateGuard(time) {
+    if (!this.guard) return;
+    const renderTime = performance.now() - INTERPOLATION_DELAY;
+    let older = snapshots[0];
+    let newer = snapshots[snapshots.length - 1];
+    for (let i = 0; i < snapshots.length - 1; i++) {
+      if (snapshots[i].time <= renderTime && snapshots[i + 1].time >= renderTime) {
+        older = snapshots[i];
+        newer = snapshots[i + 1];
+        break;
+      }
+    }
+    const b = newer.guard || latestState.guard;
+    if (!b) return;
+    let a = older.guard || b;
+    if (Math.hypot(b.x - a.x, b.y - a.y) > SNAP_DISTANCE_TILES * welcome.map.tile_size) a = b;
+    const span = newer.time - older.time;
+    const f = span > 0 ? Phaser.Math.Clamp((renderTime - older.time) / span, 0, 1) : 1;
+    const x = a.x + (b.x - a.x) * f;
+    const y = a.y + (b.y - a.y) * f;
+    this.guard.sprite.setPosition(x, y);
+    Render.animateGuard(this.guard.sprite, b.paused, time);
+    Render.drawGuardCone(this.guard.cone, this.darkness.edges, x, y, b.facing, welcome.guard_cone_degrees, welcome.guard_vision_radius);
   }
 }
 

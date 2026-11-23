@@ -905,6 +905,22 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
   letter-spacing: 0.06em;
   transform: rotate(8deg);
 }
+/* Spec 027: "Caught by security", the same stamp shape as VOTED but top-left and red, so
+   both can show on the same card at once without overlapping. */
+.caught-stamp {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  padding: 0 5px;
+  border: 2px solid var(--stamp-red);
+  border-radius: 4px;
+  color: var(--stamp-red);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  transform: rotate(-6deg);
+}
 .skip-card { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .skip-card .action-icon { width: 20px; height: 20px; }
 .vote-dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; min-height: 8px; }
@@ -926,6 +942,8 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
 .end-card { max-width: 420px; }
 .end-card h2 { font-size: 28px; }
 .end-card .end-text { color: var(--ink); font-family: var(--serif); font-size: 15px; }
+/* Spec 027: one added short note, shown only when the game-ending expel was itself seen. */
+.end-security-note { color: var(--stamp-red); font-family: var(--mono); font-size: 12px; font-weight: 700; }
 .end-list-title {
   margin-top: 4px;
   padding-top: 8px;

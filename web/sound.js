@@ -217,6 +217,12 @@ const Sound = (() => {
       tone(220, 0.6, { type: "sawtooth", gain: 0.35, slideTo: 55 });
       say("Expelled!");
     },
+    // Spec 027: the security guard catching an expel, on top of the meeting gong. A rising
+    // two-pulse siren, distinct from reportAlarm's flat two-tone buzz.
+    securityAlarm: () => {
+      tone(600, 0.22, { type: "sine", gain: 0.35, slideTo: 1100 });
+      tone(600, 0.22, { type: "sine", gain: 0.3, slideTo: 1100, delay: 0.24 });
+    },
   };
 
   // The browser's own speech synthesis (spec 020): no audio file. Deep and slow; quietly

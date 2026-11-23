@@ -32,7 +32,8 @@ COOLDOWN_TICKS = EXPEL_COOLDOWN * TICK_RATE  # 400
 MEETING_TICKS = MEETING_SECONDS * TICK_RATE  # 1200
 RESULT_TICKS = RESULT_SECONDS * TICK_RATE  # 100
 PLAYER_KEYS = {"id", "name", "x", "y"}
-MEETING_KEYS = {"reason", "called_by", "living", "voted", "my_vote", "seconds_left", "result"}
+# Spec 027: "caught" is the examiner id the security guard saw, None for a report or a button.
+MEETING_KEYS = {"reason", "called_by", "caught", "living", "voted", "my_vote", "seconds_left", "result"}
 
 # One big open hall, 30 x 16 tiles, without an Auditorium, so a meeting moves nobody.
 # Everyone spawns on the same tile (centre (80, 80)), so at the start everyone is within
