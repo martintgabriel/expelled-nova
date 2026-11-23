@@ -112,12 +112,12 @@ class GuardState:
     `x`, `y`: pixel centre, like a player's. `facing`: radians, the heading he last drove (or,
     while paused, sweeps around). `current`/`target`: waypoint ids. `came_from`: the waypoint
     he just left, so choose_next() does not send him straight back along it. `paused`/
-    `pause_until_tick`/`sweep_base`: set only while he stands at a waypoint waiting.
+    `paused_at`/`pause_until_tick`/`sweep_base`: set only while he stands at a waypoint waiting.
     """
 
     __slots__ = (
         "x", "y", "facing", "current", "target", "came_from",
-        "paused", "pause_until_tick", "sweep_base",
+        "paused", "paused_at", "pause_until_tick", "sweep_base",
     )
 
     def __init__(self, x, y, facing, current, target, came_from=None):
@@ -128,6 +128,7 @@ class GuardState:
         self.target = target
         self.came_from = came_from
         self.paused = False
+        self.paused_at = 0
         self.pause_until_tick = 0
         self.sweep_base = facing
 
@@ -160,31 +161,42 @@ def step_guard(guard, waypoints, step_px, pause_chance, pause_ticks, tick_rate, 
     (amplitude_radians, period_ticks) for the head-sweep while paused.
     """
     if guard.paused:
-        if tick >= guard.pause_until_tick:
-            guard.paused = False
-        else:
+        if tick < guard.pause_until_tick:
+            # Counted from the start of the pause (spec 034), so the sweep begins exactly at
+            # the heading he arrived with instead of jumping to wherever the tick count is.
             amplitude, period = sweep
-            guard.facing = guard.sweep_base + amplitude * math.sin(2 * math.pi * tick / period)
+            phase = 2 * math.pi * (tick - guard.paused_at) / period
+            guard.facing = guard.sweep_base + amplitude * math.sin(phase)
             return guard
+        # Spec 034: the pause is over. He leaves the waypoint he stands on exactly as if he
+        # had not paused: came_from stays the waypoint before it, so he never turns straight
+        # back unless it is a dead end, and he does not roll a second pause here.
+        guard.paused = False
+        _depart(guard, waypoints, rng)
     point = waypoints[guard.target]
     dx, dy = point["x"] - guard.x, point["y"] - guard.y
     distance = math.hypot(dx, dy)
     if distance <= step_px:
         guard.x, guard.y = point["x"], point["y"]
-        arrived, came_from = guard.target, guard.current
-        guard.current, guard.came_from = arrived, came_from
+        guard.current, guard.came_from = guard.target, guard.current
         if rng.random() < pause_chance:
             low, high = pause_ticks
             seconds = rng.randint(low, high)
             guard.paused = True
+            guard.paused_at = tick
             guard.pause_until_tick = tick + seconds * tick_rate
             guard.sweep_base = guard.facing
         else:
-            guard.target = choose_next(waypoints, arrived, came_from, rng)
-            next_point = waypoints[guard.target]
-            guard.facing = math.atan2(next_point["y"] - guard.y, next_point["x"] - guard.x)
+            _depart(guard, waypoints, rng)
     else:
         guard.facing = math.atan2(dy, dx)
         guard.x += dx / distance * step_px
         guard.y += dy / distance * step_px
     return guard
+
+
+def _depart(guard, waypoints, rng):
+    """Pick the next target from the waypoint he stands on and face it."""
+    guard.target = choose_next(waypoints, guard.current, guard.came_from, rng)
+    point = waypoints[guard.target]
+    guard.facing = math.atan2(point["y"] - guard.y, point["x"] - guard.x)
