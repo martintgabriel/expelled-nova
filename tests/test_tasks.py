@@ -74,7 +74,7 @@ SPEC_TASKS = {
     "print": [("Library", 41, 20, "print_file")],  # spec 024: was paper_jam
     "socket": [("Auditorium", 34, 40, "cable")],
     "gate": [("Main Entrance", 28, 6, "card")],
-    "nata": [("Lower Courtyard", 23, 23, "seagull")],  # spec 018: the courtyards are named apart
+    "nata": [("Lower Courtyard", 23, 23, "nata")],  # spec 031: was seagull  # spec 018: the courtyards are named apart
     "tray": [("Food Court", 41, 12, "tray")],  # spec 021
     "surf": [("Beach", 3, 19, "surf")],  # spec 021
 }

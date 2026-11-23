@@ -97,13 +97,6 @@ def healthz():
     return {"status": "ok"}
 
 
-@app.get("/colors")
-def taken_colors():
-    """Spec 028: the colour numbers of the players in the game right now, for the colour
-    picker on the ID card. Only numbers: no names, ids or roles. Takes no input."""
-    return {"taken": sorted(p.color for p in game.players.values())}
-
-
 def invite_url(env_url, base_url):
     """The URL the QR code points to, ending in exactly one "/".
 

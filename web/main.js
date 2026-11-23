@@ -29,6 +29,8 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * 35; // matches r="35" on .ring-sweep in
 
 const ui = {
   joinScreen: document.getElementById("join-screen"),
+  expelledStamp: document.getElementById("expelled-stamp"),
+  expelledLine: document.getElementById("expelled-line"),
   joinForm: document.getElementById("join-form"),
   nickname: document.getElementById("nickname"),
   hatPrev: document.getElementById("hat-prev"),
@@ -116,9 +118,6 @@ const ui = {
   helpPanel: document.getElementById("help-panel"),
   helpClose: document.getElementById("help-close"),
   muteButton: document.getElementById("mute-button"),
-  soundPanel: document.getElementById("sound-panel"),
-  soundSwitch: document.getElementById("sound-switch"),
-  musicOffBadge: document.getElementById("music-off-badge"),
   volumeSlider: document.getElementById("volume-slider"),
   muteIconOn: document.getElementById("mute-icon-on"),
   muteIconOff: document.getElementById("mute-icon-off"),
@@ -233,10 +232,6 @@ ui.mapPanel.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !ui.soundPanel.hidden) {
-    setSoundPanelOpen(false); // spec 027
-    return;
-  }
   if (event.key === "Escape" && !ui.helpPanel.hidden) {
     setHelpOpen(false);
     return;
@@ -252,52 +247,22 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "c" || event.key === "C") setMapOpen(ui.mapPanel.hidden);
 });
 
-// --- Sound settings (spec 027): the speaker button opens one panel with Sound on/off (the
-// old mute, spec 016), the volume (spec 020) and the background music (spec 017). Sound and
-// music themselves live entirely in web/sound.js and web/music.js; this only shows and
-// switches their state.
+// --- Mute (spec 016): next to the "?" button, on every screen; remembered per browser ----
+// Sound itself lives entirely in web/sound.js; this only reflects/toggles Sound's own state.
 
-// The icon: waves when all is on, crossed out when there is no sound at all, and a small
-// crossed-out note when only the music is off.
 function updateMuteIcon() {
-  const silent = Sound.isMuted(); // muted, or the volume at 0
-  ui.muteIconOn.hidden = silent;
-  ui.muteIconOff.hidden = !silent;
-  ui.musicOffBadge.hidden = silent || Music.isOn();
-  const soundOn = !silent;
-  ui.soundSwitch.setAttribute("aria-checked", String(soundOn));
-  ui.soundSwitch.textContent = soundOn ? "On" : "Off";
-  const musicOn = Music.isOn();
-  ui.musicSwitch.setAttribute("aria-checked", String(musicOn));
-  ui.musicSwitch.textContent = musicOn ? "On" : "Off";
+  const muted = Sound.isMuted();
+  ui.muteIconOn.hidden = muted;
+  ui.muteIconOff.hidden = !muted;
+  const label = muted ? "Unmute sound" : "Mute sound";
+  ui.muteButton.setAttribute("aria-label", label);
+  ui.muteButton.setAttribute("aria-pressed", String(muted));
+  ui.muteButton.title = label;
 }
-
-function setSoundPanelOpen(open) {
-  ui.soundPanel.hidden = !open;
-  ui.muteButton.setAttribute("aria-expanded", String(open));
-}
-
-ui.volumeSlider.value = String(Math.round(Sound.getVolume() * 100));
 updateMuteIcon();
 
-ui.muteButton.addEventListener("click", () => {
-  Sound.play("click");
-  setSoundPanelOpen(ui.soundPanel.hidden);
-  ui.muteButton.blur(); // keys go back to walking
-});
-
-ui.soundSwitch.addEventListener("click", () => {
-  if (Sound.isMuted() && Sound.getVolume() === 0) {
-    Sound.setVolume(0.5); // turning sound on with the slider at 0 would stay silent
-    ui.volumeSlider.value = "50";
-  } else {
-    Sound.toggleMute();
-  }
-  updateMuteIcon();
-  if (!Sound.isMuted()) Sound.play("click"); // confirms sound is back on
-  ui.soundSwitch.blur();
-});
-
+// Volume (spec 020): the slider beside the mute button scales effects and music together.
+ui.volumeSlider.value = String(Math.round(Sound.getVolume() * 100));
 ui.volumeSlider.addEventListener("input", () => {
   Sound.setVolume(Number(ui.volumeSlider.value) / 100);
   updateMuteIcon();
@@ -307,18 +272,32 @@ ui.volumeSlider.addEventListener("change", () => {
   ui.volumeSlider.blur(); // arrow keys go back to walking
 });
 
+ui.muteButton.addEventListener("click", () => {
+  if (Sound.isMuted() && Sound.getVolume() === 0) {
+    Sound.setVolume(0.5); // unmuting a slider at 0 would stay silent: bring it back to half
+    ui.volumeSlider.value = "50";
+  } else {
+    Sound.toggleMute();
+  }
+  updateMuteIcon();
+  if (!Sound.isMuted()) Sound.play("click"); // confirms sound is back on
+  ui.muteButton.blur();
+});
+
+// --- Music switch (spec 017): in the help overlay; remembered per browser ----------------
+// The music itself lives entirely in web/music.js; this only reflects/toggles its state.
+
+function updateMusicSwitch() {
+  const on = Music.isOn();
+  ui.musicSwitch.setAttribute("aria-checked", String(on));
+  ui.musicSwitch.textContent = on ? "On" : "Off";
+}
+updateMusicSwitch();
+
 ui.musicSwitch.addEventListener("click", () => {
   Sound.play("click");
   Music.toggle();
-  updateMuteIcon();
-  ui.musicSwitch.blur();
-});
-
-// A click anywhere outside the panel (and not on the speaker button) closes it.
-document.addEventListener("pointerdown", (event) => {
-  if (ui.soundPanel.hidden) return;
-  if (ui.soundPanel.contains(event.target) || ui.muteButton.contains(event.target)) return;
-  setSoundPanelOpen(false);
+  updateMusicSwitch();
 });
 
 let socket = null;
@@ -422,37 +401,6 @@ for (const value of ["any", 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) {
   ui.colorSwatches.append(swatch);
 }
 renderLook();
-
-// Spec 028: colours other players already have are crossed out on the ID card. Asked for
-// when the page opens and every 2 s while the ID card shows; the server still checks the
-// colour on "join", so a failed request just leaves every swatch pickable.
-let takenColors = new Set();
-
-async function refreshTakenColors() {
-  if (ui.joinScreen.hidden) return;
-  try {
-    const response = await fetch("/colors");
-    if (!response.ok) return;
-    const data = await response.json();
-    takenColors = new Set(Array.isArray(data.taken) ? data.taken : []);
-  } catch {
-    return; // offline or the server is waking up: try again in 2 s
-  }
-  if (look.color !== null && takenColors.has(look.color)) {
-    look.color = null; // the own pick was taken in the meantime: back to "Any"
-    ui.joinError.textContent = "That colour was just taken. You get any free one.";
-  }
-  for (const swatch of ui.colorSwatches.children) {
-    const taken = swatch.dataset.color !== "any" && takenColors.has(Number(swatch.dataset.color));
-    swatch.classList.toggle("taken", taken);
-    swatch.disabled = taken;
-    if (taken) swatch.title = "Taken";
-    else swatch.removeAttribute("title");
-  }
-  renderLook();
-}
-refreshTakenColors();
-setInterval(refreshTakenColors, 2000);
 
 // --- Connection -----------------------------------------------------------------
 
@@ -650,6 +598,7 @@ function updatePhase(state) {
   if (state.phase === "playing" && previousPhase === "playing" && wasAliveForExpelSound && !state.alive) {
     Sound.play("expel");
     Sound.play("expelVoice"); // spec 020: "Expelled!"
+    showExpelledStamp("An examiner caught you. You are a ghost now."); // spec 032
   }
   wasAliveForExpelSound = state.alive;
   checkExpelSound(state);
@@ -956,12 +905,28 @@ function tryExpel() {
 // start the cooldown (the only way it can go from 0 to not-0 while still playing), instead
 // of assuming the click succeeded. handleMessage's "error" branch clears pendingExpel on a
 // rejection, so a target that stepped out of range in the meantime plays no sound at all.
+// Spec 032: the red "EXPELLED!" stamp, only ever from the two places above that already
+// belong to the examiner who expelled and the student who was expelled.
+let expelledStampTimer = null;
+function showExpelledStamp(line) {
+  ui.expelledLine.textContent = line;
+  ui.expelledStamp.hidden = false;
+  ui.expelledStamp.classList.remove("show");
+  void ui.expelledStamp.offsetWidth; // restart the animation
+  ui.expelledStamp.classList.add("show");
+  clearTimeout(expelledStampTimer);
+  expelledStampTimer = setTimeout(() => {
+    ui.expelledStamp.hidden = true;
+  }, 1600);
+}
+
 function checkExpelSound(state) {
   if (!pendingExpel || state.phase !== "playing") return;
   if (state.expel_cooldown > 0) {
     pendingExpel = false;
     Sound.play("expel");
     Sound.play("expelVoice"); // spec 020: "Expelled!"
+    showExpelledStamp("You expelled a student."); // spec 032
   }
 }
 
@@ -1171,14 +1136,6 @@ function canActuallyVote(state, meeting) {
 // colour, their name, a "you" marker and a "VOTED" stamp once they have voted. Ghosts are
 // greyed out and not votable. Tapping a votable card opens a confirm/cancel step inside
 // it, instead of sending the vote straight away.
-// Spec 029: the examiner team as the own client knows it: the own id and the fellow
-// examiners' ids, and only when the own role is examiner (the server sends
-// fellow_examiners to examiners only). Empty for everyone else.
-function examinerTeam(state) {
-  if (!state || state.role !== "examiner") return new Set();
-  return new Set([welcome.id, ...(state.fellow_examiners || [])]);
-}
-
 function buildPlayerCard(state, playerId, { isGhost, hasVoted, canVote }) {
   const card = document.createElement("div");
   card.className = "meeting-player-card" + (isGhost ? " ghost" : "");
@@ -1187,7 +1144,6 @@ function buildPlayerCard(state, playerId, { isGhost, hasVoted, canVote }) {
   name.className = "player-name";
   name.append(nameOf(playerId)); // appended as text: never read as HTML
   if (playerId === welcome.id) name.append(tag("you", "you"));
-  if (examinerTeam(state).has(playerId)) name.append(tag("examiner", "examiner")); // spec 029
   card.append(name);
   if (hasVoted) {
     const stamp = document.createElement("span");
@@ -1363,7 +1319,6 @@ function renderResult(state, result) {
     name.append(nameOf(playerId)); // appended as text: never read as HTML
     if (playerId === welcome.id) name.append(tag("you", "you"));
     if (playerId === result.surfing) name.append(tag("sent surfing", "surfing"));
-    if (examinerTeam(state).has(playerId)) name.append(tag("examiner", "examiner")); // spec 029
     card.append(name);
     const votesLabel = document.createElement("span");
     votesLabel.className = "count";
@@ -1586,6 +1541,7 @@ const MINIGAME_HINTS = {
   print_file: "Print exactly the file the group chat asks for.", // spec 024
   cert_file: "Print exactly the file the office asks for.", // spec 024
   chat: "Answer the Helpdesk in Portuguese.", // spec 024
+  nata: "Tap the seagulls before they reach your pastel.", // spec 031
 };
 
 const NATA_EATEN_MS = 1200; // how long the "gone" tart stays up after a seagull time-out
@@ -1642,13 +1598,16 @@ function updateMinigame(state) {
   setText(ui.minigameHint, MINIGAME_HINTS[doing.challenge.kind] || "");
   // Spec 021: the surf wave's phase changes every tick; leave it out of the key so the
   // panel (and its button) is not rebuilt 20 times a second, and only move the wave.
-  const { phase, ...stable } = doing.challenge;
-  const key = JSON.stringify([doing.task, doing.challenge.kind === "surf" ? stable : doing.challenge]);
+  // Spec 031: the same for the seagulls' clock ("age") and the bite count.
+  const { phase, age, bites, ...stable } = doing.challenge;
+  const moving = doing.challenge.kind === "surf" || doing.challenge.kind === "nata";
+  const key = JSON.stringify([doing.task, moving ? stable : doing.challenge]);
   if (key !== minigameKey) {
     minigameKey = key;
     renderChallenge(doing.task, doing.challenge);
   }
   if (doing.challenge.kind === "surf") moveWave(doing.challenge);
+  if (doing.challenge.kind === "nata") syncNata(doing.challenge);
   const note = state.task_note || "";
   if (note !== minigameNoteShown) {
     minigameNoteShown = note;
@@ -1679,6 +1638,74 @@ function renderChallenge(taskId, challenge) {
   else if (challenge.kind === "surf") renderSurf(taskId, challenge);
   else if (challenge.kind === "print_file" || challenge.kind === "cert_file") renderFilePick(taskId, challenge);
   else if (challenge.kind === "chat") renderChat(taskId, challenge);
+  else if (challenge.kind === "nata") renderNata(taskId, challenge);
+}
+
+// nata (spec 031) — you hold your pastel de nata, seagulls swoop in from all sides; tap
+// them away. The server sends the whole flight plan and how many ticks have passed ("age");
+// this only animates it between two snapshots. Which taps count is decided on the server.
+let nataView = null; // { gulls: [{button, ...plan}], age0, t0, tickMs, counter, frame }
+const NATA_DIRECTIONS = [0, 45, 90, 135, 180, 225, 270, 315];
+
+function renderNata(taskId, challenge) {
+  if (nataView) cancelAnimationFrame(nataView.frame);
+  const counter = document.createElement("p");
+  counter.className = "minigame-hits";
+  const sky = document.createElement("div");
+  sky.className = "nata-sky";
+  const tart = renderNataTart(false);
+  tart.classList.add("nata-center");
+  sky.append(tart);
+  const gulls = challenge.gulls.map((plan, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "nata-gull";
+    button.textContent = "\u{1F426}";
+    button.setAttribute("aria-label", "Shoo the seagull");
+    button.hidden = true;
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault(); // a tap counts at once, without waiting for the click
+      Sound.play("seagullHit");
+      flinchTart(tart);
+      sendTaskInput(taskId, index);
+    });
+    sky.append(button);
+    return { ...plan, button };
+  });
+  ui.minigameContent.append(counter, sky);
+  nataView = { gulls, counter, age0: challenge.age, t0: performance.now(), tickMs: 1000 / welcome.tick_rate, frame: 0 };
+  syncNata(challenge);
+  animateNata();
+}
+
+// Every snapshot: the server's clock and the counts, so the animation never drifts.
+function syncNata(challenge) {
+  if (!nataView) return;
+  nataView.age0 = challenge.age;
+  nataView.t0 = performance.now();
+  nataView.counter.textContent = `Shooed: ${challenge.shooed}/${challenge.goal} · Bites: ${challenge.bites}/2`;
+  challenge.gulls.forEach((plan, i) => {
+    if (nataView.gulls[i]) nataView.gulls[i].shooed = plan.shooed;
+  });
+}
+
+function animateNata() {
+  if (!nataView || !nataView.counter.isConnected) {
+    nataView = null; // the panel closed or shows another game
+    return;
+  }
+  const age = nataView.age0 + (performance.now() - nataView.t0) / nataView.tickMs;
+  for (const gull of nataView.gulls) {
+    const progress = (age - gull.spawn) / gull.fly;
+    const flying = !gull.shooed && progress >= 0 && progress < 1;
+    gull.button.hidden = !flying;
+    if (!flying) continue;
+    const angle = (NATA_DIRECTIONS[gull.from] * Math.PI) / 180;
+    const distance = 46 * (1 - progress); // percent of the sky, from its edge to the pastel
+    gull.button.style.left = `${50 + Math.cos(angle) * distance}%`;
+    gull.button.style.top = `${50 + Math.sin(angle) * distance}%`;
+  }
+  nataView.frame = requestAnimationFrame(animateNata);
 }
 
 // print_file and cert_file (spec 024) — a message says which file to print; four almost
@@ -2092,10 +2119,11 @@ function isLivingStudent(state) {
   return state.phase === "playing" && state.role === "student" && state.alive;
 }
 
-// Can this player start fixing now: a living student in the dark, within switch_range of
-// the latest server position, and not busy.
+// Can this player start fixing now: a living player in the dark (spec 033: examiners too),
+// within switch_range of the latest server position, and not busy or in a vent.
 function canFix(state) {
-  if (!isLivingStudent(state) || state.lights_on || state.fixing || state.doing) return false;
+  if (state.phase !== "playing" || !state.alive || state.vent) return false;
+  if (state.lights_on || state.fixing || state.doing) return false;
   const me = state.players.find((p) => p.id === welcome.id);
   if (!me) return false;
   const t = welcome.map.tile_size;
@@ -2119,7 +2147,7 @@ function updateLights(state) {
   // over from #task-button (updateTasks) while fixing is actually possible, the same
   // priority tryUse() gives it, so the slot never shows both at once. Once shown it is
   // always available, by definition of canFix(), so there is nothing to grey out here.
-  ui.fixButton.hidden = state.role !== "student" || !welcome.map.light_switch || !canFix(state);
+  ui.fixButton.hidden = !welcome.map.light_switch || !canFix(state);
   if (!ui.fixButton.hidden) {
     ui.fixButton.disabled = false;
     setActionReason(ui.fixButton, "", "Fix the lights");
@@ -2548,9 +2576,7 @@ class CampusScene extends Phaser.Scene {
     this.updateOthers(latest);
     // In a meeting everyone looks at the meeting table (spec 011).
     const table = lastPhase === "meeting" ? meetingTable() : null;
-    const team = examinerTeam(latestState); // spec 029: empty unless the own role is examiner
     for (const [id, sprite] of this.sprites) {
-      Render.setNameColor(sprite, team.has(id));
       const lookAt = table ? { x: table.x - sprite.x, y: table.y - sprite.y } : null;
       Render.animateCharacter(sprite, { ...sprite.walk, ghost: newest.ghosts.has(id), lookAt }, time);
     }

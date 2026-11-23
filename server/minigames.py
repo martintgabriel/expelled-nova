@@ -20,6 +20,7 @@ TIME_LIMITS = {
     "print_file": 30,  # spec 024
     "cert_file": 30,  # spec 024
     "chat": 45,  # spec 024
+    "nata": 15,  # spec 031
 }
 
 TIMEOUT_NOTES = {
@@ -34,6 +35,7 @@ TIMEOUT_NOTES = {
     "print_file": "The printer went to sleep.",
     "cert_file": "The printer went to sleep.",
     "chat": "The Helpdesk closed for lunch.",
+    "nata": "Too slow. The seagulls won.",
 }
 
 KINDS = set(TIME_LIMITS)
@@ -99,6 +101,15 @@ CONVERSATIONS = [
 ]
 WRONG_REPLY = "Não percebi. Outra vez, por favor."
 
+# Spec 031: seagulls swoop in at the pastel de nata; shoo them off with a tap. All in ticks.
+NATA_GULLS = 8  # seagulls per challenge
+NATA_FIRST = 15  # the first one takes off after 0.75 s
+NATA_GAP = 24  # one more every 1.2 s
+NATA_FLY = 50  # the first one needs 2.5 s to reach the pastel; each next one 2 ticks less
+NATA_GOAL = 6  # seagulls to shoo
+NATA_BITES = 2  # bites until the pastel is gone
+NATA_EATEN = "A seagull took your pastel."
+
 INVALID_VALUE = "Invalid value for this task"
 
 
@@ -122,6 +133,12 @@ def make_challenge(kind, rng, tick, tick_rate):
         challenge = {"kind": kind, "start_tick": tick, "rides": 0}
     elif kind in FILE_GROUPS:
         challenge = {"kind": kind, "round": 1, "rounds": FILE_ROUNDS[kind], **_new_file_round(kind, rng)}
+    elif kind == "nata":
+        gulls = [
+            {"from": rng.randrange(8), "spawn": NATA_FIRST + i * NATA_GAP, "fly": NATA_FLY - i * 2, "shooed": False}
+            for i in range(NATA_GULLS)
+        ]
+        challenge = {"kind": kind, "start_tick": tick, "gulls": gulls}
     elif kind == "chat":
         challenge = {"kind": kind, "conversation": rng.randrange(len(CONVERSATIONS)), "step": 0}
         challenge.update(_chat_line(challenge, rng))
@@ -190,6 +207,8 @@ def validate_value(kind, value):
         ok = type(value) is int and 0 <= value <= 3
     elif kind == "chat":
         ok = type(value) is int and value in (0, 1, 2)
+    elif kind == "nata":
+        ok = type(value) is int and 0 <= value < NATA_GULLS
     elif kind == "cable":
         ok = (
             type(value) is dict
@@ -231,6 +250,8 @@ def apply_answer(challenge, value, rng, tick, tick_rate):
         return _apply_file(challenge, value, rng)
     if kind == "chat":
         return _apply_chat(challenge, value, rng)
+    if kind == "nata":
+        return _apply_nata(challenge, value, tick)
     raise ValueError(f"Unknown mini-game kind: {kind}")
 
 
@@ -331,6 +352,33 @@ def _apply_chat(challenge, value, rng):
     return False, WRONG_REPLY
 
 
+def _nata_age(challenge, tick):
+    return tick - challenge["start_tick"]
+
+
+def _nata_bites(challenge, tick):
+    """Seagulls that reached the pastel without being shooed, by `tick`."""
+    age = _nata_age(challenge, tick)
+    return sum(not g["shooed"] and age >= g["spawn"] + g["fly"] for g in challenge["gulls"])
+
+
+def _apply_nata(challenge, value, tick):
+    gull = challenge["gulls"][value]
+    age = _nata_age(challenge, tick)
+    if gull["shooed"] or not gull["spawn"] <= age < gull["spawn"] + gull["fly"]:
+        return False, None  # not in the air: a miss changes nothing
+    gull["shooed"] = True
+    return sum(g["shooed"] for g in challenge["gulls"]) >= NATA_GOAL, None
+
+
+def failure(challenge, tick):
+    """Spec 031: a note if the challenge is lost by now on its own (checked every tick by
+    the game, like the time limit), else None. Only the nata game can be lost this way."""
+    if challenge["kind"] == "nata" and _nata_bites(challenge, tick) >= NATA_BITES:
+        return NATA_EATEN
+    return None
+
+
 def _surf_phase(challenge, tick):
     return (tick - challenge["start_tick"]) % SURF_PERIOD
 
@@ -370,6 +418,15 @@ def public_view(challenge, tick, tick_rate):
         return {"kind": kind, "cell": challenge["cell"], "hits": challenge["hits"]}
     if kind == "tray":
         return {"kind": kind, "items": list(challenge["items"]), "next": challenge["next"], "order": list(TRAY_ORDER)}
+    if kind == "nata":
+        return {
+            "kind": kind,
+            "age": _nata_age(challenge, tick),
+            "gulls": [dict(g) for g in challenge["gulls"]],
+            "goal": NATA_GOAL,
+            "shooed": sum(g["shooed"] for g in challenge["gulls"]),
+            "bites": _nata_bites(challenge, tick),
+        }
     if kind in FILE_GROUPS:
         return {
             "kind": kind,

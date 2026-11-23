@@ -1029,8 +1029,12 @@ class Game:
                 player.task_note = None
                 continue
             if player.challenge is not None:
-                if self.tick >= player.challenge["deadline_tick"]:
-                    player.task_note = minigames.TIMEOUT_NOTES[player.challenge["kind"]]
+                # Spec 031: a challenge can also be lost on its own (the seagulls).
+                lost = minigames.failure(player.challenge, self.tick)
+                if lost is None and self.tick >= player.challenge["deadline_tick"]:
+                    lost = minigames.TIMEOUT_NOTES[player.challenge["kind"]]
+                if lost is not None:
+                    player.task_note = lost
                     player.doing = None
                     player.challenge = None
                 continue
@@ -1108,10 +1112,11 @@ class Game:
         self.lights_on = False
 
     def fix(self, player_id):
-        """A living student at the light switch starts fixing the lights.
+        """A living player at the light switch starts fixing the lights. Spec 033: students
+        and examiners alike (an examiner may blend in by fixing).
 
-        It takes FIX_SECONDS; the student may move but must stay within SWITCH_RANGE
-        (see _step_lights). One student is enough.
+        It takes FIX_SECONDS; the player may move but must stay within SWITCH_RANGE
+        (see _step_lights). One player is enough.
         """
         player = self.players.get(player_id)
         if player is None:
@@ -1124,8 +1129,8 @@ class Game:
             raise GameError("The game has not started yet")
         if not player.alive:
             raise GameError("Ghosts cannot fix the lights")
-        if player.role != STUDENT:
-            raise GameError("Only students can fix the lights")
+        if player.vent is not None:
+            raise GameError(INSIDE_VENT)
         if self.lights_on:
             raise GameError("The lights are on")
         if player.fix_done_tick is not None:
@@ -1416,11 +1421,11 @@ class Game:
         if self.phase != LOBBY:
             state["lights_on"] = self.lights_on
             state["vision_radius"] = self._vision_radius_for(me)
-            if me.role == STUDENT:
-                state["fixing"] = None
-                if me.fix_done_tick is not None:
-                    state["fixing"] = {"seconds_left": self._seconds_until(me.fix_done_tick)}
-            else:  # an examiner
+            # Spec 033: every role can fix, so every role gets its own "fixing".
+            state["fixing"] = None
+            if me.fix_done_tick is not None:
+                state["fixing"] = {"seconds_left": self._seconds_until(me.fix_done_tick)}
+            if me.role == EXAMINER:
                 state["sabotage_cooldown"] = self._seconds_until(self.next_sabotage_tick)
             done, total = self._task_progress()
             state["task_progress"] = {"done": done, "total": total}

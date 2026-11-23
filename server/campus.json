@@ -72,7 +72,7 @@
     {"id": "print", "title": "Print your assignment", "area": "Library", "x": 41, "y": 20, "minigame": "print_file", "joke": "Printed. Your group already submitted the old version."},
     {"id": "socket", "title": "Get your slides on the projector", "area": "Auditorium", "x": 34, "y": 40, "minigame": "cable", "joke": "Projector works. Your laptop battery doesn't."},
     {"id": "gate", "title": "Tap your student card at the gate", "area": "Main Entrance", "x": 28, "y": 6, "minigame": "card", "joke": "Beep. Red. Beep. Red. Beep. Green."},
-    {"id": "nata", "title": "Eat your pastel de nata in the sun", "area": "Lower Courtyard", "x": 23, "y": 23, "minigame": "seagull", "joke": "A seagull took it. Task counts anyway."},
+    {"id": "nata", "title": "Eat your pastel de nata in the sun", "area": "Lower Courtyard", "x": 23, "y": 23, "minigame": "nata", "joke": "Six seagulls shooed. The seventh is watching you."},
     {"id": "tray", "title": "Fill your tray at the Cafeteria", "area": "Food Court", "x": 41, "y": 12, "minigame": "tray", "joke": "Soup of the day: the same as yesterday."},
     {"id": "surf", "title": "Catch a wave at Carcavelos", "area": "Beach", "x": 3, "y": 19, "minigame": "surf", "joke": "Three waves ridden. Class? What class?"}
   ],
