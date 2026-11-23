@@ -462,6 +462,8 @@ function handleMessage(message) {
 // --- HUD: current area and player count (spec 005) ----------------------------------
 
 function updateHud(state) {
+  // Spec 026: the campus map is dimmed exactly when the own world goes dark.
+  CampusMap.setDark(state.phase === "playing" && state.lights_on === false && state.role === "student" && state.alive);
   // The server works out the area from the own position; no area means a corridor.
   setText(ui.areaName, state.area || "Corridor");
   // Only the lobby shows everyone: while playing, a living player just receives the
@@ -2693,7 +2695,8 @@ class CampusScene extends Phaser.Scene {
     // The campus map's marker (spec 018): the own predicted position in the own colour,
     // only while the map is open and the round is on; never anyone else's.
     if (!ui.mapPanel.hidden) {
-      if (lastPhase === "playing") CampusMap.setYou(this.predicted, Render.colorCss(latestState.colors[welcome.id]));
+      // Spec 026: also in the lobby, to try the map before the round.
+      if (lastPhase === "playing" || lastPhase === "lobby") CampusMap.setYou(this.predicted, Render.colorCss(latestState.colors[welcome.id]));
       else CampusMap.setYou(null);
     }
     this.trail.push({ ...this.predicted });

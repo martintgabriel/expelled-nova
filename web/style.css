@@ -1106,8 +1106,11 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
   max-height: calc(100dvh - 260px);
   border: 1px solid var(--rule);
   border-radius: 4px;
-  background: #e6e5e1;
+  background: #efe8d8;
+  transition: filter 0.4s;
 }
+/* Spec 026: lights off for the own character: the map goes dark too. */
+.campus-map.dark { filter: brightness(0.35) saturate(0.6); }
 /* Names in ink with a paper halo, so they stay readable on walls, sea and areas alike. */
 .campus-map .map-name {
   fill: #2b2d33; /* dark grey, like the rest of the plan */

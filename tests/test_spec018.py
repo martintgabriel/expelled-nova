@@ -418,13 +418,12 @@ def hex_is_grey(value, tolerance=16):
     return max(r, g, b) - min(r, g, b) <= tolerance
 
 
-def test_the_base_map_is_grey_and_does_not_use_the_area_colours():
+def test_the_base_map_has_its_colour_constants():
+    # Spec 026 replaces spec 018's grey map with a coloured one (see tests/test_spec026.py);
+    # what stays from spec 018: the base colours are plain constants in campusmap.js.
     source = read("campusmap.js")
-    for name in ("WALL", "FLOOR", "SEA", "SAND", "AREA_FILL", "AREA_EDGE"):
-        match = re.search(rf'const {name} = "(#[0-9a-fA-F]{{6}})"', source)
-        assert match, f"no colour constant {name}"
-        assert hex_is_grey(match.group(1)), (name, match.group(1))
-    assert "area.color" not in source
+    for name in ("WALL", "FLOOR", "SEA", "SAND"):
+        assert re.search(rf'const {name} = "(#[0-9a-fA-F]{{6}})"', source), f"no colour constant {name}"
 
 
 # --- Names centred in their rooms (spec 018, extended) ----------------------------------------
