@@ -15,15 +15,11 @@ template).
 After 36 specs written by four people and several agents, the code has grown
 (`web/main.js` ~3,600 lines, `server/game.py` ~1,900, `web/render.js` ~1,850), the specs
 partly replace each other, and the README still says "working title". This spec checks
-everything once from top to bottom, closes gaps in tests and security, makes the code
-leaner **without changing behaviour**, and leaves the team with documents that make the
+everything once from top to bottom, closes gaps in tests and security, and leaves the team with documents that make the
 walkthrough and the exam easier. Builds on specs 001–037 (037 added `kick`, `vote_host` and `leave`).
 
 ## What
-Six parts, done in order, each one a separate commit (like spec 008), in two pull requests:
-parts 1–4 first, then parts 5–6 on top of the merged result, so a problem in the refactoring
-never holds back the tests, docs and security work. While part 5 runs, nobody else changes
-`server/` or `web/`.
+Four parts, done in order, each one a separate commit (like spec 008), in one pull request. The leaner-code and walkthrough parts planned at first were dropped before the submission deadline, so that no refactoring could put the working game at risk (see "Limits").
 
 ### Part 1 — Audit (read only): `docs/review.md`
 No change to any file except creating `docs/review.md`. Four audits, each finding with
@@ -80,8 +76,8 @@ Plus: contradictions between specs and code, and specs later specs replaced.
   - security measures as one short list;
   - limits;
   - the project structure as a short folder tree;
-  - links to `docs/ARCHITECTURE.md`, `docs/brd.md`, `specs/README.md`,
-    `docs/manual-test-checklist.md` and `docs/walkthrough.md`.
+  - links to `docs/ARCHITECTURE.md`, `docs/brd.md`, `specs/README.md` and
+    `docs/manual-test-checklist.md`.
 - `docs/ARCHITECTURE.md`: one page for the walkthrough: the data flow from a key press to
   the screen (input → WebSocket → 20 Hz tick in `game.py` → `snapshot_for()` per player
   → drawing), what each file is responsible for, the message types, how the server keeps
@@ -152,35 +148,6 @@ audit; values chosen by the team):
 Not done, by decision (see Limits): `/taken-colors` keeps showing nicknames (S2), and a late
 joiner still watches the round as a ghost (S3). No change to game rules.
 
-### Part 5 — Leaner code (after parts 1–4 are merged)
-From the leanness audit, re-run against the then-current `main`. Only findings that are
-behaviour-preserving, low risk and make the code easier to explain: dead code, duplicated
-logic, leftovers of replaced specs, unclear names, long functions that split cleanly, a
-dispatch table instead of a long condition chain. No new features, no change to any
-message format, no file split unless it is a clean cut the whole team can follow.
-- One finding per step, the full `uv run pytest` after each step, stop at the first red
-  test.
-- Tests in `tests/` are not edited, deleted or skipped. If a test only fails because it
-  checks a text or structure that was removed, stop and ask.
-- Report line counts per file before and after.
-
-### Part 6 — Walkthrough and exam preparation: `docs/walkthrough.md`
-For each of the six exam question types, one worked example from this game, with real
-values and cause and effect, checked against the code:
-1. a workflow (for example: an examiner expels a student),
-2. state and stored data (fixed content vs. game progress, where each lives, what a
-   restart loads),
-3. predicting an outcome (an action that is accepted and one that is rejected, and what
-   stays unchanged),
-4. locating a bug (a symptom, where to look, how to reproduce it),
-5. a verification (one test: start state, action, expected result, what mistake it
-   catches, what it does not prove),
-6. a change (a new requirement, what it affects, what must keep working, which test to
-   add).
-Plus a list of 15 likely professor questions with short answers, spread over server,
-network, browser, tests and security, so every member can answer about code they did not
-write.
-
 ## Out of scope
 Changing what spec 037 built (task count, kick, host vote, nicknames, leave, emergency
 arrow, ghost chat note, wording, phone layout) beyond fixing a bug part 3 proves; the
@@ -188,17 +155,17 @@ walking sound (a separate decision). New features. Permanent storage (BRD roadma
 balance or look.
 
 ## Done when
-- `docs/review.md` exists; every must-fix item is either fixed in parts 2–5 or listed under
+- `docs/review.md` exists; every must-fix item is either fixed in parts 2–4 or listed under
   "Limits" with a reason.
 - `README.md`, `AGENTS.md` and `docs/brd.md` no longer say "working title";
   `PR-008-description.md` is in `docs/`.
 - `docs/brd.md` is version 2.0: it matches the code (every number checked), keeps the old
   IDs, shows each roadmap item as delivered (with its spec) or open, and ends with
   "Changes from v1.0".
-- `README.md` is rewritten with every section listed in part 2 and links to all five
+- `README.md` is rewritten with every section listed in part 2 and links to all four
   documents;
-  `docs/ARCHITECTURE.md`, `specs/README.md`, `docs/manual-test-checklist.md` and
-  `docs/walkthrough.md` exist and match the code.
+  `docs/ARCHITECTURE.md`, `specs/README.md` and `docs/manual-test-checklist.md` exist and
+  match the code.
 - The handbook says "at least five" errands and 30 seconds after an expel, every number
   in it matches the code, and a test guards this.
 - New tests from part 3 and part 4 were shown failing first where they test new behaviour;
@@ -206,7 +173,6 @@ balance or look.
   was edited, deleted or skipped.
 - The game loads and plays on the deployed app with the new headers (laptop and phone via
   QR code), and the whole manual checklist passes there with 4+ tabs.
-- Line counts before and after part 5 are listed.
 
 ## Changes during implementation
 (Filled in after implementation.)
@@ -219,6 +185,7 @@ balance or look.
 - When a student leaves or is kicked during a round, the shared task total drops, which shows
   that they were a student (`Game._task_progress` counts only players still in the game). No
   code change.
+- The leaner-code part and `docs/walkthrough.md` were dropped before the submission deadline: no refactoring right before the deadline, so the working game stays as tested.
 
 ## Files created or changed
 (Filled in after implementation.)

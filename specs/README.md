@@ -44,4 +44,5 @@ wins; the status column says which one. The current rules are summarised in
 | [035](035-bugfixes-after-playtest.md) | Playtest of 23 Nov: bugfixes | Fire alarm counts everyone and names who did not come, guard vision, new west-side games, campus names | partly replaced by 036 |
 | [036](036-never-stuck-and-campus-polish.md) | Never stuck, smooth stopping, campus polish | Away and rejoin, late join as a ghost, the host moves on, anyone ends a round, smooth stopping | partly replaced by 037 (a nickname in use is never taken over) |
 | [037](037-playtest-mobile-kick-host.md) | Playtest fixes: tasks, kick, host, phone | 5/6/7 tasks, kick, host vote, leave, emergency arrow, phone layout | done |
-| [038](038-review-tests-security-lean.md) | Review, tests, security, leaner code | Audit (`docs/review.md`), docs, tests, security, refactoring | in progress |
+| [038](038-review-tests-security-lean.md) | Review, tests, security, leaner code | Audit (`docs/review.md`), docs, tests, security | done (parts 1–4; parts 5–6 dropped, see spec 039) |
+| [039](039-drop-unfinished-parts-of-038.md) | Drop the unfinished parts of spec 038 | Removes the leaner-code part and `docs/walkthrough.md` from spec 038 and the README | done |
