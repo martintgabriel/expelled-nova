@@ -162,5 +162,4 @@ expelled-nova/
 - [Business requirements (BRD)](docs/brd.md)
 - [Specs](specs/README.md): one spec per change, with an index
 - [Manual test checklist](docs/manual-test-checklist.md): every workflow to click through on the deployed app
-- [Walkthrough and exam preparation](docs/walkthrough.md) (follows in spec 038, part 6)
 - [Review](docs/review.md): the audit from spec 038
