@@ -1124,7 +1124,7 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
   #actions { gap: 8px; right: calc(10px + env(safe-area-inset-right)); }
 }
 
-/* Spec 018: the host's examiner setting in the lobby. */
+/* Spec 019: the host's examiner setting in the lobby. */
 .lobby-settings { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; }
 .lobby-settings-label { font-size: 13px; font-weight: 700; }
 .segmented { display: inline-flex; border: 2px solid var(--ink); border-radius: 8px; overflow: hidden; }
@@ -1135,7 +1135,7 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
 .segmented button:disabled:not(.active) { opacity: 0.55; }
 .vote-dot { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
 
-/* Spec 019: the volume slider, right under the "?" and mute buttons, in the strip the
+/* Spec 020: the volume slider, right under the "?" and mute buttons, in the strip the
    panels already keep free (they start 108px from the right). */
 .volume-slider {
   position: fixed;
@@ -1148,14 +1148,14 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
   cursor: pointer;
 }
 
-/* Spec 020: the surf mini-game. */
+/* Spec 021: the surf mini-game. */
 .surf-sea { position: relative; height: 56px; margin: 8px 0 12px; border-radius: 8px; background: linear-gradient(#7cc3e8, #2f80c3); overflow: hidden; }
 .surf-crest { position: absolute; top: 0; bottom: 0; background: rgba(255, 255, 255, 0.25); }
 .surf-crest.now { background: rgba(255, 255, 255, 0.55); }
 .surf-wave, .surf-board { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 30px; line-height: 1; }
 .surf-board { font-size: 26px; top: 40%; }
 
-/* Spec 021: hat and colour on the ID card. */
+/* Spec 022: hat and colour on the ID card. */
 .look-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .look-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; min-width: 46px; }
 .look-arrow { width: 28px; height: 28px; padding: 0; font-size: 18px; line-height: 1; }

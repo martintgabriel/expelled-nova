@@ -1,4 +1,4 @@
-// Hats (spec 021): ten original hats, defined once as simple shapes and drawn both on the
+// Hats (spec 022): ten original hats, defined once as simple shapes and drawn both on the
 // map (Phaser graphics, render.js) and in the small SVG figures (main.js). Coordinates are
 // in figure units with (0, 0) at the top of the head; negative y is up. The head is a
 // circle of radius 11, so x runs from about -11 to 11 across it.

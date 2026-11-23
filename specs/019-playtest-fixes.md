@@ -1,4 +1,4 @@
-# Spec 018 — Playtest fixes, part 1: game rules
+# Spec 019 — Playtest fixes, part 1: game rules
 
 ## Why
 A playtest on 23 Nov showed four problems with the rules: the examiner can expel again too
@@ -34,7 +34,7 @@ the result screen uses `ballots`.
 More task kinds (a later spec), other host settings (cooldown, speed), anonymous votes.
 
 ## Done when
-- New tests in `tests/test_spec018.py` cover accepted and rejected settings, the 2-examiner
+- New tests in `tests/test_spec019.py` cover accepted and rejected settings, the 2-examiner
   start rule, the task counts per player count, the cooldown and the ballots (also that
   they are hidden while voting).
 - This spec changes three existing tests in `tests/test_tasks.py` that expected 3 tasks

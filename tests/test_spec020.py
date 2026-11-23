@@ -1,147 +1,96 @@
-"""Tests for spec 020: the Cafeteria tray and Beach surfing mini-games."""
+"""Tests for spec 020 (playtest fixes, part 2: sound). Like the tests of specs 016 and
+017 they read the static files, since the sound only exists in the browser."""
 
-import random
+import re
+from pathlib import Path
 
-import pytest
-
-from server import minigames
-from server.game import TICK_RATE, Game, GameError, load_map
-
-TRAY = ["Main course", "Soup", "Drink", "Dessert", "Pay"]
+WEB = Path(__file__).resolve().parent.parent / "web"
 
 
-def tray(seed=0):
-    return minigames.make_challenge("tray", random.Random(seed), 0, TICK_RATE)
+def read(name):
+    return (WEB / name).read_text(encoding="utf-8")
 
 
-def answer(challenge, value, seed=1):
-    minigames.validate_value(challenge["kind"], value)
-    return minigames.apply_answer(challenge, value, random.Random(seed), 0, TICK_RATE)
+def effects_block():
+    return re.search(r"const EFFECTS = \{(.*?)\n  \};", read("sound.js"), re.S).group(1)
 
 
-# --- tray ------------------------------------------------------------------------------------
+# --- 1. Volume slider ----------------------------------------------------------------------
 
 
-def test_tray_is_a_kind_with_a_limit_and_a_note():
-    assert "tray" in minigames.KINDS
-    assert minigames.TIME_LIMITS["tray"] == 30
-    assert minigames.TIMEOUT_NOTES["tray"] == "The cafeteria closed."
+def test_the_page_has_a_volume_slider_from_0_to_100():
+    page = read("index.html")
+    tag = re.search(r'<input[^>]*id="volume-slider"[^>]*>', page).group(0)
+    assert 'type="range"' in tag
+    assert 'min="0"' in tag and 'max="100"' in tag
+    assert "aria-label" in tag
 
 
-def test_a_tray_shows_the_five_items_shuffled():
-    challenge = tray()
-    assert sorted(challenge["items"]) == sorted(TRAY)
-    assert challenge["next"] == 0
-    assert challenge["deadline_tick"] == 30 * TICK_RATE
-    assert len({tuple(tray(seed)["items"]) for seed in range(10)}) > 1
+def test_the_slider_sits_outside_every_overlay_like_the_mute_button():
+    page = read("index.html")
+    assert page.index('id="volume-slider"') > page.index('id="mute-button"')
 
 
-def test_tapping_the_line_in_order_fills_the_tray():
-    challenge = tray()
-    for step, item in enumerate(TRAY):
-        done, note = answer(challenge, challenge["items"].index(item))
-        assert note is None
-        assert done == (step == 4)
+def test_sound_js_has_volume_functions_and_still_one_master_constant():
+    sound = read("sound.js")
+    assert len(re.findall(r"MASTER_VOLUME\s*=", sound)) == 1
+    assert re.search(r"function setVolume\(", sound)
+    assert "getVolume" in sound and "setVolume" in sound
+    assert re.search(r"MASTER_VOLUME\s*\*\s*volume", sound)
 
 
-def test_a_wrong_item_sends_you_to_the_back_of_the_queue():
-    challenge = tray()
-    answer(challenge, challenge["items"].index("Main course"))
-    done, note = answer(challenge, challenge["items"].index("Pay"))
-    assert (done, note) == (False, "Wrong order. Back of the queue.")
-    assert challenge["next"] == 0
+def test_the_volume_is_remembered_with_storage_errors_caught():
+    sound = read("sound.js")
+    assert "expelled-nova-volume" in sound
+    assert sound.count("try {") >= 4  # load and save, for mute and for volume
 
 
-@pytest.mark.parametrize("value", [-1, 5, "0", 1.0, True, None, [0]])
-def test_an_invalid_tray_value_is_rejected(value):
-    with pytest.raises(ValueError):
-        minigames.validate_value("tray", value)
+def test_main_js_wires_the_slider():
+    script = read("main.js")
+    assert 'getElementById("volume-slider")' in script
+    assert "Sound.setVolume(" in script
 
 
-def test_the_tray_view_shows_items_and_progress():
-    challenge = tray()
-    view = minigames.public_view(challenge, 0, TICK_RATE)
-    assert view == {"kind": "tray", "items": challenge["items"], "next": 0, "order": TRAY}
+def test_style_css_styles_the_slider():
+    assert ".volume-slider" in read("style.css")
 
 
-# --- surf ------------------------------------------------------------------------------------
+# --- 2. Expel voice ------------------------------------------------------------------------
 
 
-def surf(tick=0):
-    return minigames.make_challenge("surf", random.Random(0), tick, TICK_RATE)
+def test_the_expel_voice_is_generated_by_the_browser():
+    sound = read("sound.js")
+    assert "speechSynthesis" in sound
+    assert "Expelled!" in sound
+    assert re.search(r"\bexpelVoice\s*:", effects_block())
 
 
-def press(challenge, tick):
-    minigames.validate_value("surf", True)
-    return minigames.apply_answer(challenge, True, random.Random(0), tick, TICK_RATE)
+def test_the_voice_respects_mute():
+    sound = read("sound.js")
+    body = sound[sound.index("function say("):]
+    body = body[: body.index("\n  }\n")]
+    assert "muted" in body
 
 
-CREST = 20  # a tick inside the riding window of every wave cycle
+def test_the_voice_plays_exactly_where_the_paper_rip_plays():
+    script = read("main.js")
+    assert script.count('Sound.play("expel")') == script.count('Sound.play("expelVoice")') == 2
 
 
-def test_surf_is_a_kind_with_a_limit_and_a_note():
-    assert "surf" in minigames.KINDS
-    assert minigames.TIME_LIMITS["surf"] == 25
-    assert minigames.TIMEOUT_NOTES["surf"] == "The waves are gone. Flat sea."
-    low, high = minigames.SURF_CREST
-    assert low <= CREST < high and minigames.SURF_PERIOD == 40
+# --- 3. End sound by winning side ----------------------------------------------------------
 
 
-def test_three_waves_ridden_on_the_crest_finish_the_task():
-    challenge = surf(tick=100)
-    results = [press(challenge, 100 + CREST + i * minigames.SURF_PERIOD) for i in range(3)]
-    assert results == [(False, None), (False, None), (True, None)]
+def test_there_is_an_end_sound_for_each_side():
+    block = effects_block()
+    assert re.search(r"\bstudentsWin\s*:", block)
+    assert re.search(r"\bexaminersWin\s*:", block)
+    assert "winJingle" not in read("sound.js") and "loseJingle" not in read("sound.js")
 
 
-def test_standing_up_off_the_crest_is_a_wipeout_and_starts_again():
-    challenge = surf()
-    press(challenge, CREST)
-    done, note = press(challenge, minigames.SURF_PERIOD + 2)
-    assert (done, note) == (False, "Wipeout! Paddle back out.")
-    assert challenge["rides"] == 0
-
-
-@pytest.mark.parametrize("value", [False, 1, "yes", None, [True]])
-def test_an_invalid_surf_value_is_rejected(value):
-    with pytest.raises(ValueError):
-        minigames.validate_value("surf", value)
-
-
-def test_the_surf_view_shows_the_wave_phase():
-    challenge = surf(tick=10)
-    view = minigames.public_view(challenge, 10 + 45, TICK_RATE)
-    assert view == {"kind": "surf", "phase": 5, "period": 40, "crest": [15, 25], "rides": 0, "goal": 3}
-
-
-# --- On the campus -----------------------------------------------------------------------------
-
-
-def test_both_tasks_are_on_the_campus_on_walkable_tiles():
-    campus = load_map()
-    tasks = {t["id"]: t for t in campus["tasks"]}
-    assert (tasks["tray"]["area"], tasks["tray"]["x"], tasks["tray"]["y"], tasks["tray"]["minigame"]) == (
-        "Food Court", 41, 12, "tray")
-    assert (tasks["surf"]["area"], tasks["surf"]["x"], tasks["surf"]["y"], tasks["surf"]["minigame"]) == (
-        "Beach", 3, 19, "surf")
-    for task in (tasks["tray"], tasks["surf"]):
-        assert campus["grid"][task["y"]][task["x"]] == "."
-        assert task["joke"]
-
-
-def test_a_player_can_play_the_tray_task_to_the_end():
-    campus = load_map()
-    for seed in range(200):
-        game = Game(campus, rng=random.Random(seed))
-        players = [game.join(f"P{i}") for i in range(4)]
-        game.start(players[0].id)
-        student = next((p for p in players if p.role == "student" and "tray" in p.tasks), None)
-        if student:
-            break
-    task = next(t for t in campus["tasks"] if t["id"] == "tray")
-    student.x, student.y = (task["x"] + 0.5) * 32, (task["y"] + 0.5) * 32
-    game.task(student.id, "tray")
-    for item in TRAY:
-        game.task_input(student.id, "tray", student.challenge["items"].index(item))
-    assert "tray" in student.tasks_done
-    with pytest.raises(GameError):
-        game.task_input(student.id, "tray", 0)
+def test_the_end_sound_depends_on_the_winner_not_on_the_own_role():
+    script = read("main.js")
+    match = re.search(r'state\.phase === "ended" && previousPhase !== "ended"\) \{(.{0,300})', script, re.S)
+    after = match.group(1)
+    assert 'Sound.play("studentsWin")' in after and 'Sound.play("examinersWin")' in after
+    assert "winner" in after
+    assert "state.role" not in after

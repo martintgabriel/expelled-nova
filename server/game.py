@@ -36,9 +36,9 @@ MESSAGE_TYPES |= {"expel", "report", "meeting", "vote", "task"}  # actions in a 
 MESSAGE_TYPES |= {"vent_enter", "vent_move", "vent_leave"}  # examiners in the vents
 MESSAGE_TYPES |= {"task_input", "task_cancel"}  # answering or closing a task's mini-game
 MESSAGE_TYPES |= {"sabotage", "fix"}  # the lights
-MESSAGE_TYPES |= {"settings"}  # the host's lobby settings (spec 018)
+MESSAGE_TYPES |= {"settings"}  # the host's lobby settings (spec 019)
 EXPEL_RANGE = 48  # px between centres, about 1.5 tiles
-EXPEL_COOLDOWN = 30  # seconds between two expels by the same examiner (spec 018: was 20)
+EXPEL_COOLDOWN = 30  # seconds between two expels by the same examiner (spec 019: was 20)
 EXPEL_COOLDOWN_TICKS = EXPEL_COOLDOWN * TICK_RATE  # 600
 VISION_TILES = 6  # how far a living player sees while playing, in tiles
 REPORT_RANGE = 48  # px from a player's centre to a failed exam, about 1.5 tiles
@@ -67,7 +67,7 @@ MEETING_TICKS = MEETING_SECONDS * TICK_RATE  # 1200
 RESULT_TICKS = RESULT_SECONDS * TICK_RATE  # 100
 # Colour numbers 0-9, one per player. Which number is which colour is drawing (web/render.js).
 PLAYER_COLORS = range(MAX_PLAYERS)
-HAT_COUNT = 10  # spec 021: hat numbers 0-9, drawn by web/hats.js; 0 is the graduation cap
+HAT_COUNT = 10  # spec 022: hat numbers 0-9, drawn by web/hats.js; 0 is the graduation cap
 
 # Game phases.
 LOBBY = "lobby"  # before the start: players join and walk around
@@ -106,7 +106,7 @@ class Player:
     role: str | None = None  # None in the lobby, then STUDENT or EXAMINER
     alive: bool = True  # False = ghost: walks through walls, cannot expel or be expelled
     color: int = 0  # colour number, unique in the game, kept until the player leaves
-    hat: int = 0  # spec 021: chosen when joining, 0 = the graduation cap
+    hat: int = 0  # spec 022: chosen when joining, 0 = the graduation cap
     next_expel_tick: int = 0  # first tick at which this player may expel (again)
     vent: str | None = None  # id of the vent this examiner is inside right now, or None
     next_vent_tick: int = 0  # first tick at which this player may climb into a vent (again)
@@ -301,12 +301,12 @@ def examiner_count(player_count):
     return 1 if player_count <= 6 else 2
 
 
-EXAMINER_SETTINGS = (None, 1, 2)  # None = automatic (examiner_count), spec 018
+EXAMINER_SETTINGS = (None, 1, 2)  # None = automatic (examiner_count), spec 019
 MIN_PLAYERS_FOR_TWO_EXAMINERS = 6
 
 
 def tasks_per_player(player_count):
-    """Spec 018: 3 tasks for 4-5 players, 4 for 6-7, 5 for 8-10, so bigger rounds last longer."""
+    """Spec 019: 3 tasks for 4-5 players, 4 for 6-7, 5 for 8-10, so bigger rounds last longer."""
     if player_count <= 5:
         return TASKS_PER_STUDENT
     if player_count <= 7:
@@ -354,7 +354,7 @@ class Game:
         # The host's player id (spec 015): the first player to join, until the host hands
         # over (make_host) or leaves (then the player who has been in the game longest).
         self.host_id = None
-        # The host's lobby settings (spec 018). None = automatic number of examiners.
+        # The host's lobby settings (spec 019). None = automatic number of examiners.
         self.examiner_setting = None
         self.tick = 0
         self.next_id = 1
@@ -370,7 +370,7 @@ class Game:
     # --- Joining and leaving --------------------------------------------------
 
     def join(self, raw_name, hat=0, color=None):
-        """Spec 021: `hat` 0-9 and `color` 0-9 (or None for any free colour) are chosen on
+        """Spec 022: `hat` 0-9 and `color` 0-9 (or None for any free colour) are chosen on
         the ID card. Checks everything before changing anything."""
         if self.phase != LOBBY:
             raise GameError("Game already running")
@@ -440,7 +440,7 @@ class Game:
         self.host_id = target_id
 
     def set_settings(self, player_id, message):
-        """The host changes a lobby setting (spec 018). For now only the number of
+        """The host changes a lobby setting (spec 019). For now only the number of
         examiners: None (automatic), 1 or 2. Checks everything before changing anything."""
         if player_id not in self.players:
             raise GameError("Unknown player")
@@ -1375,7 +1375,7 @@ class Game:
             ],
             # Kept next to the player entries, so those stay exactly {id, name, x, y}.
             "colors": {p.id: p.color for p in players},
-            "hats": {p.id: p.hat for p in players},  # spec 021
+            "hats": {p.id: p.hat for p in players},  # spec 022
             "failed_exams": [{"id": e.id, "x": round(e.x, 1), "y": round(e.y, 1)} for e in exams],
             "open_vents": open_vents,
         }
@@ -1410,7 +1410,7 @@ class Game:
         if self.phase == MEETING:
             state["meeting"] = self._meeting_for(me)
             if self.meeting.result is not None:
-                # Spec 018: once counted, who voted for whom ("skip" or a player id); only
+                # Spec 019: once counted, who voted for whom ("skip" or a player id); only
                 # votes actually cast. Never sent while the vote is still running.
                 state["ballots"] = dict(self.meeting.votes)
         if self.phase != LOBBY:

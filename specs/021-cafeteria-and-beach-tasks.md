@@ -1,7 +1,7 @@
-# Spec 020 — Two new tasks: Cafeteria tray and Beach surfing
+# Spec 021 — Two new tasks: Cafeteria tray and Beach surfing
 
 ## Why
-With spec 018, 8–10 players each get 5 tasks, but the campus had only 6 tasks, so everyone
+With spec 019, 8–10 players each get 5 tasks, but the campus had only 6 tasks, so everyone
 did almost the same ones. The playtest asked for a task in the Cafeteria and one on the
 beach. Builds on spec 012 (mini-games) and spec 015 (the beach).
 
@@ -29,7 +29,7 @@ current phase so the client can draw it. The client draws both in the existing m
 Replacing the paper-jam and seagull games, a longer helpdesk conversation (later specs).
 
 ## Done when
-- New tests in `tests/test_spec020.py` cover building, accepted and rejected answers,
+- New tests in `tests/test_spec021.py` cover building, accepted and rejected answers,
   invalid values, the time-outs and both tasks on the campus.
 - This spec changes existing tests that listed or counted the campus tasks: `SPEC_TASKS`
   and 6 → 8 tasks (`tests/test_tasks.py`), the station list and place count

@@ -552,7 +552,7 @@ const Render = (() => {
     const eyes = [-1, 1].map((side) => scene.add.ellipse(side * 3.7, -1, 5.2, 6.6, 0xffffff));
     const pupils = [-1, 1].map((side) => scene.add.circle(side * 3.7, -0.6, 1.6, OUTLINE));
 
-    // The hat (spec 021): one of the ten shared shapes from hats.js; 0 is the graduation cap.
+    // The hat (spec 022): one of the ten shared shapes from hats.js; 0 is the graduation cap.
     const cap = scene.add.graphics();
     const top = -radius;
     Hats.drawPhaser(cap, hat || 0, top);

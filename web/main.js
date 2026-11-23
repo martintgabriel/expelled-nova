@@ -187,7 +187,7 @@ function updateMuteIcon() {
 }
 updateMuteIcon();
 
-// Volume (spec 019): the slider beside the mute button scales effects and music together.
+// Volume (spec 020): the slider beside the mute button scales effects and music together.
 ui.volumeSlider.value = String(Math.round(Sound.getVolume() * 100));
 ui.volumeSlider.addEventListener("input", () => {
   Sound.setVolume(Number(ui.volumeSlider.value) / 100);
@@ -260,9 +260,9 @@ let heardOpenVents = new Set(); // hatch ids that showed open one state ago
 // (everyone is visible in the lobby) are remembered here.
 const knownNames = new Map();
 const knownColors = new Map();
-const knownHats = new Map(); // spec 021: player id -> hat number, also for players out of sight
+const knownHats = new Map(); // spec 022: player id -> hat number, also for players out of sight
 
-// --- The look on the ID card (spec 021): hat and colour, sent with "join" -------------
+// --- The look on the ID card (spec 022): hat and colour, sent with "join" -------------
 // Remembered per browser; the server checks both again (range, colour not taken).
 const LOOK_KEY = "expelled-nova-look";
 const look = loadLook();
@@ -408,7 +408,7 @@ function playerColor(state, playerId) {
   return state.colors[playerId] ?? knownColors.get(playerId);
 }
 
-// Spec 021: the hat, like the colour also for players out of sight.
+// Spec 022: the hat, like the colour also for players out of sight.
 function playerHat(state, playerId) {
   return (state.hats && state.hats[playerId]) ?? knownHats.get(playerId) ?? 0;
 }
@@ -425,7 +425,7 @@ function characterChip(colorNumber, size = 32, hat = 0) {
     svgEl("circle", { cx: 24.5, cy: 22, r: 2.3, fill: "#fff" }),
     svgEl("circle", { cx: 15.5, cy: 22.4, r: 0.9, fill: "#16181d" }),
     svgEl("circle", { cx: 24.5, cy: 22.4, r: 0.9, fill: "#16181d" }),
-    Hats.svg(hat, 20, 9, 14 / 11), // spec 021: this head (r 14, top at y 9) is 14/11 of the map's
+    Hats.svg(hat, 20, 9, 14 / 11), // spec 022: this head (r 14, top at y 9) is 14/11 of the map's
   );
   svg.style.overflow = "visible"; // tall hats may stick out of the 40x40 box
   return svg;
@@ -494,7 +494,7 @@ function updatePhase(state) {
     if (state.meeting && state.meeting.reason === "report") Sound.play("reportAlarm");
     knownVoted = new Set();
   }
-  // The end of a round, once, for everyone (spec 017). Spec 019: the sound tells which
+  // The end of a round, once, for everyone (spec 017). Spec 020: the sound tells which
   // side won, the same for every player: `winner` is "students" or "examiners".
   if (state.phase === "ended" && previousPhase !== "ended") {
     if (state.winner === "students") Sound.play("studentsWin");
@@ -515,7 +515,7 @@ function updatePhase(state) {
   // matches here); the expelling examiner's side is handled by checkExpelSound below.
   if (state.phase === "playing" && previousPhase === "playing" && wasAliveForExpelSound && !state.alive) {
     Sound.play("expel");
-    Sound.play("expelVoice"); // spec 019: "Expelled!"
+    Sound.play("expelVoice"); // spec 020: "Expelled!"
   }
   wasAliveForExpelSound = state.alive;
   checkExpelSound(state);
@@ -625,7 +625,7 @@ function renderLobby(state) {
   setText(ui.startHint, hint);
 }
 
-// Spec 018: the examiner setting. Only the host can press the buttons; the server checks
+// Spec 019: the examiner setting. Only the host can press the buttons; the server checks
 // again (host, lobby, value) and answers a rejection with a toast.
 function renderLobbySettings(state, isHost) {
   const chosen = state.settings ? state.settings.expellers : null;
@@ -827,7 +827,7 @@ function checkExpelSound(state) {
   if (state.expel_cooldown > 0) {
     pendingExpel = false;
     Sound.play("expel");
-    Sound.play("expelVoice"); // spec 019: "Expelled!"
+    Sound.play("expelVoice"); // spec 020: "Expelled!"
   }
 }
 
@@ -1186,7 +1186,7 @@ function renderVoting(state, meeting) {
   buildVotingGrid();
 }
 
-// One small dot per vote (spec 014). Spec 018: once the vote is counted the server sends
+// One small dot per vote (spec 014). Spec 019: once the vote is counted the server sends
 // `ballots` (voter -> target), so each dot is drawn in the voter's colour; while voting it
 // never does. `voters` is the list of voter ids for this card.
 function voteDots(state, voters) {
@@ -1437,8 +1437,8 @@ const MINIGAME_HINTS = {
   ticket: "Press when your number is called.",
   translate: "Pick the right translation.",
   paper_jam: "Clear all 3 paper jams.",
-  tray: "Tap in the order of the Nova line.", // spec 020
-  surf: "Stand up when the wave is under your board.", // spec 020
+  tray: "Tap in the order of the Nova line.", // spec 021
+  surf: "Stand up when the wave is under your board.", // spec 021
 };
 
 const NATA_EATEN_MS = 1200; // how long the "gone" tart stays up after a seagull time-out
@@ -1493,7 +1493,7 @@ function updateMinigame(state) {
   const task = (state.tasks || []).find((t) => t.id === doing.task);
   setText(ui.minigameTitle, task ? task.title : "");
   setText(ui.minigameHint, MINIGAME_HINTS[doing.challenge.kind] || "");
-  // Spec 020: the surf wave's phase changes every tick; leave it out of the key so the
+  // Spec 021: the surf wave's phase changes every tick; leave it out of the key so the
   // panel (and its button) is not rebuilt 20 times a second, and only move the wave.
   const { phase, ...stable } = doing.challenge;
   const key = JSON.stringify([doing.task, doing.challenge.kind === "surf" ? stable : doing.challenge]);
@@ -1532,7 +1532,7 @@ function renderChallenge(taskId, challenge) {
   else if (challenge.kind === "surf") renderSurf(taskId, challenge);
 }
 
-// tray (spec 020) — the Nova cafeteria line: the order is printed, the buttons are shuffled.
+// tray (spec 021) — the Nova cafeteria line: the order is printed, the buttons are shuffled.
 const TRAY_ICONS = { "Main course": "\u{1F35D}", Soup: "\u{1F963}", Drink: "\u{1F964}", Dessert: "\u{1F36E}", Pay: "\u{1F4B6}" };
 
 function renderTray(taskId, challenge) {
@@ -1554,7 +1554,7 @@ function renderTray(taskId, challenge) {
   ui.minigameContent.append(line, options);
 }
 
-// surf (spec 020) — a wave rolls under the board every 2 s; stand up on the crest. The
+// surf (spec 021) — a wave rolls under the board every 2 s; stand up on the crest. The
 // server decides by its own tick; this only draws the wave from the latest `phase`.
 let surfWave = null;
 

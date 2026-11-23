@@ -1,4 +1,4 @@
-# Spec 021 — Hats and a colour of your own
+# Spec 022 — Hats and a colour of your own
 
 ## Why
 The playtest asked for a bit of personality before joining: everyone is the same figure
@@ -26,7 +26,7 @@ colour on the ID card makes players easy to tell apart and is simply fun. Builds
 Changing the look after joining, extra accessories or symbols on the body.
 
 ## Done when
-- New tests in `tests/test_spec021.py` cover joining with and without a look, every
+- New tests in `tests/test_spec022.py` cover joining with and without a look, every
   rejected value, a taken colour, the hats in snapshots and the WebSocket join.
 - This spec replaces the spec 005 test that said a client cannot pick its own colour
   (`tests/test_look.py`): it now checks that a picked colour is used and stays unique.

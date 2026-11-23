@@ -427,7 +427,7 @@ def join(ws, name, **extra):
 
 
 def test_clients_receive_server_colours_and_a_picked_colour_stays_unique():
-    # Spec 021 replaces spec 005's "cannot pick their own": a player may now pick a free
+    # Spec 022 replaces spec 005's "cannot pick their own": a player may now pick a free
     # colour on the ID card; a taken one is rejected, and without a pick the server still
     # hands out the lowest free colour.
     with TestClient(app) as client:

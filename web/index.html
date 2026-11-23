@@ -33,7 +33,7 @@
           <label for="nickname">Name</label>
           <input id="nickname" name="nickname" type="text" maxlength="16" autocomplete="off"
                  placeholder="1–16 letters, digits, spaces" autofocus>
-          <!-- Spec 021: the look, chosen before enrolling. main.js fills the swatches. -->
+          <!-- Spec 022: the look, chosen before enrolling. main.js fills the swatches. -->
           <div class="look-row">
             <span class="look-label">Hat</span>
             <button id="hat-prev" type="button" class="look-arrow" aria-label="Previous hat">&lsaquo;</button>
@@ -104,7 +104,7 @@
       <p class="roster-count"><span id="lobby-count" class="lobby-count"></span> enrolled</p>
     </div>
     <ul id="lobby-players" class="lobby-chips"></ul>
-    <!-- Spec 018: the host picks the number of examiners; everyone else only sees it. -->
+    <!-- Spec 019: the host picks the number of examiners; everyone else only sees it. -->
     <div id="lobby-settings" class="lobby-settings" role="group" aria-label="Number of Undercover Examiners">
       <span id="examiner-setting-label" class="lobby-settings-label">Undercover Examiners</span>
       <div class="segmented">
@@ -354,7 +354,7 @@
       </g>
     </svg>
   </button>
-  <!-- Volume (spec 019): beside the mute button, on every screen. -->
+  <!-- Volume (spec 020): beside the mute button, on every screen. -->
   <input id="volume-slider" class="volume-slider" type="range" min="0" max="100" step="5" value="100" aria-label="Volume">
 
   <button id="help-button" type="button" class="help-button" aria-label="How to play" title="How to play (H)">?</button>

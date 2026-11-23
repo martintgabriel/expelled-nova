@@ -1,4 +1,4 @@
-# Spec 019 — Playtest fixes, part 2: sound
+# Spec 020 — Playtest fixes, part 2: sound
 
 ## Why
 The playtest on 23 Nov asked for three sound changes: a volume control instead of only
@@ -27,7 +27,7 @@ Builds on specs 016 (sound effects) and 017 (music and more sounds).
 Recorded voices, per-sound volume, separate music volume.
 
 ## Done when
-- New tests in `tests/test_spec019.py` check the slider, the volume functions, the voice and
+- New tests in `tests/test_spec020.py` check the slider, the volume functions, the voice and
   the new end sounds in the files.
 - This spec changes the two tests in `tests/test_spec017.py` that named `winJingle` and
   `loseJingle`: they now expect `studentsWin` and `examinersWin`, compared against `winner`.

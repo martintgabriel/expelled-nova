@@ -15,8 +15,8 @@ TIME_LIMITS = {
     "paper_jam": 30,
     "cable": 25,
     "seagull": 8,
-    "tray": 30,  # spec 020
-    "surf": 25,  # spec 020
+    "tray": 30,  # spec 021
+    "surf": 25,  # spec 021
 }
 
 TIMEOUT_NOTES = {
@@ -44,9 +44,9 @@ SENTENCES = [
 # The five projector/cable port types of the "cable" mini-game (socket, Auditorium).
 PORT_TYPES = ["HDMI", "USB-C", "VGA", "DisplayPort", "Mini DisplayPort"]
 
-# Spec 020: the Nova cafeteria line, in order (tray mini-game, Food Court).
+# Spec 021: the Nova cafeteria line, in order (tray mini-game, Food Court).
 TRAY_ORDER = ["Main course", "Soup", "Drink", "Dessert", "Pay"]
-# Spec 020: the surf mini-game (beach). A wave rolls by every SURF_PERIOD ticks; standing
+# Spec 021: the surf mini-game (beach). A wave rolls by every SURF_PERIOD ticks; standing
 # up while its crest is under the board (ticks SURF_CREST of the cycle) rides it.
 SURF_PERIOD = 40  # ticks per wave (2 s at 20 ticks per second)
 SURF_CREST = (15, 25)  # the riding window inside one cycle, half-open: half a second

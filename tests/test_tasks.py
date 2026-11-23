@@ -75,8 +75,8 @@ SPEC_TASKS = {
     "socket": [("Auditorium", 34, 40, "cable")],
     "gate": [("Main Entrance", 28, 6, "card")],
     "nata": [("Courtyard", 23, 23, "seagull")],
-    "tray": [("Food Court", 41, 12, "tray")],  # spec 020
-    "surf": [("Beach", 3, 19, "surf")],  # spec 020
+    "tray": [("Food Court", 41, 12, "tray")],  # spec 021
+    "surf": [("Beach", 3, 19, "surf")],  # spec 021
 }
 
 
@@ -222,7 +222,7 @@ def test_the_campus_has_the_six_task_places_of_spec_012():
     # "seconds" wait (spec 012, part 1), and "certificate" has two stations instead of
     # one flat place (spec 012, part 4), so there is no single flat table any more.
     tasks = load_map()["tasks"]
-    assert len({task["id"] for task in tasks}) == len(tasks) == 8  # unique ids (spec 020: 6 -> 8)
+    assert len({task["id"] for task in tasks}) == len(tasks) == 8  # unique ids (spec 021: 6 -> 8)
     found = {
         task["id"]: [(s["area"], s["x"], s["y"], s["minigame"]) for s in stations_of(task)]
         for task in tasks
@@ -245,7 +245,7 @@ def test_no_campus_task_is_a_plain_waiting_task_and_every_station_is_a_floor_til
             x, y = (station["x"] + 0.5) * TILE, (station["y"] + 0.5) * TILE
             assert campus["grid"][station["y"]][station["x"]] == ".", task["id"]
             assert not game.blocked(x, y), task["id"]
-            # Spec 020: the beach is sand, not an area (spec 015), so the surf station names
+            # Spec 021: the beach is sand, not an area (spec 015), so the surf station names
             # it by its own label "Beach"; every other station sits inside its area.
             expected = None if station["area"] == "Beach" else station["area"]
             assert game.area_at(x, y) == expected, task["id"]
@@ -270,7 +270,7 @@ def test_the_task_constants():
 @pytest.mark.parametrize("count", [4, 7, 10])
 def test_every_player_gets_different_tasks_from_the_same_pool(count):
     # Replaces spec 004's test of the same shape: examiners now get the same number of
-    # fake tasks too, from the same pool as students (spec 012, part 3). Spec 018: the
+    # fake tasks too, from the same pool as students (spec 012, part 3). Spec 019: the
     # number grows with the player count (tasks_per_player).
     game, examiners, students = new_round(count)
     known = {task["id"] for task in TASK_MAP["tasks"]}
@@ -291,7 +291,7 @@ def test_the_same_seed_deals_the_same_tasks():
 
 
 def test_on_the_campus_every_student_gets_tasks_per_player_of_the_campus_tasks():
-    # Spec 018: with 10 players everyone gets tasks_per_player(10) tasks, not 3.
+    # Spec 019: with 10 players everyone gets tasks_per_player(10) tasks, not 3.
     game, _, students = new_round(10, campus=load_map())
     for student in students:
         assert len(set(student.tasks)) == min(rules.tasks_per_player(10), len(game.tasks))
@@ -981,7 +981,7 @@ def test_finishing_a_task_shows_the_others_only_the_shared_progress():
     before = other_views(game, student)
     game.step()
     after = other_views(game, student)
-    total = len(students) * rules.tasks_per_player(7)  # spec 018: 4 tasks each with 7 players
+    total = len(students) * rules.tasks_per_player(7)  # spec 019: 4 tasks each with 7 players
     for player_id, view in after.items():
         assert view.pop("task_progress") == {"done": 1, "total": total}
         assert before[player_id].pop("task_progress") == {"done": 0, "total": total}
@@ -1027,7 +1027,7 @@ def test_a_student_does_a_task_over_the_websocket_and_everyone_sees_the_progress
     # Seed 1 deals the real campus: Ada (joins first) is a student with "gate" (the
     # "card" mini-game) as her first task, Bo is the examiner (same seed as the
     # equivalent test in test_minigames.py).
-    fresh_game.rng = random.Random(4)  # spec 020: 8 tasks deal differently; seed 4 = old seed 1
+    fresh_game.rng = random.Random(4)  # spec 021: 8 tasks deal differently; seed 4 = old seed 1
     with TestClient(app) as client:
         with (
             client.websocket_connect("/ws") as a,

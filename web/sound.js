@@ -15,7 +15,7 @@
 const Sound = (() => {
   const MASTER_VOLUME = 0.22; // the one knob for every sound at once
   const MUTE_KEY = "expelled-nova-muted";
-  const VOLUME_KEY = "expelled-nova-volume"; // spec 019: the slider, 0-1, per browser
+  const VOLUME_KEY = "expelled-nova-volume"; // spec 020: the slider, 0-1, per browser
 
   let ctx = null;
   let master = null;
@@ -52,7 +52,7 @@ const Sound = (() => {
     return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
   }
 
-  // The master gain (spec 019): the slider scales the one MASTER_VOLUME constant.
+  // The master gain (spec 020): the slider scales the one MASTER_VOLUME constant.
   function gainValue() {
     return muted ? 0 : MASTER_VOLUME * volume;
   }
@@ -198,7 +198,7 @@ const Sound = (() => {
       noise(0.03, { type: "highpass", freq: 2500, gain: 0.5 }); // the switch
       tone(330, 0.3, { type: "triangle", gain: 0.4, delay: 0.03, slideTo: 990 }); // the hum
     },
-    // Spec 019: the end of a round sounds by the winning side, the same for everyone.
+    // Spec 020: the end of a round sounds by the winning side, the same for everyone.
     // Examiners win: three low, gloomy notes ("dun dun dun"), the last one long.
     examinersWin: () => {
       [[147, 0], [139, 0.45], [110, 0.9]].forEach(([freq, delay], i) => {
@@ -212,14 +212,14 @@ const Sound = (() => {
       tone(450, 0.7, { type: "sine", gain: 0.3, slideTo: 1800 });
       for (const freq of [784, 988, 1175, 1568]) tone(freq, 0.9, { type: "triangle", gain: 0.3, delay: 0.7 });
     },
-    // Spec 019: under the "Expelled!" voice, a deep falling drop (also alone without speech).
+    // Spec 020: under the "Expelled!" voice, a deep falling drop (also alone without speech).
     expelVoice: () => {
       tone(220, 0.6, { type: "sawtooth", gain: 0.35, slideTo: 55 });
       say("Expelled!");
     },
   };
 
-  // The browser's own speech synthesis (spec 019): no audio file. Deep and slow; quietly
+  // The browser's own speech synthesis (spec 020): no audio file. Deep and slow; quietly
   // does nothing when muted or when the browser has no speech synthesis.
   function say(text) {
     if (muted || volume === 0 || !("speechSynthesis" in window)) return;
@@ -248,7 +248,7 @@ const Sound = (() => {
     saveMuted(muted);
   }
 
-  // Spec 019: 0-1 from the slider. Moving it while muted unmutes; 0 counts as muted.
+  // Spec 020: 0-1 from the slider. Moving it while muted unmutes; 0 counts as muted.
   function setVolume(value) {
     volume = clamp(Number(value));
     saveVolume(volume);
