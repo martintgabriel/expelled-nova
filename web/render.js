@@ -616,6 +616,45 @@ const Render = (() => {
     return scene.add.container(0, 0, parts).setDepth(0.3);
   }
 
+  // --- Sabotage places (spec 023) ---------------------------------------------------------
+  // The fire alarm's assembly point on the EDP Plaza (a painted area with its name) and the
+  // Wi-Fi router in the Library (a small box with two antennas). Pure decoration: always
+  // drawn, the same for everyone; the server decides everything about the emergencies.
+  function makeSabotagePlaces(scene, map) {
+    const t = map.tile_size;
+    const places = map.sabotages || [];
+    const fire = places.find((p) => p.kind === "fire");
+    if (fire && fire.assembly) {
+      const a = fire.assembly;
+      const g = scene.add.graphics().setDepth(0.25);
+      g.fillStyle(0x2ecc71, 0.18).fillRect(a.x * t, a.y * t, a.w * t, a.h * t);
+      g.lineStyle(3, 0x27ae60, 0.9).strokeRect(a.x * t + 2, a.y * t + 2, a.w * t - 4, a.h * t - 4);
+      scene.add
+        .text((a.x + a.w / 2) * t, (a.y + a.h / 2) * t, "ASSEMBLY\nPOINT", {
+          fontFamily: FONT,
+          fontSize: "11px",
+          fontStyle: "bold",
+          align: "center",
+          color: "#eafff1",
+          stroke: "#1d1f24",
+          strokeThickness: 3,
+          resolution: TEXT_RESOLUTION,
+        })
+        .setOrigin(0.5)
+        .setAlpha(0.9)
+        .setDepth(0.26);
+    }
+    const router = places.find((p) => p.kind === "wifi");
+    if (router) {
+      const g = scene.add.graphics();
+      g.lineStyle(2, OUTLINE).lineBetween(-6, -4, -9, -14).lineBetween(6, -4, 9, -14);
+      g.fillStyle(OUTLINE).fillRoundedRect(-11, -5, 22, 11, 3);
+      g.fillStyle(0xe9ecef).fillRoundedRect(-9.5, -3.5, 19, 8, 2);
+      for (const x of [-5, 0, 5]) g.fillStyle(0x2ecc71).fillCircle(x, 0.5, 1.4);
+      scene.add.container((router.x + 0.5) * t, (router.y + 0.5) * t, [g]).setDepth(0.6);
+    }
+  }
+
   // --- Characters --------------------------------------------------------------------
 
   // Our own figure: a round body in the player's colour with eyes, two feet, a
@@ -1408,6 +1447,7 @@ const Render = (() => {
 
   return {
     BACKDROP,
+    makeSabotagePlaces,
     makeGym,
     pixelRatio,
     colorCss,

@@ -57,6 +57,11 @@
   "spawns": [[22, 4], [24, 4], [26, 4], [28, 4], [30, 4], [23, 6], [25, 6], [27, 6], [29, 6], [31, 6]],
   "meeting_point": [28, 21],
   "light_switch": [43, 6],
+  "sabotages": [
+    {"kind": "lights", "x": 43, "y": 6, "name": "Lights · Student Services"},
+    {"kind": "fire", "x": 38, "y": 33, "name": "Fire alarm · EDP Plaza", "assembly": {"x": 36, "y": 32, "w": 5, "h": 4}},
+    {"kind": "wifi", "x": 33, "y": 19, "name": "Wi-Fi router · Library"}
+  ],
   "vents": [
     {"id": "lecture-hall", "name": "Lecture Hall B", "x": 7, "y": 10},
     {"id": "student-services", "name": "Student Services", "x": 43, "y": 1},

@@ -41,7 +41,8 @@ fixes it in 3 s.
 - Examiners do not need to go (they would lose nothing by staying away), but nothing stops
   them from walking along to blend in.
 - **Meetings:** the emergency button cannot be used during the alarm ("Not during the fire
-  alarm"), but a report still can; a meeting ends the alarm.
+  alarm"), but a report still can. A meeting ends every emergency (as it already did for
+  the lights).
 - Expelling during the alarm works as usual.
 
 ### 4. Wi-Fi down (new, not critical)
@@ -50,7 +51,9 @@ fixes it in 3 s.
   cancelled with that note.
 - **How to end it:** any living player stands at the router in the Library and holds
   "Restart router" for 3 s (the same mechanic as the light switch, spec 008/033).
-- No time limit: it simply blocks the students' task win until someone fixes it.
+- No time limit: it simply blocks the students' task win until someone fixes it (or a
+  meeting ends it). Router and switch share one "fix" message: the server fixes whatever
+  is broken.
 
 ### 5. What players receive
 - Every snapshot while playing: `"emergency": null` or
@@ -60,6 +63,22 @@ fixes it in 3 s.
 - Examiners additionally receive the shared cooldown (`sabotage_cooldown`, as before).
 - Nothing here reveals a role: the evacuated count counts students, but the number of
   examiners is set in the lobby (spec 019) and public anyway.
+
+## Changes during implementation
+- **Messages kept:** for the lights, the old rejection texts of spec 008 stay word for word
+  ("The lights are already off", "Lights cooldown: n s left"), so spec 008's tests pass
+  unchanged; the new kinds say "Sabotage cooldown: n s left".
+- **Map data:** `campus.json` got `"sabotages"`: the lights at the light switch, the fire
+  alarm at tile (38, 33) with the assembly point x 36–40, y 32–35 on the EDP Plaza, and the
+  router at tile (33, 19) in the Library. A map without this list (the test maps) only
+  offers the lights, as before.
+- **On the map in the game:** the assembly point is painted on the plaza and the router
+  stands in the Library all the time, so players learn where they are before they need them.
+  During the fire alarm the assembly point blinks on everyone's campus map; during the
+  outage, the router.
+- **Sounds:** a new `fireAlarm` bell at the start of the alarm; the Wi-Fi outage reuses the
+  power-down sound of the lights.
+- **No existing test had to change.**
 
 ## Out of scope
 More than three emergencies, doors that lock, a second fixer needed at the same time

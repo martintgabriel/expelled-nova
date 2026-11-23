@@ -201,6 +201,10 @@ const Sound = (() => {
       noise(0.03, { type: "highpass", freq: 2500, gain: 0.5 }); // the switch
       tone(330, 0.3, { type: "triangle", gain: 0.4, delay: 0.03, slideTo: 990 }); // the hum
     },
+    // Spec 023: the fire alarm, for everyone: a fast, shrill bell.
+    fireAlarm: () => {
+      for (let i = 0; i < 8; i++) tone(i % 2 ? 1320 : 990, 0.11, { type: "square", gain: 0.3, delay: i * 0.12 });
+    },
     // Spec 020: the end of a round sounds by the winning side, the same for everyone.
     // Examiners win: three low, gloomy notes ("dun dun dun"), the last one long.
     examinersWin: () => {

@@ -83,7 +83,7 @@
       <span id="control-meeting" class="control" hidden><kbd class="key">M</kbd> meeting</span>
       <span id="control-use" class="control" hidden><kbd class="key">F</kbd> <span id="control-use-label">task</span></span>
       <span id="control-door" class="control" hidden><kbd class="key">V</kbd> vent</span>
-      <span id="control-sabotage" class="control" hidden><kbd class="key">Q</kbd> lights off</span>
+      <span id="control-sabotage" class="control" hidden><kbd class="key">Q</kbd> sabotage</span>
     </span>
     <span class="control hint-touch" title="Drag the joystick to move" hidden><span class="stick" aria-hidden="true"></span> drag to move</span>
   </div>
@@ -171,7 +171,7 @@
         <span class="action-cooldown"></span>
         <kbd class="action-key hint-keyboard" aria-hidden="true">Q</kbd>
       </span>
-      <span class="action-label">Lights off</span>
+      <span class="action-label">Sabotage</span>
     </button>
 
     <div id="door-item" class="action-item" hidden>
@@ -281,6 +281,8 @@
     You are a ghost now: keep walking, the living cannot see you.
   </div>
 
+  <!-- Spec 023: the fire alarm and the Wi-Fi outage, for everyone. main.js fills it in. -->
+  <div id="emergency-banner" class="banner emergency-banner" role="status" hidden></div>
   <div id="lights-banner" class="banner" role="status" hidden>
     <strong>Lights out</strong>
     You can hardly see. Fix the lights at the switch in <span id="switch-area"></span>.
@@ -299,6 +301,14 @@
            014), and a button cannot contain another button. -->
       <div id="skip-button" class="meeting-player-card skip-card" role="button" tabindex="0">Skip vote</div>
       <p id="meeting-status" role="status"></p>
+      <!-- Spec 029: the meeting chat. main.js sets every message as plain text. -->
+      <div id="meeting-chat" class="meeting-chat" hidden>
+        <ol id="chat-log" class="chat-log" aria-live="polite" aria-label="Meeting chat"></ol>
+        <form id="chat-form" class="chat-form" autocomplete="off">
+          <input id="chat-input" type="text" maxlength="80" placeholder="Say something…" aria-label="Chat message">
+          <button type="submit">Send</button>
+        </form>
+      </div>
     </div>
   </div>
 
@@ -401,7 +411,7 @@
           <li class="hint-keyboard"><kbd class="key">W</kbd><kbd class="key">A</kbd><kbd class="key">S</kbd><kbd class="key">D</kbd> or the arrow keys: walk</li>
           <li class="hint-keyboard"><kbd class="key">F</kbd> use a task place or fix the lights</li>
           <li class="hint-keyboard"><kbd class="key">R</kbd> report a failed exam &middot; <kbd class="key">M</kbd> call a meeting at the table</li>
-          <li class="hint-keyboard"><kbd class="key">E</kbd> expel &middot; <kbd class="key">V</kbd> vent &middot; <kbd class="key">Q</kbd> lights off (examiners only)</li>
+          <li class="hint-keyboard"><kbd class="key">E</kbd> expel &middot; <kbd class="key">V</kbd> vent &middot; <kbd class="key">Q</kbd> sabotage (examiners only)</li>
           <li class="hint-keyboard"><kbd class="key">H</kbd> this handbook &middot; <kbd class="key">Esc</kbd> close it</li>
           <li class="hint-keyboard"><kbd class="key">C</kbd> campus map, to say where you were</li>
           <li class="hint-touch" hidden>Drag the joystick (bottom left) to walk.</li>
@@ -438,8 +448,15 @@
 
       <section class="help-section">
         <h3>Sabotage</h3>
-        <p>Examiners can switch the lights off. Students then hardly see anything until one of them
-          stands at the light switch for 3 seconds.</p>
+        <p>Examiners press sabotage and pick an emergency on the campus map:</p>
+        <ul>
+          <li><strong>Lights out:</strong> students hardly see anything until someone stands at the
+            light switch in Student Services for 3 seconds.</li>
+          <li><strong>Fire alarm:</strong> every living student has to reach the assembly point on the
+            EDP Plaza within 40 seconds, or the examiners win.</li>
+          <li><strong>Wi-Fi down:</strong> nobody can do tasks until someone restarts the router in the
+            Library (3 seconds).</li>
+        </ul>
       </section>
 
       <section class="help-section">

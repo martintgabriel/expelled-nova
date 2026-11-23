@@ -36,6 +36,7 @@ MESSAGE_TYPES |= {"expel", "report", "meeting", "vote", "task"}  # actions in a 
 MESSAGE_TYPES |= {"vent_enter", "vent_move", "vent_leave"}  # examiners in the vents
 MESSAGE_TYPES |= {"task_input", "task_cancel"}  # answering or closing a task's mini-game
 MESSAGE_TYPES |= {"sabotage", "fix"}  # the lights
+MESSAGE_TYPES |= {"chat"}  # spec 029: the meeting chat
 MESSAGE_TYPES |= {"settings"}  # the host's lobby settings (spec 019)
 EXPEL_RANGE = 48  # px between centres, about 1.5 tiles
 EXPEL_COOLDOWN = 30  # seconds between two expels by the same examiner (spec 019: was 20)
@@ -59,6 +60,15 @@ LIGHTS_OUT_TILES = 1.5  # how far a living student sees while the lights are off
 FIX_SECONDS = 3  # how long a student stays at the light switch to fix the lights
 FIX_TICKS = FIX_SECONDS * TICK_RATE  # 60
 SWITCH_RANGE = 48  # px from a player's centre to the centre of the switch's tile
+# Spec 023: the sabotage menu. "lights" is spec 008's sabotage; "fire" and "wifi" are new.
+SABOTAGE_KINDS = ("lights", "fire", "wifi")
+FIRE_SECONDS = 40  # time for every living student to reach the assembly point
+FIRE_TICKS = FIRE_SECONDS * TICK_RATE
+NO_WIFI = "No Wi-Fi. Try again later."
+# Spec 029: the meeting chat.
+CHAT_MAX = 80  # characters per message
+CHAT_KEEP = 30  # messages a meeting keeps (the oldest go first)
+CHAT_COOLDOWN_TICKS = int(1.5 * TICK_RATE)  # one message per player every 1.5 s
 TASKS_PER_STUDENT = 3  # dealt to every player at the start with 4-5 players (see tasks_per_player)
 TASK_RANGE = 48  # px from a player's centre to the centre of a task's tile, about 1.5 tiles
 MEETING_SECONDS = 60  # voting time
@@ -153,6 +163,8 @@ class Meeting:
     result: dict | None = None  # set when the voting closes
     result_ends: int = 0  # the tick at which play resumes (set together with the result)
     caught: str | None = None  # spec 027: the examiner id the security guard saw, or None
+    chat: list = field(default_factory=list)  # spec 029: {"from": id, "text": str}, oldest first
+    chat_ready: dict = field(default_factory=dict)  # spec 029: player id -> next allowed tick
 
 
 # Map decor (spec 009): only changes how the map looks, never a rule. Solid kinds must lie
@@ -371,6 +383,11 @@ class Game:
         self.sight = sight_grid(campus)  # which tiles block sight; walls never change
         self.lights_out_radius = LIGHTS_OUT_TILES * self.tile  # px, for students in the dark
         self.lights_on = True
+        # Spec 023: the running fire alarm or Wi-Fi outage, or None. The lights stay in
+        # lights_on (spec 008). {"kind": "fire", "ends_tick", "evacuated": set of ids} or
+        # {"kind": "wifi"}.
+        self.emergency = None
+        self.fire_lost = False  # the round ended because the fire alarm ran out
         self.next_sabotage_tick = 0  # first tick at which an examiner may turn the lights off
         self.players = {}  # by id, in join order (Python dicts keep insertion order)
         # The host's player id (spec 015): the first player to join, until the host hands
@@ -747,6 +764,8 @@ class Game:
         point (only the small test maps) calls from anywhere. A rejected call is not used up.
         """
         player = self._check_meeting_caller(player_id, "Ghosts cannot call a meeting")
+        if self.emergency is not None and self.emergency["kind"] == "fire":
+            raise GameError("Not during the fire alarm")  # spec 023: reports still work
         if player.meeting_used:
             raise GameError("You have already called a meeting")
         place = self.campus.get("meeting_point")
@@ -800,6 +819,7 @@ class Game:
             player.task_note = None
             player.fix_done_tick = None
         self.lights_on = True  # a meeting turns the lights back on
+        self.emergency = None  # spec 023: and ends every other emergency
 
     def _meeting_spots(self):
         """One place (x, y) per player, in join order, on a circle around the meeting table.
@@ -919,6 +939,7 @@ class Game:
         self.winner = winner
         self.meeting = None  # a player leaving can end the game during a meeting
         self.guard = None  # spec 027: he does not exist once the round has ended
+        self.emergency = None  # spec 023
         self.vent_open = {}
         for player in self.players.values():
             player.vent = None  # everyone is shown on the end screen
@@ -946,6 +967,8 @@ class Game:
         self.failed_exams = []
         self.meeting = None
         self.guard = None  # spec 027: he does not exist in the lobby
+        self.emergency = None  # spec 023
+        self.fire_lost = False
         self.security_witnessed = False
         self.lights_on = True
         self.next_sabotage_tick = 0
@@ -1003,6 +1026,8 @@ class Game:
             raise GameError("You are already doing a task")
         if player.fix_done_tick is not None:
             raise GameError("You are fixing the lights")
+        if self.emergency is not None and self.emergency["kind"] == "wifi":
+            raise GameError(NO_WIFI)  # spec 023
         if self._distance_to_task(player, task_id) > TASK_RANGE:
             raise GameError("Too far from the task")
         station = self._current_station(player, task_id)
@@ -1038,6 +1063,8 @@ class Game:
             raise GameError("You are not doing this task")
         if player.challenge is None:
             raise GameError("This task has no mini-game")
+        if self.emergency is not None and self.emergency["kind"] == "wifi":
+            raise GameError(NO_WIFI)  # spec 023 (a running task is cancelled anyway)
         if self._distance_to_task(player, task_id) > TASK_RANGE:
             raise GameError("Too far from the task")
         try:
@@ -1159,9 +1186,11 @@ class Game:
 
     # --- Lights sabotage (spec 008, part 8) ---------------------------------------------
 
-    def sabotage(self, player_id):
-        """A living examiner turns off the lights: living students then see only
-        LIGHTS_OUT_TILES far, until a student fixes the lights or a meeting starts.
+    def sabotage(self, player_id, kind="lights"):
+        """A living examiner starts one emergency (spec 023): "lights" (spec 008: living
+        students then see only LIGHTS_OUT_TILES far, until someone fixes the lights or a
+        meeting starts), "fire" (the fire alarm) or "wifi" (no tasks until the router is
+        restarted). Only one emergency runs at a time.
 
         The cooldown is shared by all examiners. It runs from the start of the game, from
         the moment the lights are fixed and from the end of every meeting. Nothing a player
@@ -1182,14 +1211,121 @@ class Game:
             raise GameError("Only examiners can turn off the lights")
         if player.vent is not None:
             raise GameError(INSIDE_VENT)
-        if "light_switch" not in self.campus:
+        if type(kind) is not str or kind not in SABOTAGE_KINDS:
+            raise GameError("Unknown sabotage")
+        if kind == "lights" and "light_switch" not in self.campus:
             raise GameError("This map has no light switch")  # nobody could fix them
-        if not self.lights_on:
+        if kind != "lights" and self._sabotage_place(kind) is None:
+            names = {"fire": "fire alarm", "wifi": "router"}
+            raise GameError(f"This map has no {names[kind]}")
+        if kind == "lights" and not self.lights_on:
             raise GameError("The lights are already off")
+        if self.emergency is not None or not self.lights_on:
+            raise GameError("An emergency is already running")
         if self.tick < self.next_sabotage_tick:
             left = self._seconds_until(self.next_sabotage_tick)
-            raise GameError(f"Lights cooldown: {left} s left")
-        self.lights_on = False
+            prefix = "Lights" if kind == "lights" else "Sabotage"
+            raise GameError(f"{prefix} cooldown: {left} s left")
+        if kind == "lights":
+            self.lights_on = False
+        elif kind == "fire":
+            self.emergency = {"kind": "fire", "ends_tick": self.tick + FIRE_TICKS, "evacuated": set()}
+        else:
+            self.emergency = {"kind": "wifi"}
+            for other in self.players.values():  # every running task breaks off
+                if other.doing is not None:
+                    other.doing = None
+                    other.challenge = None
+                    other.task_note = NO_WIFI
+
+    def chat(self, player_id, raw_text):
+        """Spec 029: a living player says something in the meeting, while the vote is open.
+        Checks everything before changing anything; the text is kept as plain text."""
+        player = self.players.get(player_id)
+        if player is None:
+            raise GameError("Unknown player")
+        if self.phase != MEETING:
+            raise GameError("You can chat only in a meeting")
+        if self.meeting.result is not None:
+            raise GameError("Voting is over")
+        if not player.alive:
+            raise GameError("Ghosts cannot chat")
+        if not isinstance(raw_text, str):
+            raise GameError("A message must be text")
+        text = raw_text.strip()
+        if not text:
+            raise GameError("Write something first")
+        if len(text) > CHAT_MAX:
+            raise GameError(f"At most {CHAT_MAX} characters")
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in text):
+            raise GameError("No line breaks or control characters")
+        if self.tick < self.meeting.chat_ready.get(player.id, 0):
+            raise GameError("Slow down")
+        self.meeting.chat.append({"from": player.id, "text": text})
+        del self.meeting.chat[:-CHAT_KEEP]
+        self.meeting.chat_ready[player.id] = self.tick + CHAT_COOLDOWN_TICKS
+
+    def _sabotage_place(self, kind):
+        """The map's entry for a sabotage kind (spec 023), or None."""
+        return next((s for s in self.campus.get("sabotages", []) if s["kind"] == kind), None)
+
+    def _in_assembly(self, player):
+        area = self._sabotage_place("fire")["assembly"]
+        col, row = int(player.x // self.tile), int(player.y // self.tile)
+        return area["x"] <= col < area["x"] + area["w"] and area["y"] <= row < area["y"] + area["h"]
+
+    def _distance_to_router(self, player):
+        router = self._sabotage_place("wifi")
+        x, y = self._tile_centre(router["x"], router["y"])
+        return math.hypot(x - player.x, y - player.y)
+
+    def _end_emergency(self):
+        self.emergency = None
+        self.next_sabotage_tick = self.tick + SABOTAGE_COOLDOWN_TICKS
+        for player in self.players.values():
+            player.fix_done_tick = None
+
+    def _step_emergency(self):
+        """Every tick while playing (spec 023): fire alarm check-ins, its end and its
+        time-out; the router fix of a Wi-Fi outage."""
+        if self.emergency is None:
+            return
+        if self.emergency["kind"] == "fire":
+            students = [p for p in self.players.values() if p.role == STUDENT and p.alive]
+            for student in students:
+                if self._in_assembly(student):
+                    self.emergency["evacuated"].add(student.id)
+            if all(s.id in self.emergency["evacuated"] for s in students):
+                self._end_emergency()
+            elif self.tick >= self.emergency["ends_tick"]:
+                self.fire_lost = True
+                self._end(EXAMINERS_WIN)
+            return
+        for player in self.players.values():  # wifi: the router fix, like the light switch
+            if player.fix_done_tick is None:
+                continue
+            if self._distance_to_router(player) > SWITCH_RANGE:
+                player.fix_done_tick = None
+            elif self.tick >= player.fix_done_tick:
+                self._end_emergency()
+                return
+
+    def _emergency_for(self):
+        """What every player sees of the running emergency (spec 023), or None."""
+        if not self.lights_on:
+            return {"kind": "lights", "seconds_left": None}
+        if self.emergency is None:
+            return None
+        if self.emergency["kind"] == "fire":
+            students = [p for p in self.players.values() if p.role == STUDENT and p.alive]
+            evacuated = sum(s.id in self.emergency["evacuated"] for s in students)
+            return {
+                "kind": "fire",
+                "seconds_left": self._seconds_until(self.emergency["ends_tick"]),
+                "evacuated": evacuated,
+                "students": len(students),
+            }
+        return {"kind": "wifi", "seconds_left": None}
 
     def fix(self, player_id):
         """A living player at the light switch starts fixing the lights. Spec 033: students
@@ -1211,19 +1347,25 @@ class Game:
             raise GameError("Ghosts cannot fix the lights")
         if player.vent is not None:
             raise GameError(INSIDE_VENT)
-        if self.lights_on:
+        wifi = self.emergency is not None and self.emergency["kind"] == "wifi"
+        if self.lights_on and not wifi:
             raise GameError("The lights are on")
         if player.fix_done_tick is not None:
             raise GameError("You are already fixing the lights")
         if player.doing is not None:
             raise GameError("You are already doing a task")
-        if self._distance_to_switch(player) > SWITCH_RANGE:
+        if wifi:  # spec 023: the router, same rules as the light switch
+            if self._distance_to_router(player) > SWITCH_RANGE:
+                raise GameError("Too far from the router")
+        elif self._distance_to_switch(player) > SWITCH_RANGE:
             raise GameError("Too far from the light switch")
         player.fix_done_tick = self.tick + FIX_TICKS
 
     def _step_lights(self):
         """Called every tick while playing: a student who left the switch stops fixing
         (back to zero); the first one whose time is up turns the lights on for everyone."""
+        if self.emergency is not None and self.emergency["kind"] == "wifi":
+            return  # spec 023: the router fix is handled by _step_emergency
         for player in self.players.values():
             if player.fix_done_tick is None:
                 continue
@@ -1296,6 +1438,8 @@ class Game:
             self._step_tasks()
         if self.phase == PLAYING:  # the last task may just have ended the game
             self._step_lights()
+        if self.phase == PLAYING:
+            self._step_emergency()  # spec 023
 
     def _walk(self, player):
         """One tick of walking: one fixed step, first along x and then along y.
@@ -1518,12 +1662,14 @@ class Game:
         state["meeting_used"] = me.meeting_used
         if self.phase == MEETING:
             state["meeting"] = self._meeting_for(me)
+            state["chat"] = [dict(m) for m in self.meeting.chat]  # spec 029
             if self.meeting.result is not None:
                 # Spec 019: once counted, who voted for whom ("skip" or a player id); only
                 # votes actually cast. Never sent while the vote is still running.
                 state["ballots"] = dict(self.meeting.votes)
         if self.phase != LOBBY:
             state["lights_on"] = self.lights_on
+            state["emergency"] = self._emergency_for()  # spec 023
             state["vision_radius"] = self._vision_radius_for(me)
             # Spec 033: every role can fix, so every role gets its own "fixing".
             state["fixing"] = None
@@ -1561,6 +1707,7 @@ class Game:
         if self.phase == ENDED:
             state["winner"] = self.winner
             state["roles"] = {p.id: p.role for p in self.players.values()}
+            state["fire_lost"] = self.fire_lost  # spec 023
             # Spec 027: True only when the expel that ended the game was itself seen.
             state["security_witnessed"] = self.security_witnessed
         return state
