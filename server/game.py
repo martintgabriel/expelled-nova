@@ -40,6 +40,7 @@ MESSAGE_TYPES |= {"sabotage", "fix"}  # the lights
 MESSAGE_TYPES |= {"chat"}  # spec 029: the meeting chat
 MESSAGE_TYPES |= {"settings"}  # the host's lobby settings (spec 019)
 MESSAGE_TYPES |= {"end_round"}  # spec 036: anyone in the game may end a running round
+MESSAGE_TYPES |= {"kick", "leave", "vote_host"}  # spec 037
 EXPEL_RANGE = 48  # px between centres, about 1.5 tiles
 EXPEL_COOLDOWN = 30  # seconds between two expels by the same examiner (spec 019: was 20)
 EXPEL_COOLDOWN_TICKS = EXPEL_COOLDOWN * TICK_RATE  # 600
@@ -72,7 +73,7 @@ NO_WIFI = "No Wi-Fi. Try again later."
 CHAT_MAX = 80  # characters per message
 CHAT_KEEP = 30  # messages a meeting keeps (the oldest go first)
 CHAT_COOLDOWN_TICKS = int(1.5 * TICK_RATE)  # one message per player every 1.5 s
-TASKS_PER_STUDENT = 3  # dealt to every player at the start with 4-5 players (see tasks_per_player)
+TASKS_PER_STUDENT = 5  # dealt to every player at the start with 4-5 players (see tasks_per_player, spec 037)
 TASK_RANGE = 48  # px from a player's centre to the centre of a task's tile, about 1.5 tiles
 MEETING_SECONDS = 60  # voting time
 RESULT_SECONDS = 5  # how long the result is shown before play resumes
@@ -340,7 +341,7 @@ MIN_PLAYERS_FOR_TWO_EXAMINERS = 6
 
 
 def tasks_per_player(player_count):
-    """Spec 019: 3 tasks for 4-5 players, 4 for 6-7, 5 for 8-10, so bigger rounds last longer."""
+    """Spec 019/037: 5 tasks for 4-5 players, 6 for 6-7, 7 for 8-10, so bigger rounds last longer."""
     if player_count <= 5:
         return TASKS_PER_STUDENT
     if player_count <= 7:
@@ -404,6 +405,7 @@ class Game:
         # The host's player id (spec 015): the first player to join, until the host hands
         # over (make_host) or leaves (then the player who has been in the game longest).
         self.host_id = None
+        self.host_votes = {}  # spec 037: voter id -> the player they want as host (lobby)
         # The host's lobby settings (spec 019). None = automatic number of examiners.
         self.examiner_setting = None
         self.tick = 0
@@ -427,8 +429,11 @@ class Game:
         if len(self.players) >= MAX_PLAYERS:
             raise GameError(f"Game is full ({MAX_PLAYERS} players)")
         name = validate_nickname(raw_name)
-        if any(p.name.casefold() == name.casefold() for p in self.players.values()):
-            raise GameError("Nickname is already taken")
+        same = next((p for p in self.players.values() if p.name.casefold() == name.casefold()), None)
+        if same is not None:
+            # Spec 037: the same nickname is the same player again (an old phone connection
+            # may still be open); main.py closes the older connection.
+            return same
         # type() instead of isinstance(): True/False are ints in Python and must be rejected.
         if not (type(hat) is int and 0 <= hat < HAT_COUNT):
             raise GameError(f"Hat must be a number from 0 to {HAT_COUNT - 1}")
@@ -534,6 +539,59 @@ class Game:
         if self.phase in (PLAYING, MEETING):
             self._check_win()
 
+    def _host_vote_counts(self):
+        """Spec 037: how many players want each candidate as host. Votes of players who left,
+        for players who left and for the current host do not count."""
+        counts = {}
+        for voter, target in self.host_votes.items():
+            if voter in self.players and target in self.players and target != self.host_id:
+                counts[target] = counts.get(target, 0) + 1
+        return counts
+
+    def vote_host(self, player_id, target_id):
+        """Spec 037: in the lobby, a player votes for who should be host (None takes the vote
+        back). As soon as more than half of the players in the game want the same player, that
+        player is host. Checks everything before changing anything."""
+        if player_id not in self.players:
+            raise GameError("Unknown player")
+        if self.phase != LOBBY:
+            raise GameError("A new host can be elected only in the lobby")
+        if target_id is not None:
+            if not isinstance(target_id, str):
+                raise GameError("Target must be a player id")
+            if target_id not in self.players:
+                raise GameError("Unknown target")
+            if target_id == self.host_id:
+                raise GameError("That player is already the host")
+        if target_id is None:
+            self.host_votes.pop(player_id, None)
+            return
+        self.host_votes[player_id] = target_id
+        if self._host_vote_counts().get(target_id, 0) * 2 > len(self.players):
+            self.host_id = target_id
+            self.host_votes.clear()
+
+    def kick(self, player_id, target_id):
+        """Spec 037: the host removes a player, at any time, exactly as if they had left.
+        Checks everything before changing anything."""
+        if player_id not in self.players:
+            raise GameError("Unknown player")
+        if player_id != self.host_id:
+            raise GameError("Only the host can remove players")
+        if not isinstance(target_id, str):
+            raise GameError("Target must be a player id")
+        if target_id == player_id:
+            raise GameError("You cannot remove yourself")
+        if target_id not in self.players:
+            raise GameError("Unknown target")
+        self.leave(target_id)
+
+    def quit(self, player_id):
+        """Spec 037: a player leaves the game on purpose (the "Leave the game" button)."""
+        if player_id not in self.players:
+            raise GameError("Unknown player")
+        self.leave(player_id)
+
     def make_host(self, player_id, target_id):
         """The host hands the host role to another player, in the lobby only (spec 015).
 
@@ -599,6 +657,7 @@ class Game:
         self.next_sabotage_tick = self.tick + SABOTAGE_COOLDOWN_TICKS  # first cooldown
         self._place_on_spawns()
         self.phase = PLAYING
+        self.host_votes.clear()  # spec 037: an election is for one lobby only
         self.security_witnessed = False
         self.guard = self._spawn_guard()
 
@@ -1765,6 +1824,9 @@ class Game:
         state["area"] = self.area_at(me.x, me.y)
         state["role"] = me.role
         state["alive"] = me.alive
+        if self.phase == LOBBY:
+            state["host_votes"] = self._host_vote_counts()  # spec 037
+            state["my_host_vote"] = self.host_votes.get(me.id)
         state["meeting_used"] = me.meeting_used
         if self.phase == MEETING:
             state["meeting"] = self._meeting_for(me)

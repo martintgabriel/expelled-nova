@@ -154,12 +154,10 @@ async def websocket_endpoint(ws: WebSocket):
                         message.get("name"), message.get("hat", 0), message.get("color")
                     )
                     player_id = player.id
-                    # Spec 036: coming back into a running round replaces an old connection
-                    # of the same player (e.g. a phone that switched networks).
+                    # Spec 036/037: enrolling again replaces an old connection of the same
+                    # player (e.g. a phone that switched networks). It is closed only after
+                    # this one is registered, so its ending never removes the player.
                     old = connections.get(player_id)
-                    if old is not None and old is not ws:
-                        with contextlib.suppress(Exception):
-                            await old.close()
                     await ws.send_json(
                         {
                             "type": "welcome",
@@ -184,6 +182,25 @@ async def websocket_endpoint(ws: WebSocket):
                         }
                     )
                     connections[player_id] = ws
+                    if old is not None and old is not ws:
+                        with contextlib.suppress(Exception):
+                            await old.send_json({"type": "kicked", "reason": "You enrolled again somewhere else"})
+                            await old.close()
+                elif message["type"] == "kick":
+                    target = message.get("target")
+                    game.kick(player_id, target)  # spec 037: only the host
+                    gone = connections.pop(target, None)
+                    if gone is not None:
+                        with contextlib.suppress(Exception):
+                            await gone.send_json({"type": "kicked"})
+                            await gone.close()
+                elif message["type"] == "vote_host":
+                    game.vote_host(player_id, message.get("target"))  # spec 037
+                elif message["type"] == "leave":
+                    game.quit(player_id)  # spec 037: "Leave the game"
+                    connections.pop(player_id, None)
+                    player_id = None
+                    await ws.send_json({"type": "left"})
                 elif message["type"] == "start":
                     game.start(player_id)
                 elif message["type"] == "chat":

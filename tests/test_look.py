@@ -116,8 +116,8 @@ def test_everyone_receives_the_same_colours():
 
 @pytest.mark.parametrize(
     "name",
-    ["", "x" * 17, "Ana!", "player 0", None],
-    ids=["empty", "too long", "invalid character", "duplicate", "not text"],
+    ["", "x" * 17, "Ana!", None],  # spec 037: a duplicate nickname is no longer rejected
+    ids=["empty", "too long", "invalid character", "not text"],
 )
 def test_rejected_join_uses_no_colour(name):
     game, players = lobby(2)

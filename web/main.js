@@ -87,6 +87,11 @@ const ui = {
   chatForm: document.getElementById("chat-form"),
   chatStatus: document.getElementById("chat-status"), // spec 036
   endRoundButton: document.getElementById("end-round-button"), // spec 036
+  leaveButton: document.getElementById("leave-button"), // spec 037
+  todoToggle: document.getElementById("todo-toggle"), // spec 037
+  todoCount: document.getElementById("todo-count"), // spec 037
+  rosterToggle: document.getElementById("roster-toggle"), // spec 037
+  chatGhostNote: document.getElementById("chat-ghost-note"), // spec 037
   chatInput: document.getElementById("chat-input"),
   emergencyBanner: document.getElementById("emergency-banner"),
   switchArea: document.getElementById("switch-area"),
@@ -502,6 +507,7 @@ function connect() {
   socket = new WebSocket(`${protocol}://${location.host}/ws`);
   socket.addEventListener("message", (event) => handleMessage(JSON.parse(event.data)));
   socket.addEventListener("close", () => {
+    if (leavingOnPurpose) return; // spec 037: the page reloads to the ID card
     if (welcome) {
       ui.disconnected.hidden = false;
     } else {
@@ -527,6 +533,17 @@ function handleMessage(message) {
     ui.joinScreen.hidden = true;
     ui.hud.hidden = false;
     startGame();
+  } else if (message.type === "left" || message.type === "kicked") {
+    // Spec 037: left on purpose or removed by the host: back to the ID card.
+    leavingOnPurpose = true;
+    if (message.type === "kicked") {
+      try {
+        sessionStorage.setItem(KICKED_KEY, message.reason || "The host removed you from the game.");
+      } catch {
+        // private mode: the ID card just shows without the note
+      }
+    }
+    location.reload();
   } else if (message.type === "error") {
     if (welcome) {
       showToast(message.reason);
@@ -794,7 +811,8 @@ function renderLobby(state) {
   lastHost = state.host;
 
   // Redraw the list only when players or host change (states arrive 20 times a second).
-  const key = JSON.stringify([state.host, state.colors, state.players.map((p) => [p.id, p.name])]);
+  const key = JSON.stringify([state.host, state.colors, state.players.map((p) => [p.id, p.name]), state.host_votes, state.my_host_vote]);
+  const votesNeeded = Math.floor(state.players.length / 2) + 1; // spec 037: more than half
   if (key !== lobbyKey) {
     lobbyKey = key;
     ui.lobbyPlayers.replaceChildren(
@@ -810,7 +828,35 @@ function renderLobby(state) {
         if (p.id === state.host) name.append(hostSymbol(), tag("host", "host"));
         if (p.id === welcome.id) name.append(tag("you", "you"));
         item.append(name);
+        // Spec 037: everyone except the host can vote for a new host; more than half elects.
+        if (!isHost && p.id !== state.host) {
+          const votes = (state.host_votes || {})[p.id] || 0;
+          const mine = state.my_host_vote === p.id;
+          const vote = document.createElement("button");
+          vote.type = "button";
+          vote.className = "make-host vote-host";
+          vote.setAttribute("aria-pressed", String(mine));
+          vote.textContent = `${mine ? "Voted" : "Vote host"} ${votes}/${votesNeeded}`;
+          vote.setAttribute("aria-label", `Vote for ${p.name} as host (${votes} of ${votesNeeded} votes)`);
+          vote.title = "If more than half of the class votes for the same player, they become host.";
+          vote.addEventListener("click", () => {
+            Sound.play("click");
+            send({ type: "vote_host", target: mine ? null : p.id });
+          });
+          item.append(vote);
+        }
         if (isHost && p.id !== welcome.id) {
+          // Spec 037: the host can remove a player (two taps); the server checks again.
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "make-host remove-player";
+          remove.textContent = "Remove";
+          remove.setAttribute("aria-label", `Remove ${p.name} from the game`);
+          remove.addEventListener("click", () => {
+            Sound.play("click");
+            confirmTwice(remove, "Remove", () => send({ type: "kick", target: p.id }), "Tap again");
+          });
+          item.append(remove);
           const handOver = document.createElement("button");
           handOver.type = "button";
           handOver.className = "make-host";
@@ -885,7 +931,7 @@ function showRoleScreen(roleName, role) {
   ui.roleTitle.textContent = role.title;
   if (roleName === "examiner") {
     ui.roleKicker.textContent = "Examination Board · strictly confidential";
-    ui.roleMotto.textContent = "Fail them all";
+    ui.roleMotto.textContent = "Expel them all";
     const fellows = role.fellows ? `Fellow examiner: ${role.fellows}.` : "You are the only examiner.";
     ui.roleDetail.textContent = `Blend in, hand out failed exams and do not get caught. ${fellows}`;
     ui.roleStamp.textContent = "Undercover";
@@ -1600,6 +1646,7 @@ function updateTasks(state) {
     lastTaskSteps.set(task.id, task.step);
   }
   ui.taskList.hidden = !(state.phase === "playing" && tasks.length > 0);
+  setText(ui.todoCount, `${tasks.filter((task) => task.done).length}/${tasks.length}`); // spec 037
   const key = JSON.stringify(tasks.map((task) => [task.id, task.done, task.step, task.title]));
   if (key !== taskKey) {
     taskKey = key;
@@ -2533,6 +2580,24 @@ function updateEmergency(state) {
   CampusMap.setEmergencyMark(area);
 }
 
+// Spec 037: where everyone must go during an emergency, in map pixels, or null.
+function emergencyTarget(state) {
+  const emergency = state && state.phase === "playing" ? state.emergency : null;
+  if (!emergency) return null;
+  const t = welcome.map.tile_size;
+  if (emergency.kind === "lights" && welcome.map.light_switch) {
+    const [col, row] = welcome.map.light_switch;
+    return { x: (col + 0.5) * t, y: (row + 0.5) * t };
+  }
+  const place = sabotagePlace(emergency.kind);
+  if (!place) return null;
+  if (emergency.kind === "fire" && place.assembly) {
+    const a = place.assembly;
+    return { x: (a.x + a.w / 2) * t, y: (a.y + a.h / 2) * t };
+  }
+  return { x: (place.x + 0.5) * t, y: (place.y + 0.5) * t };
+}
+
 // Key F: fix the lights at the switch, otherwise do a task (no task place is that close).
 function tryUse() {
   if (latestState && canFix(latestState)) openFixPanel(fixTarget(latestState).kind);
@@ -2818,14 +2883,14 @@ function showJoinError(reason) {
 }
 
 // Spec 036: two taps, so nobody ends a round by accident.
-function confirmTwice(button, label, action) {
+function confirmTwice(button, label, action, armedLabel = "Tap again: end it for everyone") {
   if (button.dataset.armed) {
     delete button.dataset.armed;
     button.textContent = label;
     action();
   } else {
     button.dataset.armed = "1";
-    button.textContent = "Tap again: end it for everyone";
+    button.textContent = armedLabel;
     setTimeout(() => {
       delete button.dataset.armed;
       button.textContent = label;
@@ -2839,6 +2904,46 @@ ui.endRoundButton.addEventListener("click", () => {
     setHelpOpen(false);
   });
 });
+
+// --- Spec 037: leaving the game, folding the to-do list and the class roster -------------
+let leavingOnPurpose = false; // set once "left" or "kicked" arrives: no "Connection lost"
+const KICKED_KEY = "expelled-kicked";
+
+ui.leaveButton.addEventListener("click", () => {
+  Sound.play("click");
+  confirmTwice(ui.leaveButton, "Leave the game", () => send({ type: "leave" }), "Tap again: leave the game");
+});
+
+// After "kicked" the page reloads; the ID card then says why.
+try {
+  const note = sessionStorage.getItem(KICKED_KEY);
+  if (note) {
+    sessionStorage.removeItem(KICKED_KEY);
+    showJoinError(note);
+  }
+} catch {
+  // private mode: nothing remembered
+}
+
+// Tapping the title folds the panel; on a touch screen both start folded, so the
+// character stays visible on a phone. The desktop starts unfolded as before.
+const TOUCH_SCREEN = window.matchMedia("(pointer: coarse)").matches;
+function setupFold(panel, toggle) {
+  let folded = TOUCH_SCREEN;
+  const apply = () => {
+    panel.classList.toggle("folded", folded);
+    toggle.setAttribute("aria-expanded", String(!folded));
+  };
+  apply();
+  toggle.addEventListener("click", () => {
+    Sound.play("click");
+    folded = !folded;
+    apply();
+    toggle.blur(); // keys go back to walking
+  });
+}
+setupFold(ui.taskList, ui.todoToggle);
+setupFold(ui.lobby, ui.rosterToggle);
 
 function showToast(text) {
   ui.toast.textContent = text;
@@ -2955,6 +3060,9 @@ function renderMeetingChat(state) {
   }
   const canChat = state.alive && state.meeting && state.meeting.result === null;
   ui.chatForm.hidden = !canChat;
+  // Spec 037: a ghost is told why there is no chat field (it looked broken).
+  ui.chatGhostNote.hidden = state.alive !== false;
+  setText(ui.chatGhostNote, "Ghosts cannot chat. You can still read along.");
   const key = JSON.stringify(state.chat);
   if (key === chatKey) return;
   chatKey = key;
@@ -3004,6 +3112,7 @@ class CampusScene extends Phaser.Scene {
     this.exams = new Map(); // failed exam id -> sheet from Render.makeExam()
     this.taskMarkers = new Map(); // own open task id -> glow from Render.makeTaskGlow()
     this.edgeArrows = new Map(); // own open task id -> arrow from Render.makeEdgeArrow()
+    this.emergencyArrow = Render.makeEmergencyArrow(this); // spec 037
     this.lastSent = { dx: 0, dy: 0 };
     // The own character, predicted in whole server ticks (see updateOwn).
     this.predicted = null; // position after the newest predicted tick
@@ -3162,6 +3271,7 @@ class CampusScene extends Phaser.Scene {
     // moves smoothly from the time the task was first seen; the seconds are the server's.
     this.syncTaskMarkers(latestState.tasks || [], own, time);
     this.syncEdgeArrows(latestState.tasks || [], lastPhase === "meeting", actionsBottomMargin());
+    Render.updateEmergencyArrow(this.emergencyArrow, emergencyTarget(latestState), this.cameras.main, actionsBottomMargin(), time); // spec 037
     const doing = lastPhase === "playing" ? latestState.doing : null;
     const fixing = lastPhase === "playing" ? latestState.fixing : null;
     if (own && doing) {

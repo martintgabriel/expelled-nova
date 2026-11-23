@@ -20,6 +20,14 @@ from server.game import TICK_RATE, Game, GameError, load_map, parse_message
 from server.main import app
 
 TILE = 32
+
+
+@pytest.fixture(autouse=True)
+def three_tasks_per_student(monkeypatch):
+    """Spec 037 raised the task count (5/6/7, tested in test_spec037.py). The numbers in this
+    file check the task rules themselves with the original 3/4/5 tasks of spec 019."""
+    monkeypatch.setattr(rules, "TASKS_PER_STUDENT", 3)
+
 TASK_RANGE = 48  # px from the player's centre to the centre of the task's tile
 TASKS_PER_STUDENT = 3
 PLAYER_KEYS = {"id", "name", "x", "y"}

@@ -1381,3 +1381,49 @@ body.fire-alarm::after { content: ""; position: fixed; inset: 0; z-index: 24; po
 .help-card .end-round-bottom[hidden] {
   display: none;
 }
+
+/* --- Spec 037 ----------------------------------------------------------------------------
+   The to-do list and the class roster fold when their title is tapped. */
+.fold-toggle {
+  all: unset;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.fold-toggle:focus-visible { outline: 2px solid var(--nova); outline-offset: 2px; }
+.fold-toggle::after { content: "\25BE"; font-style: normal; font-size: 0.8em; transition: transform 0.15s; }
+.fold-toggle[aria-expanded="false"]::after { transform: rotate(-90deg); }
+.fold-count { font-style: normal; font-size: 12px; opacity: 0.75; }
+#task-list .fold-toggle { pointer-events: auto; } /* the list itself lets touches through */
+#task-list.folded #task-items { display: none; }
+#task-list.folded h2 { margin-bottom: 0; }
+#lobby.folded #lobby-players,
+#lobby.folded .lobby-settings { display: none; }
+.remove-player { margin-left: 4px; }
+.chat-ghost-note { margin: 4px 0 0; font-size: 12px; font-style: italic; color: var(--ink); opacity: 0.75; text-align: left; }
+
+/* Touch screens only (phones, tablets); the desktop layout does not change. */
+@media (pointer: coarse) {
+  /* Several taps on the joystick must not select the page or open a callout. */
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input,
+  textarea {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+  /* "You have been expelled" at the top, never over the action buttons. */
+  #ghost-banner {
+    top: calc(var(--hud-bottom, 64px) + 8px);
+    bottom: auto;
+  }
+}
+.vote-host[aria-pressed="true"] { background: var(--nova); color: #fff; }

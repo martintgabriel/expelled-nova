@@ -57,7 +57,7 @@ def test_an_examiner_cannot_expel_before_30_seconds():
 
 
 @pytest.mark.parametrize(
-    "count, tasks", [(4, 3), (5, 3), (6, 4), (7, 4), (8, 5), (9, 5), (10, 5)]
+    "count, tasks", [(4, 5), (5, 5), (6, 6), (7, 6), (8, 7), (9, 7), (10, 7)]  # spec 037
 )
 def test_tasks_per_player_grows_with_the_player_count(count, tasks):
     assert rules.tasks_per_player(count) == tasks
