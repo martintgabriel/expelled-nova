@@ -23,17 +23,27 @@
         <svg class="id-photo" viewBox="0 0 40 46" aria-hidden="true">
           <rect width="40" height="46" fill="#dfe6f2"></rect>
           <circle cx="20" cy="27" r="14" fill="#e5484d" stroke="#16181d" stroke-width="2"></circle>
-          <path d="M6 19 L20 12 L34 19 L20 23 Z" fill="#2d313b" stroke="#596072" stroke-width="1"></path>
-          <path d="M20 19 L29 20 L29.5 26" fill="none" stroke="#f2b33d" stroke-width="1.4"></path>
           <circle cx="15.5" cy="26" r="2.3" fill="#fff"></circle>
           <circle cx="24.5" cy="26" r="2.3" fill="#fff"></circle>
           <circle cx="15.5" cy="26.4" r="0.9" fill="#16181d"></circle>
           <circle cx="24.5" cy="26.4" r="0.9" fill="#16181d"></circle>
+          <g id="id-photo-hat"></g>
         </svg>
         <div class="id-fields">
           <label for="nickname">Name</label>
           <input id="nickname" name="nickname" type="text" maxlength="16" autocomplete="off"
                  placeholder="1–16 letters, digits, spaces" autofocus>
+          <!-- Spec 022: the look, chosen before enrolling. main.js fills the swatches. -->
+          <div class="look-row">
+            <span class="look-label">Hat</span>
+            <button id="hat-prev" type="button" class="look-arrow" aria-label="Previous hat">&lsaquo;</button>
+            <span id="hat-name" class="hat-name" aria-live="polite"></span>
+            <button id="hat-next" type="button" class="look-arrow" aria-label="Next hat">&rsaquo;</button>
+          </div>
+          <div class="look-row">
+            <span class="look-label">Colour</span>
+            <div id="color-swatches" class="swatches" role="group" aria-label="Colour"></div>
+          </div>
           <dl class="id-facts">
             <div><dt>Programme</dt><dd>BSc Surviving the Semester</dd></div>
             <div><dt>Valid until</dt><dd>expelled</dd></div>
@@ -44,7 +54,7 @@
       <button id="join-button" type="submit">Enrol</button>
       <p class="subtitle">
         4 to 10 players, one campus, a few undercover examiners.
-        <span class="hint-keyboard">Walk with WASD or the arrow keys.</span>
+        <span class="hint-keyboard">Walk with WASD or the arrow keys, open the campus map with C.</span>
         <span class="hint-touch" hidden>Walk with the joystick.</span>
       </p>
       <span class="id-barcode" aria-hidden="true"></span>
@@ -66,6 +76,8 @@
         </span>
         move
       </span>
+      <!-- Spec 026: the campus map key, always there on a keyboard. -->
+      <span id="control-map" class="control" title="C to open the campus map"><kbd class="key">C</kbd> map</span>
       <span id="control-expel" class="control" hidden><kbd class="key">E</kbd> expel</span>
       <span id="control-report" class="control" hidden><kbd class="key">R</kbd> report</span>
       <span id="control-meeting" class="control" hidden><kbd class="key">M</kbd> meeting</span>
@@ -94,6 +106,15 @@
       <p class="roster-count"><span id="lobby-count" class="lobby-count"></span> enrolled</p>
     </div>
     <ul id="lobby-players" class="lobby-chips"></ul>
+    <!-- Spec 019: the host picks the number of examiners; everyone else only sees it. -->
+    <div id="lobby-settings" class="lobby-settings" role="group" aria-label="Number of Undercover Examiners">
+      <span id="examiner-setting-label" class="lobby-settings-label">Undercover Examiners</span>
+      <div class="segmented">
+        <button type="button" data-expellers="auto">Auto</button>
+        <button type="button" data-expellers="1">1</button>
+        <button type="button" data-expellers="2">2</button>
+      </div>
+    </div>
     <button id="start-button" type="button" class="lobby-main" hidden>Start game</button>
     <button id="invite-button" type="button" class="lobby-secondary">Invite players</button>
     <p id="start-hint" class="hint"></p>
@@ -345,6 +366,8 @@
       </g>
     </svg>
   </button>
+  <!-- Volume (spec 020): beside the mute button, on every screen. -->
+  <input id="volume-slider" class="volume-slider" type="range" min="0" max="100" step="5" value="100" aria-label="Volume">
 
   <button id="help-button" type="button" class="help-button" aria-label="How to play" title="How to play (H)">?</button>
 
@@ -445,6 +468,7 @@
   </div>
 
   <script src="vendor/phaser.min.js"></script>
+  <script src="hats.js"></script>
   <script src="render.js"></script>
   <script src="controls.js"></script>
   <script src="sound.js"></script>

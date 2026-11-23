@@ -2,7 +2,8 @@
 //
 // Drawn once from the map the server sends in "welcome", and from nothing else: it reads
 // only tile_size, grid, decor (sea and sand), areas, labels, meeting_point and
-// light_switch, never the map's "tasks" (every player's stations). The base map is grey.
+// light_switch, never the map's "tasks" (every player's stations). The base map is in
+// colour since spec 026 (it was grey in spec 018).
 // Only two things change afterwards, both the player's own and both in colour: the "you are
 // here" marker (setYou) and the numbered markers of the own open tasks (setTasks), which
 // main.js takes from the own snapshot. Apart from those the map is the same for every
@@ -11,14 +12,14 @@
 
 const CampusMap = (() => {
   const SVG_NS = "http://www.w3.org/2000/svg";
-  // The base map is grey, so the own marker and the own tasks are what stands out.
-  const WALL = "#3b3e45"; // blocked tiles: walls and buildings
-  const FLOOR = "#e6e5e1"; // walkable tiles: rooms and corridors
-  const SEA = "#9a9ea4";
-  const SAND = "#d3d1cb";
-  const AREA_FILL = "#8c8f95"; // every area the same grey: the names tell them apart
-  const AREA_EDGE = "#6d7077";
-  const AREA_OPACITY = 0.25;
+  // Spec 026: in colour, like the game world (was grey in spec 018). Every area is drawn in
+  // its own colour from campus.json; the own marker (white ring) and the own task markers
+  // (green) still stand out on top.
+  const WALL = "#34383f"; // blocked tiles: walls and buildings
+  const FLOOR = "#efe8d8"; // walkable tiles: rooms and corridors, warm like paving
+  const SEA = "#4f9fd1";
+  const SAND = "#f0d79a";
+  const AREA_OPACITY = 0.4;
   const TASK_FONT = 0.85;
   // One size for every name on the map (areas, labels, the two places), in tiles.
   const NAME_FONT = 0.9;
@@ -91,9 +92,9 @@ const CampusMap = (() => {
           y: area.y,
           width: area.w,
           height: area.h,
-          fill: AREA_FILL,
+          fill: area.color,
           "fill-opacity": AREA_OPACITY,
-          stroke: AREA_EDGE,
+          stroke: area.color,
           "stroke-width": 0.15,
         }),
       );
@@ -193,6 +194,7 @@ const CampusMap = (() => {
     you.append(node("circle", { r: 0.85, class: "map-you-ring" }));
     you.append(node("circle", { r: 0.5, class: "map-you-dot" }));
     svg.append(you);
+    svgRoot = svg;
     return svg;
   }
 
@@ -221,5 +223,11 @@ const CampusMap = (() => {
     });
   }
 
-  return { build, setYou, setTasks };
+  // Spec 026: dimmed while the lights are off for the own (living, student) character.
+  let svgRoot = null;
+  function setDark(on) {
+    if (svgRoot) svgRoot.classList.toggle("dark", Boolean(on));
+  }
+
+  return { build, setYou, setTasks, setDark };
 })();

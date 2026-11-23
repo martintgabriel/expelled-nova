@@ -136,7 +136,9 @@ async def websocket_endpoint(ws: WebSocket):
                     raise GameError("Too many messages (max 30 per second)")
                 message = parse_message(event.get("text"), joined=player_id is not None)
                 if message["type"] == "join":
-                    player = game.join(message.get("name"))
+                    player = game.join(
+                        message.get("name"), message.get("hat", 0), message.get("color")
+                    )
                     player_id = player.id
                     await ws.send_json(
                         {
@@ -162,6 +164,8 @@ async def websocket_endpoint(ws: WebSocket):
                     connections[player_id] = ws
                 elif message["type"] == "start":
                     game.start(player_id)
+                elif message["type"] == "settings":
+                    game.set_settings(player_id, message)
                 elif message["type"] == "make_host":
                     game.make_host(player_id, message.get("target"))
                 elif message["type"] == "expel":

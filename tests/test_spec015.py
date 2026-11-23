@@ -364,7 +364,8 @@ def test_every_coordinate_moved_east_by_the_same_offset():
     assert campus["spawns"] == [[col + OFFSET, row] for col, row in OLD_SPAWNS]
     assert campus["meeting_point"] == [24 + OFFSET, 21]
     assert campus["light_switch"] == [39 + OFFSET, 6]
-    assert stations(campus) == [(col + OFFSET, row) for col, row in OLD_STATIONS]
+    # Spec 021 added two stations after the old seven; those keep their moved places.
+    assert stations(campus)[: len(OLD_STATIONS)] == [(col + OFFSET, row) for col, row in OLD_STATIONS]
     # Spec 018: the two courtyards are named "Upper Courtyard" and "Lower Courtyard".
     areas = {a["name"]: (a["x"], a["y"], a["w"], a["h"]) for a in campus["areas"] if not a["name"].endswith("Courtyard")}
     assert areas == {name: (x + OFFSET, y, w, h) for name, (x, y, w, h) in OLD_AREAS.items()}
@@ -1154,7 +1155,7 @@ def test_every_place_of_the_game_is_reachable_from_the_first_spawn():
     places.update({f"vent {vent['id']}": (vent["x"], vent["y"]) for vent in campus["vents"]})
     places["light switch"] = tuple(campus["light_switch"])
     places["meeting point"] = tuple(campus["meeting_point"])
-    assert len(places) == 10 + 7 + 4 + 2
+    assert len(places) == 10 + 9 + 4 + 2  # spec 021: 9 task places (was 7)
     for name, tile in places.items():
         assert tile in reachable, name
     assert len(set(places.values())) == len(places)  # no two share a tile

@@ -27,8 +27,8 @@ NEW_EFFECTS = [
     "ventHatch",
     "lightsOut",
     "lightsOn",
-    "winJingle",
-    "loseJingle",
+    "studentsWin",  # spec 020: replaces winJingle
+    "examinersWin",  # spec 020: replaces loseJingle
 ]
 # Sounds the spec decided against: each would play on one role's phone only.
 REMOVED_EFFECTS = ["ventIn", "ventOut", "ventMove", "fixTick"]
@@ -211,8 +211,8 @@ def test_the_jingles_sit_in_the_ended_phase_change_and_compare_against_winner():
     assert match, "no phase change into ended"
     after = match.group(2)
     assert "winner" in after
-    assert 'Sound.play("winJingle")' in after
-    assert 'Sound.play("loseJingle")' in after
+    assert 'Sound.play("studentsWin")' in after  # spec 020: by winning side
+    assert 'Sound.play("examinersWin")' in after
 
 
 def test_the_countdown_only_ticks_while_the_vote_is_open():
