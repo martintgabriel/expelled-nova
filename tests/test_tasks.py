@@ -75,8 +75,11 @@ SPEC_TASKS = {
     "socket": [("Auditorium", 34, 40, "cable")],
     "gate": [("Main Entrance", 28, 6, "card")],
     "nata": [("Lower Courtyard", 23, 23, "nata")],  # spec 031: was seagull  # spec 018: the courtyards are named apart
-    "tray": [("Food Court", 41, 12, "tray")],  # spec 021
-    "surf": [("Beach", 3, 19, "surf")],  # spec 021
+    "tray": [("Cafeteria", 41, 12, "tray")],  # spec 021
+    "surf": [("Beach", 3, 10, "surf")],  # spec 021 (spec 035: moved up the beach)
+    "beer": [("Beach", 3, 33, "beer")],  # spec 035
+    "frisbee": [("Little Courtyard", 10, 34, "frisbee")],  # spec 035
+    "seat": [("Hall B", 16, 10, "seat")],  # spec 035
 }
 
 
@@ -222,7 +225,7 @@ def test_the_campus_has_the_six_task_places_of_spec_012():
     # "seconds" wait (spec 012, part 1), and "certificate" has two stations instead of
     # one flat place (spec 012, part 4), so there is no single flat table any more.
     tasks = load_map()["tasks"]
-    assert len({task["id"] for task in tasks}) == len(tasks) == 8  # unique ids (spec 021: 6 -> 8)
+    assert len({task["id"] for task in tasks}) == len(tasks) == 11  # unique ids (spec 021: 6 -> 8, spec 035: -> 11)
     found = {
         task["id"]: [(s["area"], s["x"], s["y"], s["minigame"]) for s in stations_of(task)]
         for task in tasks
@@ -247,7 +250,10 @@ def test_no_campus_task_is_a_plain_waiting_task_and_every_station_is_a_floor_til
             assert not game.blocked(x, y), task["id"]
             # Spec 021: the beach is sand, not an area (spec 015), so the surf station names
             # it by its own label "Beach"; every other station sits inside its area.
-            expected = None if station["area"] == "Beach" else station["area"]
+            # Spec 035: a named place that is not an area (Hall B, the Little Courtyard)
+            # works like the beach: its stations lie outside every area.
+            areas = {a["name"] for a in campus["areas"]}
+            expected = station["area"] if station["area"] in areas else None
             assert game.area_at(x, y) == expected, task["id"]
             assert station["title"], task["id"]
             assert [station["x"], station["y"]] != campus["meeting_point"], task["id"]

@@ -313,7 +313,7 @@ OLD_SPAWNS = [[18, 4], [20, 4], [22, 4], [24, 4], [26, 4], [19, 6], [21, 6], [23
 OLD_AREAS = {
     "Main Entrance": (16, 1, 14, 6),
     "Student Services": (31, 1, 9, 6),
-    "Food Court": (28, 9, 11, 7),
+    "Cafeteria": (28, 9, 11, 7),
     "Library": (28, 18, 10, 8),
     "Auditorium": (23, 38, 13, 4),
 }
@@ -1155,7 +1155,7 @@ def test_every_place_of_the_game_is_reachable_from_the_first_spawn():
     places.update({f"vent {vent['id']}": (vent["x"], vent["y"]) for vent in campus["vents"]})
     places["light switch"] = tuple(campus["light_switch"])
     places["meeting point"] = tuple(campus["meeting_point"])
-    assert len(places) == 10 + 9 + 4 + 2  # spec 021: 9 task places (was 7)
+    assert len(places) == 10 + 12 + 4 + 2  # spec 021: 9 task places (was 7), spec 035: 12
     for name, tile in places.items():
         assert tile in reachable, name
     assert len(set(places.values())) == len(places)  # no two share a tile

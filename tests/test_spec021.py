@@ -120,9 +120,9 @@ def test_both_tasks_are_on_the_campus_on_walkable_tiles():
     campus = load_map()
     tasks = {t["id"]: t for t in campus["tasks"]}
     assert (tasks["tray"]["area"], tasks["tray"]["x"], tasks["tray"]["y"], tasks["tray"]["minigame"]) == (
-        "Food Court", 41, 12, "tray")
+        "Cafeteria", 41, 12, "tray")
     assert (tasks["surf"]["area"], tasks["surf"]["x"], tasks["surf"]["y"], tasks["surf"]["minigame"]) == (
-        "Beach", 3, 19, "surf")
+        "Beach", 3, 10, "surf")  # spec 035: moved to the top of the beach
     for task in (tasks["tray"], tasks["surf"]):
         assert campus["grid"][task["y"]][task["x"]] == "."
         assert task["joke"]

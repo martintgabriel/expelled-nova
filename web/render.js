@@ -783,6 +783,33 @@ const Render = (() => {
     return scene.add.container(0, 0, parts).setDepth(0.3);
   }
 
+  // --- The NOVA sign (spec 035) -----------------------------------------------------------
+  // Big standing letters in the Main Entrance, as on the real campus, right of the welcome
+  // desk. Found through the "Welcome desk" label, so the map needs no new data.
+  function makeNovaSign(scene, map) {
+    const t = map.tile_size;
+    const desk = (map.labels || []).find((l) => l.text === "Welcome desk");
+    if (!desk || !desk.room) return null;
+    const x = (desk.room.x + desk.room.w + 2.5) * t;
+    const y = (desk.room.y + 0.9) * t;
+    const shadow = scene.add
+      .text(x + 3, y + 4, "NOVA", { fontFamily: FONT, fontSize: "54px", fontStyle: "900", color: "#0b1d3a", resolution: TEXT_RESOLUTION })
+      .setOrigin(0.5)
+      .setAlpha(0.55);
+    const letters = scene.add
+      .text(x, y, "NOVA", {
+        fontFamily: FONT,
+        fontSize: "54px",
+        fontStyle: "900",
+        color: "#ffffff",
+        stroke: "#0b3d91",
+        strokeThickness: 6,
+        resolution: TEXT_RESOLUTION,
+      })
+      .setOrigin(0.5);
+    return scene.add.container(0, 0, [shadow, letters]).setDepth(0.35);
+  }
+
   // --- Sabotage places (spec 023) ---------------------------------------------------------
   // The fire alarm's assembly point on the EDP Plaza (a painted area with its name) and the
   // Wi-Fi router in the Library (a small box with two antennas). Pure decoration: always
@@ -1035,6 +1062,21 @@ const Render = (() => {
   // The switch on the tile the server's map names ("light_switch"), and a flashing mark
   // above it that only shows while the lights are off. The mark is drawn above the
   // darkness, so students find the switch.
+  // Spec 035: over the router while the Wi-Fi is down, flashing like the light switch's
+  // bolt (updateSwitch() moves both). Returns null on a map without a router.
+  function makeRouterMark(scene, map) {
+    const router = (map.sabotages || []).find((p) => p.kind === "wifi");
+    if (!router) return null;
+    const t = map.tile_size;
+    const mark = scene.add.graphics();
+    mark.fillStyle(OUTLINE, 0.9).fillCircle(0, 0, 12);
+    mark.lineStyle(2, 0x3a86ff).strokeCircle(0, 0, 12);
+    mark.lineStyle(2, 0x9cc8ff);
+    for (const r of [3, 6, 9]) mark.beginPath().arc(0, 5, r, Math.PI * 1.2, Math.PI * 1.8).strokePath();
+    mark.fillStyle(0x9cc8ff).fillCircle(0, 5, 1.6);
+    return scene.add.container((router.x + 0.5) * t, (router.y + 0.5) * t - 26, [mark]).setDepth(11).setVisible(false);
+  }
+
   function makeSwitch(scene, map) {
     const t = map.tile_size;
     const x = (map.light_switch[0] + 0.5) * t;
@@ -1634,6 +1676,8 @@ const Render = (() => {
 
   return {
     BACKDROP,
+    makeNovaSign,
+    makeRouterMark,
     makeSabotagePlaces,
     makeGym,
     pixelRatio,

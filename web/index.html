@@ -240,7 +240,7 @@
         <span class="action-cooldown"></span>
         <kbd class="action-key hint-keyboard" aria-hidden="true">F</kbd>
       </span>
-      <span class="action-label">Fix lights</span>
+      <span id="fix-label" class="action-label">Fix lights</span>
     </button>
 
     <button id="task-button" type="button" class="action action-yellow" hidden>
@@ -326,6 +326,17 @@
       <ul id="end-roles"></ul>
       <button id="restart-button" type="button" hidden>New round</button>
       <p id="restart-hint" class="hint"></p>
+    </div>
+  </div>
+
+  <!-- Spec 035: the action before a fix: a lever for the lights, a plug for the router. -->
+  <div id="fix-panel" class="overlay" hidden>
+    <div class="card minigame-card fix-card">
+      <p class="doc-kicker">Emergency</p>
+      <h2 id="fix-title"></h2>
+      <p id="fix-hint" class="minigame-hint"></p>
+      <div id="fix-content"></div>
+      <button id="fix-close" type="button">Close</button>
     </div>
   </div>
 

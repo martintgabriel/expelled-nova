@@ -905,10 +905,9 @@ def test_every_glass_pane_is_a_thin_wall_between_two_walkable_sides():
     "what, tiles",
     [
         # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
-        ("lecture hall B to the north Courtyard", [(9, 13), (10, 13)]),
+        # spec 035: closed on purpose
         ("Hall B to the north Courtyard, west", [(18, 12), (19, 12), (18, 13), (19, 13)]),
         ("Hall B to the north Courtyard, east", [(23, 12), (24, 12), (23, 13), (24, 13)]),
-        ("the south Courtyard to lecture hall D", [(9, 25), (10, 25)]),
         ("the south Courtyard to Hall D", [(23, 25), (24, 25), (23, 26), (24, 26)]),
         ("Hall D to Hall E", [(21, r) for r in range(30, 34)] + [(22, r) for r in range(30, 34)]),
         ("the spine to the Food Court", [(30, 11), (31, 11), (30, 12), (31, 12), (30, 13), (31, 13)]),

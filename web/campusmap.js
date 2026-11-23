@@ -19,6 +19,7 @@ const CampusMap = (() => {
   const FLOOR = "#efe8d8"; // walkable tiles: rooms and corridors, warm like paving
   const SEA = "#4f9fd1";
   const SAND = "#f0d79a";
+  const GRASS = "#a8d08d"; // spec 035: the courtyards' green, as in the game
   const AREA_OPACITY = 0.4;
   const TASK_FONT = 0.85;
   // One size for every name on the map (areas, labels, the two places), in tiles.
@@ -75,7 +76,7 @@ const CampusMap = (() => {
 
   // Only the sea and the sand: the sea is "#" in the grid and would look like a wall.
   function drawBeach(svg, decor) {
-    const colours = { sea: SEA, sand: SAND };
+    const colours = { sea: SEA, sand: SAND, grass: GRASS }; // spec 035: and the grass
     const beach = node("g", { "shape-rendering": "crispEdges" });
     for (const piece of decor) {
       const fill = colours[piece.kind];

@@ -21,6 +21,9 @@ TIME_LIMITS = {
     "cert_file": 30,  # spec 024
     "chat": 45,  # spec 024
     "nata": 15,  # spec 031
+    "beer": 20,  # spec 035
+    "frisbee": 15,  # spec 035
+    "seat": 20,  # spec 035
 }
 
 TIMEOUT_NOTES = {
@@ -36,6 +39,9 @@ TIMEOUT_NOTES = {
     "cert_file": "The printer went to sleep.",
     "chat": "The Helpdesk closed for lunch.",
     "nata": "Too slow. The seagulls won.",
+    "beer": "Last call. The bar closed.",
+    "frisbee": "The others went to class.",
+    "seat": "The lecture started without you.",
 }
 
 KINDS = set(TIME_LIMITS)
@@ -52,7 +58,7 @@ SENTENCES = [
 # The five projector/cable port types of the "cable" mini-game (socket, Auditorium).
 PORT_TYPES = ["HDMI", "USB-C", "VGA", "DisplayPort", "Mini DisplayPort"]
 
-# Spec 021: the Nova cafeteria line, in order (tray mini-game, Food Court).
+# Spec 021: the Nova cafeteria line, in order (tray mini-game, Cafeteria).
 TRAY_ORDER = ["Main course", "Soup", "Drink", "Dessert", "Pay"]
 # Spec 021: the surf mini-game (beach). A wave rolls by every SURF_PERIOD ticks; standing
 # up while its crest is under the board (ticks SURF_CREST of the cycle) rides it.
@@ -110,6 +116,28 @@ NATA_GOAL = 6  # seagulls to shoo
 NATA_BITES = 2  # bites until the pastel is gone
 NATA_EATEN = "A seagull took your pastel."
 
+# Spec 035: the flight plans of things flying in (spec 031's engine), per kind:
+# (count, first take-off, gap, first flight time, how much faster each next one is,
+#  how many to catch, how many may land before the challenge is lost, the losing note).
+FLIGHTS = {
+    "nata": (NATA_GULLS, NATA_FIRST, NATA_GAP, NATA_FLY, 2, NATA_GOAL, NATA_BITES, NATA_EATEN),
+    "frisbee": (5, 10, 36, 50, 3, 3, 3, "You dropped too many."),
+}
+
+# Spec 035: chug a beer. 8 quick sips a beer, 3 beers; a pause longer than 1.5 s lets the
+# beer go warm and it starts again.
+BEER_GOAL = 3
+BEER_SIPS = 8
+BEER_WARM_TICKS = 30
+BEER_WARM = "Too slow. It got warm."
+
+# Spec 035: find the free seat. One of 12 seats is free; it changes every SEAT_PERIOD ticks
+# in an order fixed when the challenge is made.
+SEATS = 12
+SEAT_PERIOD = 30
+SEAT_GOAL = 3
+SEAT_TAKEN = "Taken. Awkward."
+
 INVALID_VALUE = "Invalid value for this task"
 
 
@@ -133,12 +161,17 @@ def make_challenge(kind, rng, tick, tick_rate):
         challenge = {"kind": kind, "start_tick": tick, "rides": 0}
     elif kind in FILE_GROUPS:
         challenge = {"kind": kind, "round": 1, "rounds": FILE_ROUNDS[kind], **_new_file_round(kind, rng)}
-    elif kind == "nata":
+    elif kind in FLIGHTS:
+        count, first, gap, fly, faster = FLIGHTS[kind][:5]
         gulls = [
-            {"from": rng.randrange(8), "spawn": NATA_FIRST + i * NATA_GAP, "fly": NATA_FLY - i * 2, "shooed": False}
-            for i in range(NATA_GULLS)
+            {"from": rng.randrange(8), "spawn": first + i * gap, "fly": fly - i * faster, "shooed": False}
+            for i in range(count)
         ]
         challenge = {"kind": kind, "start_tick": tick, "gulls": gulls}
+    elif kind == "beer":
+        challenge = {"kind": kind, "beers": 0, "sips": 0, "last_tick": tick}
+    elif kind == "seat":
+        challenge = {"kind": kind, "start_tick": tick, "order": [rng.randrange(SEATS) for _ in range(40)], "sits": 0}
     elif kind == "chat":
         challenge = {"kind": kind, "conversation": rng.randrange(len(CONVERSATIONS)), "step": 0}
         challenge.update(_chat_line(challenge, rng))
@@ -207,8 +240,12 @@ def validate_value(kind, value):
         ok = type(value) is int and 0 <= value <= 3
     elif kind == "chat":
         ok = type(value) is int and value in (0, 1, 2)
-    elif kind == "nata":
-        ok = type(value) is int and 0 <= value < NATA_GULLS
+    elif kind in FLIGHTS:
+        ok = type(value) is int and 0 <= value < FLIGHTS[kind][0]
+    elif kind == "beer":
+        ok = type(value) is bool and value is True
+    elif kind == "seat":
+        ok = type(value) is int and 0 <= value < SEATS
     elif kind == "cable":
         ok = (
             type(value) is dict
@@ -250,8 +287,12 @@ def apply_answer(challenge, value, rng, tick, tick_rate):
         return _apply_file(challenge, value, rng)
     if kind == "chat":
         return _apply_chat(challenge, value, rng)
-    if kind == "nata":
+    if kind in FLIGHTS:
         return _apply_nata(challenge, value, tick)
+    if kind == "beer":
+        return _apply_beer(challenge, tick)
+    if kind == "seat":
+        return _apply_seat(challenge, value, tick)
     raise ValueError(f"Unknown mini-game kind: {kind}")
 
 
@@ -368,14 +409,42 @@ def _apply_nata(challenge, value, tick):
     if gull["shooed"] or not gull["spawn"] <= age < gull["spawn"] + gull["fly"]:
         return False, None  # not in the air: a miss changes nothing
     gull["shooed"] = True
-    return sum(g["shooed"] for g in challenge["gulls"]) >= NATA_GOAL, None
+    goal = FLIGHTS[challenge["kind"]][5]
+    return sum(g["shooed"] for g in challenge["gulls"]) >= goal, None
+
+
+def _apply_beer(challenge, tick):
+    if challenge["sips"] > 0 and tick - challenge["last_tick"] > BEER_WARM_TICKS:
+        challenge["sips"] = 0
+        challenge["last_tick"] = tick
+        return False, BEER_WARM
+    challenge["last_tick"] = tick
+    challenge["sips"] += 1
+    if challenge["sips"] >= BEER_SIPS:
+        challenge["sips"] = 0
+        challenge["beers"] += 1
+    return challenge["beers"] >= BEER_GOAL, None
+
+
+def _free_seat(challenge, tick):
+    slot = (tick - challenge["start_tick"]) // SEAT_PERIOD
+    return challenge["order"][slot % len(challenge["order"])]
+
+
+def _apply_seat(challenge, value, tick):
+    if value != _free_seat(challenge, tick):
+        return False, SEAT_TAKEN
+    challenge["sits"] += 1
+    return challenge["sits"] >= SEAT_GOAL, None
 
 
 def failure(challenge, tick):
-    """Spec 031: a note if the challenge is lost by now on its own (checked every tick by
-    the game, like the time limit), else None. Only the nata game can be lost this way."""
-    if challenge["kind"] == "nata" and _nata_bites(challenge, tick) >= NATA_BITES:
-        return NATA_EATEN
+    """Spec 031/037: a note if the challenge is lost by now on its own (checked every tick
+    by the game, like the time limit), else None. Only the flight games can be lost so."""
+    if challenge["kind"] in FLIGHTS:
+        limit, note = FLIGHTS[challenge["kind"]][6:8]
+        if _nata_bites(challenge, tick) >= limit:
+            return note
     return None
 
 
@@ -418,12 +487,24 @@ def public_view(challenge, tick, tick_rate):
         return {"kind": kind, "cell": challenge["cell"], "hits": challenge["hits"]}
     if kind == "tray":
         return {"kind": kind, "items": list(challenge["items"]), "next": challenge["next"], "order": list(TRAY_ORDER)}
-    if kind == "nata":
+    if kind == "beer":
+        return {"kind": kind, "beers": challenge["beers"], "sips": challenge["sips"], "goal": BEER_GOAL, "per_beer": BEER_SIPS}
+    if kind == "seat":
+        age = tick - challenge["start_tick"]
+        return {
+            "kind": kind,
+            "free": _free_seat(challenge, tick),
+            "seats": SEATS,
+            "sits": challenge["sits"],
+            "goal": SEAT_GOAL,
+            "next_in": SEAT_PERIOD - age % SEAT_PERIOD,
+        }
+    if kind in FLIGHTS:
         return {
             "kind": kind,
             "age": _nata_age(challenge, tick),
             "gulls": [dict(g) for g in challenge["gulls"]],
-            "goal": NATA_GOAL,
+            "goal": FLIGHTS[kind][5],
             "shooed": sum(g["shooed"] for g in challenge["gulls"]),
             "bites": _nata_bites(challenge, tick),
         }
