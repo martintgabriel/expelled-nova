@@ -1,14 +1,9 @@
-<<<<<<< Updated upstream
 # Spec 018 — Campus map (key C)
-=======
-# Spec 018 — Campus map (key M)
->>>>>>> Stashed changes
 
 ## Why
 In a meeting, players have to say where they walked and where they found a failed exam,
 but the only place the room names appear is in the world itself, and only near where the
 player stands. Without an overview, "I was near the… thing by the stairs" is all anyone
-<<<<<<< Updated upstream
 can say. Like the map in other games of this genre, a full campus map that opens with C
 ("campus"; M already calls a meeting, spec 015) or a button on phones lets every player look up room names and corridors and describe
 exactly where they were. It also shows the player's own open tasks, so they can walk
@@ -17,19 +12,10 @@ else is or anyone else's tasks, so it gives no new information about any player.
 (the map data, areas, labels and walls already reach every browser in `welcome.map`; the
 help overlay of spec 015 is the pattern for opening and closing; the round buttons of
 specs 016/017 are the row the map button joins). The server is untouched.
-=======
-can say. Like the map in other games of this genre, a full campus map that opens with M
-(or a button on phones) lets every player look up room names and corridors and describe
-exactly where they were. It is for orientation only: it shows the campus, never where
-anyone else is, so it gives no new information about any player. Builds on specs 001–017
-(the map data, areas, labels and walls already reach every browser in `welcome.map`; the
-help overlay of spec 015 is the pattern for opening and closing). The server is untouched.
->>>>>>> Stashed changes
 
 ## What
 
 ### `web/campusmap.js`: the map drawn once, from `welcome.map` only
-<<<<<<< Updated upstream
 A new, self-contained module, loaded after `music.js` and before `main.js` (order:
 `sound.js`, `music.js`, `campusmap.js`, `main.js`). It exposes one object, `CampusMap`,
 with `build(map)` (returns one `<svg>` element), `setYou(point, color)` (the own
@@ -69,25 +55,6 @@ only file that calls it.
   with a room too, marked `"only_on_map": true`, so the game world (which draws both places
   itself) skips them. Both are static parts of the campus that every player can already see
   in the world.
-=======
-A new, self-contained module, loaded before `main.js`. It exposes one object,
-`CampusMap`, with `build(map)` (returns one `<svg>` element) and `setYou(point)` (a
-position in map pixels, or `null` to hide the marker). `main.js` is the only file that
-calls it. `CampusMap` receives nothing but `welcome.map` and the own position, so it
-cannot show anything else even by mistake.
-
-- **Drawn as SVG, in tile units:** `viewBox` is the grid size in tiles, so the map scales
-  to any screen. Walls and buildings from `grid` are dark, walkable tiles are light, so
-  corridors are clearly visible as corridors; `sea` and `sand` from `decor` are tinted so
-  the beach is recognisable. No Phaser, no images, no dependency.
-- **Areas and names:** every entry in `areas` is a tinted rectangle in its own `color`
-  with its `name`; every entry in `labels` (Hall B, Spine, Carcavelos Beach, …) is a
-  text at its position. Area names are larger than label names. All text is set with
-  `textContent`, never `innerHTML`.
-- **Two fixed places:** the meeting table (`meeting_point`) marked "Meeting point", and
-  the light switch (`light_switch`) marked "Light switch". Both are static parts of the
-  campus that every player can already see in the world.
->>>>>>> Stashed changes
 - **Built once:** `main.js` calls `CampusMap.build(welcome.map)` once after the welcome
   message and puts the result into the overlay; opening the map never rebuilds it.
 
@@ -95,7 +62,6 @@ cannot show anything else even by mistake.
 - **Overlay:** `#map-panel`, built like the help overlay (spec 015): a dimmed background
   with a card holding the title "Campus map", the SVG, and a close cross. Closed with the
   cross, Esc, or a click on the dimmed background.
-<<<<<<< Updated upstream
 - **Key C toggles it:** press C once to open, press C again to close. Same guards as the
   H key for help: not while typing in an input, not with Ctrl/Cmd/Alt, not on key repeat.
   M stays the meeting key exactly as in spec 015. The handbook's controls list gets one
@@ -116,25 +82,10 @@ cannot show anything else even by mistake.
   phones it closes with the cross or a tap on the background.
 - **In `index.html`, `#map-panel` comes after `#help-panel`,** so the help overlay's
   content (which `tests/test_spec017.py` checks for the music switch) is unchanged.
-=======
-- **Key M toggles it:** press M once to open, press M again to close. Same guards as the
-  H key for help: not while typing in an input, not with Ctrl/Cmd/Alt, not on key repeat.
-- **Map button for phones (spec 007):** a round button with an inline SVG map icon (no
-  image, no emoji), the same `help-button` shape, placed in the top-right row next to the
-  mute and "?" buttons, visible on every screen once the welcome message has arrived
-  (before that there is no map to show, so it stays hidden). `aria-label` "Campus map",
-  `aria-expanded` reflects the state, a `click` sound on press (spec 016). The lobby
-  roster/role panels move further left if needed so nothing overlaps.
-- **Works during a meeting:** the button and the overlay sit above the meeting screen, so
-  the map can be opened in the middle of the discussion; closing it returns to the meeting
-  exactly as it was (a vote already selected or cast stays as it is).
-- **One overlay at a time:** opening the map closes the help overlay and vice versa.
->>>>>>> Stashed changes
 - **Does not pause the game:** like help, the map is only in the browser. The character
   keeps standing (or keeps walking on keyboard input) while the map is open.
 
 ### "You are here": only the player's own position
-<<<<<<< Updated upstream
 - While the phase is `"playing"`, a small marker in the own colour (`colors` of the own
   id) shows the own predicted position, updated from `CampusScene.predictTick()` only while the map is open,
   and a line under the title says "You are in: <state.area>" (hidden when there is no
@@ -165,30 +116,10 @@ pixel-for-pixel the same for every player, every role, alive or ghost, lights on
 ## Out of scope
 Other players' tasks or all task stations, vents, highlighting a sabotage, zooming or panning, drawing on the map,
 hold-to-peek (C only toggles), changing the meeting key, showing other players in any form, any server change.
-=======
-- While the phase is `"playing"`, a small marker in the own colour shows the own
-  predicted position, updated from `CampusScene.predictTick()` only while the map is open,
-  and a line under the title says "You are in: <state.area>" (hidden when there is no
-  area). In the lobby, during a meeting and at the end, the marker and the line are
-  hidden: everybody is at the table then, and the map is purely for describing places.
-- This is the only thing on the map that depends on the player, and it is the player's
-  own position, which they already see on their own screen.
-
-### What the map must never show
-Other players or their colours, ghosts, failed exams, vents or open hatches, tasks (own or
-anyone else's), anything role-specific, or the lights-out darkness. Apart from the own
-marker, the map is pixel-for-pixel the same for every player, every role, alive or ghost,
-lights on or off.
-
-## Out of scope
-Task markers, vents, highlighting a sabotage, zooming or panning, drawing on the map,
-hold-to-peek (M only toggles), showing other players in any form, any server change.
->>>>>>> Stashed changes
 
 ## Done when
 - **Tests first (AGENTS.md):** `tests/test_spec018.py`, written and shown to fail before
   the implementation, in the style of `tests/test_spec016.py`/`test_spec017.py`:
-<<<<<<< Updated upstream
   - `GET /campusmap.js` is served, and `index.html` loads `sound.js`, `music.js`,
     `campusmap.js`, `main.js` in this order;
   - `index.html` has the map button (with `aria-label`) in the top-right row next to the
@@ -215,33 +146,15 @@ hold-to-peek (M only toggles), showing other players in any form, any server cha
     no two rooms overlap; "Meeting point" (right under the table) and "Light switch" are the
     only `only_on_map` labels and `render.js` skips those; `campusmap.js` centres names in
     `.room`, turns tall ones (`rotate(-90`) and has one font size for names (`NAME_FONT`);
-=======
-  - `GET /campusmap.js` is served, and `index.html` loads it before `main.js`;
-  - `index.html` has the map button (with `aria-label`) in the top-right row next to the
-    help and mute buttons, and a `#map-panel` overlay with a close button;
-  - `main.js` toggles the map on "m"/"M" with the same typing/modifier/repeat guards as
-    "h", closes it on Escape, and closes help when the map opens and vice versa;
-  - `main.js` calls `CampusMap.build` with `welcome.map` and `CampusMap.setYou` only with
-    the own position (or `null`);
-  - `campusmap.js` uses no `innerHTML`, and never mentions `players`, `ghosts`, `vents`,
-    `open_vents`, `tasks`, `role`, `fellow_examiners` or the failed-exam field of the
-    snapshot;
->>>>>>> Stashed changes
   - `server/game.py` and `server/main.py` gained no map-overlay code;
   - all earlier tests still pass unchanged (including the b-e-l-l guard of spec 011).
 - `uv run pytest` passes in full (output pasted into this spec).
 - **A manual check list on the deployed app** (two browser tabs, one at phone width with
   touch emulation):
-<<<<<<< Updated upstream
   - C opens the map, C again closes it; Esc, the cross and the background close it too;
     M still calls a meeting at the table;
   - on the phone-width tab, the map button opens and closes it, and does not overlap the
     "?" or mute button, the HUD or any panel;
-=======
-  - M opens the map, M again closes it; Esc, the cross and the background close it too;
-  - on the phone-width tab, the map button opens and closes it, and does not overlap the
-    "?" or mute button or any panel;
->>>>>>> Stashed changes
   - every room and area name is readable at phone width, and corridors are clearly
     visible between the rooms;
   - while playing, the own marker moves with the own character and "You are in" matches
@@ -250,7 +163,6 @@ hold-to-peek (M only toggles), showing other players in any form, any server cha
     vote untouched;
   - with an examiner in a vent, a failed exam on the floor and the lights out, both tabs'
     maps show none of it and look identical apart from the own marker;
-<<<<<<< Updated upstream
   - opening help closes the map and the other way round;
   - while playing, the own open tasks are numbered green markers on their places, the list
     under the map says what and where; a finished task disappears; a student's and an
@@ -433,15 +345,3 @@ tests/test_spec018.py ...............................                    [ 91%]
   the courtyard names, and in `tests/test_campus.py` "CTT Student Hall" (see "Changes during
   implementation").
 - `specs/018-campus-map.md`: these last sections.
-=======
-  - opening help closes the map and the other way round.
-
-## Changes during implementation
-(Filled in after implementation, like spec 016.)
-
-## Limits
-(Filled in after implementation, like spec 016.)
-
-## Files created or changed
-(Filled in after implementation, like spec 016.)
->>>>>>> Stashed changes

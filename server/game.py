@@ -81,7 +81,9 @@ PLAYER_COLORS = range(MAX_PLAYERS)
 HAT_COUNT = 10  # spec 022: hat numbers 0-9, drawn by web/hats.js; 0 is the graduation cap
 
 # The Segway security guard (spec 027): a hazard, never a player (see server/guard.py).
-GUARD_SPEED = 1.3 * SPEED  # px/s: faster than any player (spec 035: was 1.6x, now easier to read)
+# px/s: faster than any player, so nobody can outrun or escort him; spec 034 slowed him
+# down from 1.6 * SPEED, at which he crossed the vision circle in about a second.
+GUARD_SPEED = 1.2 * SPEED
 GUARD_STEP = GUARD_SPEED / TICK_RATE  # px/tick
 GUARD_VISION_TILES = 6  # spec 035: was 4, too small to matter
 GUARD_CONE_DEGREES = 100  # spec 035: was 70

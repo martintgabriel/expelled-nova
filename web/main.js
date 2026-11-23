@@ -8,6 +8,7 @@
 
 const INTERPOLATION_DELAY = 100; // ms: draw other players this far in the past
 const SNAP_DISTANCE_TILES = 2; // jump to the server position if further off than this
+const GUARD_FADE_MS = 150; // spec 034: the guard fades in and out of sight over this long
 // Own movement (spec 008, part 1). The server's answer is always a little old, so it is
 // compared with where this browser predicted itself during the last TRAIL_TICKS ticks.
 const TRAIL_TICKS = 8; // 8 ticks = 400 ms: longer than a round trip to the server
@@ -2967,7 +2968,9 @@ class CampusScene extends Phaser.Scene {
     this.vents = new Map(); // vent id -> hatch from Render.makeVent()
     this.ventPress = { dx: 0, dy: 0, timer: null }; // arrow keys pressed while inside a vent
     this.footstepTicks = 0; // ticks walked since the last footstep sound (spec 016)
-    this.guard = null; // { sprite, cone } from Render.makeGuard(), spec 027, or null
+    // { sprite, cone } from Render.makeGuard() (spec 027) plus `alpha` and `at`, the place
+    // he was last drawn (spec 034), or null
+    this.guard = null;
   }
 
   create() {
@@ -2988,8 +2991,9 @@ class CampusScene extends Phaser.Scene {
     this.switchMark = welcome.map.light_switch ? Render.makeSwitch(this, welcome.map) : null;
     this.routerMark = Render.makeRouterMark(this, welcome.map); // spec 035
 
+    // Not bounded to the map (spec 034): the camera follows the own character everywhere,
+    // also at the map's edge, where the land and sea around the campus (render.js) show.
     const camera = this.cameras.main;
-    camera.setBounds(0, 0, width, height);
     camera.setBackgroundColor(Render.BACKDROP);
     const fitCamera = () => camera.setZoom(Render.cameraZoom(width, height, welcome.vision_radius));
     fitCamera();
@@ -3056,8 +3060,7 @@ class CampusScene extends Phaser.Scene {
     this.syncExams(latestState.failed_exams);
     this.updateOwn(latest.get(welcome.id), deltaMs / 1000);
     this.updateOthers(latest);
-    this.syncGuard(latestState.guard);
-    this.updateGuard(time);
+    this.updateGuard(time, deltaMs);
     // In a meeting everyone looks at the meeting table (spec 011).
     const table = lastPhase === "meeting" ? meetingTable() : null;
     for (const [id, sprite] of this.sprites) {
@@ -3378,25 +3381,16 @@ class CampusScene extends Phaser.Scene {
     }
   }
 
-  // Spec 027: created once state.guard first appears, destroyed once it is absent (a map
-  // with no guard_route, or he is simply out of this player's own sight right now).
-  syncGuard(guard) {
-    if (guard && !this.guard) {
-      this.guard = Render.makeGuard(this);
-    } else if (!guard && this.guard) {
-      this.guard.sprite.destroy();
-      this.guard.cone.destroy();
-      this.guard = null;
-    }
-  }
-
-  // Interpolated between snapshots the same way updateOthers() already draws other players,
-  // including snapping instead of gliding on a jump bigger than a tick could cover (a meeting
-  // moving everyone, or the guard first coming into sight somewhere far from where he last
-  // was out of it). The cone is rebuilt every frame from the server's own sight-blocking
-  // edges (this.darkness.edges), the same data the player's own lit area already uses.
-  updateGuard(time) {
-    if (!this.guard) return;
+  // Spec 027/034: the guard, drawn only from the interpolated snapshots, at the same moment
+  // in the past as every other player (INTERPOLATION_DELAY) and never mixed with the newest
+  // state: mixing the two drew him ahead of time, then jumped him back once the snapshots
+  // caught up. He is created when he first appears in the interpolated view and fades in;
+  // once he is gone from it, he fades out where he was last drawn (nothing this player was
+  // not already sent) and is removed. A jump bigger than a tick could cover (a meeting, or
+  // coming into sight far from where he left it) snaps instead of gliding. His facing turns
+  // the short way round between two snapshots, so the cone turns smoothly too; the cone is
+  // rebuilt every frame from the same sight edges as the own lit area (this.darkness.edges).
+  updateGuard(time, deltaMs) {
     const renderTime = performance.now() - INTERPOLATION_DELAY;
     let older = snapshots[0];
     let newer = snapshots[snapshots.length - 1];
@@ -3407,18 +3401,40 @@ class CampusScene extends Phaser.Scene {
         break;
       }
     }
-    const b = newer.guard || latestState.guard;
-    if (!b) return;
-    let a = older.guard || b;
-    if (Math.hypot(b.x - a.x, b.y - a.y) > SNAP_DISTANCE_TILES * welcome.map.tile_size) a = b;
-    const span = newer.time - older.time;
-    const f = span > 0 ? Phaser.Math.Clamp((renderTime - older.time) / span, 0, 1) : 1;
-    const x = a.x + (b.x - a.x) * f;
-    const y = a.y + (b.y - a.y) * f;
+    const b = newer.guard;
+    if (b) {
+      let a = older.guard || b;
+      if (Math.hypot(b.x - a.x, b.y - a.y) > SNAP_DISTANCE_TILES * welcome.map.tile_size) a = b;
+      const span = newer.time - older.time;
+      const f = span > 0 ? Phaser.Math.Clamp((renderTime - older.time) / span, 0, 1) : 1;
+      if (!this.guard) this.guard = { ...Render.makeGuard(this), alpha: 0 };
+      this.guard.at = {
+        x: a.x + (b.x - a.x) * f,
+        y: a.y + (b.y - a.y) * f,
+        facing: blendAngle(a.facing, b.facing, f),
+        paused: b.paused,
+      };
+    }
+    if (!this.guard) return;
+    const fade = deltaMs / GUARD_FADE_MS;
+    this.guard.alpha = Phaser.Math.Clamp(this.guard.alpha + (b ? fade : -fade), 0, 1);
+    if (!b && this.guard.alpha === 0) {
+      this.guard.sprite.destroy();
+      this.guard.cone.destroy();
+      this.guard = null;
+      return;
+    }
+    const { x, y, facing, paused } = this.guard.at;
+    Render.setGuardAlpha(this.guard, this.guard.alpha);
     this.guard.sprite.setPosition(x, y);
-    Render.animateGuard(this.guard.sprite, b.paused, time);
-    Render.drawGuardCone(this.guard.cone, this.darkness.edges, x, y, b.facing, welcome.guard_cone_degrees, welcome.guard_vision_radius);
+    Render.animateGuard(this.guard.sprite, paused, time);
+    Render.drawGuardCone(this.guard.cone, this.darkness.edges, x, y, facing, welcome.guard_cone_degrees, welcome.guard_vision_radius);
   }
+}
+
+// The angle (radians) a fraction f of the way from a to b, turning the short way round.
+function blendAngle(a, b, f) {
+  return a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * f;
 }
 
 // -1, 0 or 1 for a distance in pixels; less than half a pixel counts as standing still.

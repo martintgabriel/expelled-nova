@@ -61,6 +61,17 @@ const Render = (() => {
   const GUARD_VEST_COLOR = 0xe8a317;
   const GUARD_BOARD_COLOR = 0x2b2d33;
 
+  // Spec 034: the land and the sea around the campus. Each is one small picture, painted
+  // once and repeated (a Phaser TileSprite), so the wide band costs about as much to draw
+  // as a few sprites, also on a phone.
+  const MEADOW = 0x86b45a; // the same green as the campus lawns (OUTDOOR_FLOOR.grass)
+  const MEADOW_BLADES = 0x5f8f3c;
+  const SEA = 0x2f6f9f;
+  const SEA_WAVES = 0x7fb3d8;
+  const SHORE = 0xead6a6; // a strip of sand where the sea meets the meadow
+  const SURROUND_RES = 4; // the pictures are painted 4x and scaled down: sharp when zoomed in
+  const MEADOW_TILES = 8; // the meadow picture is 8 x 8 tiles before it repeats
+
   // --- Colours -----------------------------------------------------------------------
 
   function colorOf(number) {
@@ -90,6 +101,122 @@ const Render = (() => {
     const fit = Math.min(width, height) / (visionRadius * 2 * VIEW_MARGIN);
     const cover = Math.max(width / mapWidth, height / mapHeight);
     return Math.max(cover, Math.min(fit, MAX_ZOOM)) * pixelRatio;
+  }
+
+  // --- Surroundings (spec 034) -----------------------------------------------------------
+
+  // How far the land and sea reach beyond the map on each side, in tiles. cameraZoom() never
+  // lets the window show more than the map's width or height, and the camera follows the
+  // own character, who always stands on the map: half the map on each side is always enough.
+  function surroundSize(map) {
+    return { cols: Math.ceil(map.grid[0].length / 2), rows: Math.ceil(map.grid.length / 2) };
+  }
+
+  // The blocked tiles at the map's edge that are there only because the grid needs an edge
+  // (spec 034), as a Set of "col,row": blocked, no building decor on them (SOLID_ORDER: roofs,
+  // solar panels, the sea, glass, screens) and no floor tile among their 8 neighbours,
+  // reached from the map's edge through such tiles. The walls next to floor are never among
+  // them, so the campus keeps a wall all round and the walls between rooms stay walls. Only
+  // the look: the server's grid still blocks these tiles like any wall.
+  function outsideTiles(map) {
+    const grid = map.grid;
+    const rows = grid.length;
+    const cols = grid[0].length;
+    const isFloor = (col, row) => row >= 0 && row < rows && col >= 0 && col < cols && grid[row][col] === ".";
+    const building = new Set();
+    for (const entry of map.decor || []) {
+      if (!SOLID_ORDER.includes(entry.kind)) continue;
+      for (let row = entry.y; row < entry.y + entry.h; row++) {
+        for (let col = entry.x; col < entry.x + entry.w; col++) building.add(col + "," + row);
+      }
+    }
+    const plain = (col, row) => {
+      if (grid[row][col] !== "#" || building.has(col + "," + row)) return false;
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) if (isFloor(col + dc, row + dr)) return false;
+      }
+      return true;
+    };
+    const outside = new Set();
+    const queue = [];
+    const visit = (col, row) => {
+      const key = col + "," + row;
+      if (col < 0 || row < 0 || col >= cols || row >= rows || outside.has(key) || !plain(col, row)) return;
+      outside.add(key);
+      queue.push([col, row]);
+    };
+    for (let col = 0; col < cols; col++) {
+      visit(col, 0);
+      visit(col, rows - 1);
+    }
+    for (let row = 0; row < rows; row++) {
+      visit(0, row);
+      visit(cols - 1, row);
+    }
+    while (queue.length > 0) {
+      const [col, row] = queue.pop();
+      visit(col + 1, row);
+      visit(col - 1, row);
+      visit(col, row + 1);
+      visit(col, row - 1);
+    }
+    return outside;
+  }
+
+  // Two wave crests on the sea tile at (x, y); `jitter` moves each one up or down a little.
+  function drawWaves(g, x, y, u, jitter) {
+    g.lineStyle(2 * u, SEA_WAVES);
+    jitter.forEach((shift, i) => {
+      const wy = y + (14 + i * 22 + shift) * u;
+      g.beginPath();
+      g.arc(x + 14 * u, wy + 5 * u, 10 * u, Phaser.Math.DegToRad(200), Phaser.Math.DegToRad(340));
+      g.strokePath();
+    });
+  }
+
+  // A tree seen from above on the tile at (x, y): the campus trees and the meadow's.
+  function drawTree(g, x, y, u) {
+    g.fillStyle(0x000000, 0.24).fillEllipse(x + 31 * u, y + 32 * u, 46 * u, 44 * u);
+    g.fillStyle(0x3f7d34).fillCircle(x + 24 * u, y + 24 * u, 22 * u);
+    g.fillStyle(0x5c9c48).fillCircle(x + 18 * u, y + 15 * u, 8 * u);
+  }
+
+  // Paints a picture once into a texture called `key` and returns the key. `paint(g, size,
+  // u)` draws on a square of `size` pixels; `u` is the 52 px design unit at SURROUND_RES.
+  function surroundTexture(scene, key, tiles, t, paint) {
+    if (!scene.textures.exists(key)) {
+      const size = tiles * t * SURROUND_RES;
+      const g = scene.make.graphics({}, false);
+      paint(g, size, (t / 52) * SURROUND_RES);
+      g.generateTexture(key, size, size);
+      g.destroy();
+    }
+    return key;
+  }
+
+  // One sea tile, the same colour and waves as the campus's own sea.
+  function seaTexture(scene, t) {
+    return surroundTexture(scene, "surround-sea", 1, t, (g, size, u) => {
+      g.fillStyle(SEA).fillRect(0, 0, size, size);
+      drawWaves(g, 0, 0, u, [0, 0]);
+    });
+  }
+
+  // 8 x 8 tiles of meadow: grass with blades here and there and three trees.
+  function meadowTexture(scene, t) {
+    return surroundTexture(scene, "surround-meadow", MEADOW_TILES, t, (g, size, u) => {
+      const random = seeded(34);
+      const tile = size / MEADOW_TILES;
+      g.fillStyle(MEADOW).fillRect(0, 0, size, size);
+      g.lineStyle(2 * u, MEADOW_BLADES);
+      for (let i = 0; i < MEADOW_TILES * MEADOW_TILES * 3; i++) {
+        const bx = random() * size;
+        const by = 8 * u + random() * (size - 8 * u);
+        g.lineBetween(bx, by, bx + 2 * u, by - 7 * u);
+      }
+      // Kept a tile away from the picture's edges, so no tree is cut where it repeats.
+      for (const [col, row] of [[1, 2], [5, 1], [3, 5]]) drawTree(g, col * tile, row * tile, u);
+    });
   }
 
   // --- Map ---------------------------------------------------------------------------
@@ -145,6 +272,10 @@ const Render = (() => {
     const inside = (col, row) => row >= 0 && row < rows && col >= 0 && col < cols;
     const isFloor = (col, row) => inside(col, row) && map.grid[row][col] === ".";
     const isOpaque = (col, row) => inside(col, row) && sight[row][col] === "#";
+    // Spec 034: the blocked tiles at the map's edge that are not part of a building are
+    // drawn as meadow, not as a wall; the walls next to them form the campus wall.
+    const outside = outsideTiles(map);
+    const isWall = (col, row) => isOpaque(col, row) && !outside.has(col + "," + row);
     const random = seeded(7);
     const pick = (list) => list[Math.floor(random() * list.length)];
     const g = scene.add.graphics();
@@ -179,7 +310,49 @@ const Render = (() => {
       for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) draw(col, row, col * t, row * t);
     };
 
-    g.fillStyle(BACKDROP).fillRect(0, 0, cols * t, rows * t);
+    drawSurroundings();
+
+    // Spec 034: the land and sea around the campus, so the camera can follow the own
+    // character to the edge without ever showing the empty backdrop. Only the look: the
+    // grid, and so walking and sight, ends where it always did. One big meadow picture lies
+    // behind everything, and also shows through the outside tiles, which nothing else draws.
+    // Beyond an edge tile with sea decor the sea goes on, in rows of the sea picture, with a
+    // strip of sand where it meets the meadow. Decided from the grid and the decor only.
+    function drawSurroundings() {
+      const band = surroundSize(map);
+      const scale = 1 / SURROUND_RES;
+      scene.add
+        .tileSprite(-band.cols * t, -band.rows * t, (cols + 2 * band.cols) * t, (rows + 2 * band.rows) * t, meadowTexture(scene, t))
+        .setOrigin(0)
+        .setDepth(-1)
+        .setTileScale(scale);
+      // Outside the grid, a tile is sea when the nearest edge tile of the map is sea.
+      const clampCol = (col) => Phaser.Math.Clamp(col, 0, cols - 1);
+      const clampRow = (row) => Phaser.Math.Clamp(row, 0, rows - 1);
+      const isSea = (col, row) => has(clampCol(col), clampRow(row), "sea");
+      const isMeadow = (col, row) => (inside(col, row) ? outside.has(col + "," + row) : !isSea(col, row));
+      const sea = seaTexture(scene, t);
+      const shore = scene.add.graphics().setDepth(-1);
+      shore.fillStyle(SHORE);
+      const strip = 8 * u;
+      for (let row = -band.rows; row < rows + band.rows; row++) {
+        let start = null;
+        for (let col = -band.cols; col <= cols + band.cols; col++) {
+          const water = col < cols + band.cols && !inside(col, row) && isSea(col, row);
+          if (water && start === null) start = col;
+          if (!water && start !== null) {
+            scene.add.tileSprite(start * t, row * t, (col - start) * t, t, sea).setOrigin(0).setDepth(-1).setTileScale(scale);
+            start = null;
+          }
+          if (col === cols + band.cols || !isMeadow(col, row)) continue;
+          const [x, y] = [col * t, row * t];
+          if (isSea(col - 1, row)) shore.fillRect(x, y, strip, t);
+          if (isSea(col + 1, row)) shore.fillRect(x + t - strip, y, strip, t);
+          if (isSea(col, row - 1)) shore.fillRect(x, y, t, strip);
+          if (isSea(col, row + 1)) shore.fillRect(x, y + t - strip, t, strip);
+        }
+      }
+    }
 
     // 1. Floor: polished concrete, the area's tint, then the ground decor.
     eachTile((col, row, x, y) => {
@@ -240,14 +413,9 @@ const Render = (() => {
     });
 
     function drawSea(col, row, x, y) {
-      rect(col, row, 0x2f6f9f);
-      g.lineStyle(2 * u, 0x7fb3d8);
-      for (let i = 0; i < 2; i++) {
-        const wy = y + (14 + i * 22 + (random() * 6 - 3)) * u;
-        g.beginPath();
-        g.arc(x + 14 * u, wy + 5 * u, 10 * u, Phaser.Math.DegToRad(200), Phaser.Math.DegToRad(340));
-        g.strokePath();
-      }
+      rect(col, row, SEA);
+      const first = random() * 6 - 3;
+      drawWaves(g, x, y, u, [first, random() * 6 - 3]);
       if (isFloor(col + 1, row)) {
         // Foam where the water meets the beach.
         g.fillStyle(0x4f8fbf).fillRect(x + t - 10 * u, y, 10 * u, t);
@@ -393,9 +561,7 @@ const Render = (() => {
         g.fillStyle(0x6e4628).fillRect(x + 4 * u, y + 6 * u, t - 9 * u, 4 * u);
         g.fillRect(x + 4 * u, y + t - 10 * u, t - 9 * u, 4 * u);
       } else if (kind === "tree") {
-        g.fillStyle(0x000000, 0.24).fillEllipse(x + 31 * u, y + 32 * u, 46 * u, 44 * u);
-        g.fillStyle(0x3f7d34).fillCircle(x + 24 * u, y + 24 * u, 22 * u);
-        g.fillStyle(0x5c9c48).fillCircle(x + 18 * u, y + 15 * u, 8 * u);
+        drawTree(g, x, y, u);
       } else if (kind === "surfboard") {
         drawSurfboards(col, row, x, y);
       }
@@ -457,7 +623,7 @@ const Render = (() => {
     // colour. Roofs and screens only add a faint mark on top. The darkness leaves these
     // tiles out (see wallRects), so a wall looks the same in light and in darkness.
     eachTile((col, row, x, y) => {
-      if (!isOpaque(col, row)) return;
+      if (!isWall(col, row)) return;
       rect(col, row, WALL_TOP);
       if (has(col, row, "solar")) {
         g.fillStyle(0x27467c, 0.4).fillRect(x + 3 * u, y + 3 * u, t - 6 * u, t - 6 * u);
@@ -490,11 +656,12 @@ const Render = (() => {
     }
 
     // The edge line: a dark line exactly where the wall ends and a lighter one just inside
-    // it, on every side that meets floor, glass or the sea. Drawn after all the tops.
+    // it, on every side that meets floor, glass, the sea or (spec 034) the meadow around the
+    // campus, inside or outside the grid. Drawn after all the tops.
     const edge = 2;
     eachTile((col, row, x, y) => {
-      if (!isOpaque(col, row)) return;
-      const open = (dc, dr) => inside(col + dc, row + dr) && !isOpaque(col + dc, row + dr);
+      if (!isWall(col, row)) return;
+      const open = (dc, dr) => !inside(col + dc, row + dr) || !isWall(col + dc, row + dr);
       for (const [color, from, size] of [[WALL_EDGE, 0, edge + 1], [OUTLINE, 0, 1]]) {
         g.fillStyle(color);
         if (open(0, -1)) g.fillRect(x, y + from, t, size);
@@ -1238,6 +1405,13 @@ const Render = (() => {
     return { sprite, cone };
   }
 
+  // Spec 034: how much of the guard shows, 0-1, while he fades in or out of sight. The
+  // figure and the cone fade together.
+  function setGuardAlpha(guard, alpha) {
+    guard.sprite.setAlpha(alpha);
+    guard.cone.setAlpha(alpha);
+  }
+
   // Call every frame with whether he is paused. Driving, the whole figure has a small wobble
   // (a Segway leaning into its turns); paused, it stands still. The cone, not the figure,
   // turns with his facing (see drawGuardCone).
@@ -1254,7 +1428,9 @@ const Render = (() => {
   //   rim:  a round picture, clear in the middle and just as dark as the sheet from the
   //         vision radius on. It follows the own character and is drawn only inside the
   //         lit area, so it gives the vision circle its soft edge.
-  // The camera never shows more than the map, so the sheet covers every window size.
+  // The sheet covers the map and its surroundings (spec 034): the camera follows the own
+  // character to the map's edge and so shows up to half a window of the land around it,
+  // which is just as dark as anything else out of sight.
   //
   // The lit area is what the own character has a straight line of sight to: a shape with
   // straight shadow edges behind walls (see castRays). It ends at the face of a wall: no
@@ -1270,7 +1446,12 @@ const Render = (() => {
     const t = map.tile_size;
     const lit = scene.make.graphics({}, false);
     const cut = scene.make.graphics({}, false);
-    const dark = scene.add.rectangle(0, 0, sight[0].length * t, sight.length * t, FOG_COLOR, FOG_ALPHA);
+    const band = surroundSize(map);
+    const dark = scene.add.rectangle(
+      -band.cols * t, -band.rows * t,
+      (sight[0].length + 2 * band.cols) * t, (sight.length + 2 * band.rows) * t,
+      FOG_COLOR, FOG_ALPHA,
+    );
     dark.setOrigin(0).setDepth(10).setAlpha(0);
     dark.setMask(cut.createGeometryMask().setInvertAlpha(true)); // everywhere but the cut
 
@@ -1297,17 +1478,20 @@ const Render = (() => {
     // `radius` is the radius shown right now: it glides to the one the server sends.
     // `drawnFor` remembers the place and radius the lit area was last worked out for.
     const edges = sightEdges(sight, t);
-    return { lit, cut, dark, rim, radius, edges, walls: wallRects(sight, t), drawnFor: "" };
+    // The outside tiles look like meadow (spec 034), so unlike a wall they darken.
+    const walls = wallRects(sight, t, outsideTiles(map));
+    return { lit, cut, dark, rim, radius, edges, walls, drawnFor: "" };
   }
 
   // The wall tiles that block sight as rectangles {x, y, width, height} in map pixels, one
-  // per unbroken run of tiles in a row. Worked out once per map.
-  function wallRects(sight, t) {
+  // per unbroken run of tiles in a row, leaving out the `outside` tiles ("col,row", spec
+  // 034). Worked out once per map.
+  function wallRects(sight, t, outside) {
     const rects = [];
     sight.forEach((line, row) => {
       let start = null;
       for (let col = 0; col <= line.length; col++) {
-        const wall = col < line.length && line[col] === "#";
+        const wall = col < line.length && line[col] === "#" && !outside.has(col + "," + row);
         if (wall && start === null) start = col;
         if (!wall && start !== null) {
           rects.push({ x: start * t, y: row * t, width: (col - start) * t, height: t });
@@ -1321,10 +1505,13 @@ const Render = (() => {
   // The straight edges that stop sight: every side on which a sight-blocking tile meets a
   // tile that does not block. Sides that continue each other are merged into one long edge
   // {x1, y1, x2, y2} (in map pixels, x1 <= x2 and y1 <= y2). Worked out once per map.
+  // Outside the grid counts as blocking here (spec 034): only for the browser's light, so a
+  // ray across the sea ends at the map's edge and the land and sea around stay dark.
   function sightEdges(sight, t) {
     const rows = sight.length;
     const cols = sight[0].length;
-    const blocks = (col, row) => row >= 0 && row < rows && col >= 0 && col < cols && sight[row][col] === "#";
+    const inside = (col, row) => row >= 0 && row < rows && col >= 0 && col < cols;
+    const blocks = (col, row) => !inside(col, row) || sight[row][col] === "#";
     const edges = [];
     // Horizontal edges lie on the grid line above row `row`, vertical ones left of `col`.
     for (let row = 0; row <= rows; row++) {
@@ -1518,6 +1705,7 @@ const Render = (() => {
     updateDarkness,
     makeGuard,
     animateGuard,
+    setGuardAlpha,
     drawGuardCone,
   };
 })();
