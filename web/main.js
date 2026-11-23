@@ -116,6 +116,9 @@ const ui = {
   helpPanel: document.getElementById("help-panel"),
   helpClose: document.getElementById("help-close"),
   muteButton: document.getElementById("mute-button"),
+  soundPanel: document.getElementById("sound-panel"),
+  soundSwitch: document.getElementById("sound-switch"),
+  musicOffBadge: document.getElementById("music-off-badge"),
   volumeSlider: document.getElementById("volume-slider"),
   muteIconOn: document.getElementById("mute-icon-on"),
   muteIconOff: document.getElementById("mute-icon-off"),
@@ -230,6 +233,10 @@ ui.mapPanel.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !ui.soundPanel.hidden) {
+    setSoundPanelOpen(false); // spec 027
+    return;
+  }
   if (event.key === "Escape" && !ui.helpPanel.hidden) {
     setHelpOpen(false);
     return;
@@ -245,22 +252,52 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "c" || event.key === "C") setMapOpen(ui.mapPanel.hidden);
 });
 
-// --- Mute (spec 016): next to the "?" button, on every screen; remembered per browser ----
-// Sound itself lives entirely in web/sound.js; this only reflects/toggles Sound's own state.
+// --- Sound settings (spec 027): the speaker button opens one panel with Sound on/off (the
+// old mute, spec 016), the volume (spec 020) and the background music (spec 017). Sound and
+// music themselves live entirely in web/sound.js and web/music.js; this only shows and
+// switches their state.
 
+// The icon: waves when all is on, crossed out when there is no sound at all, and a small
+// crossed-out note when only the music is off.
 function updateMuteIcon() {
-  const muted = Sound.isMuted();
-  ui.muteIconOn.hidden = muted;
-  ui.muteIconOff.hidden = !muted;
-  const label = muted ? "Unmute sound" : "Mute sound";
-  ui.muteButton.setAttribute("aria-label", label);
-  ui.muteButton.setAttribute("aria-pressed", String(muted));
-  ui.muteButton.title = label;
+  const silent = Sound.isMuted(); // muted, or the volume at 0
+  ui.muteIconOn.hidden = silent;
+  ui.muteIconOff.hidden = !silent;
+  ui.musicOffBadge.hidden = silent || Music.isOn();
+  const soundOn = !silent;
+  ui.soundSwitch.setAttribute("aria-checked", String(soundOn));
+  ui.soundSwitch.textContent = soundOn ? "On" : "Off";
+  const musicOn = Music.isOn();
+  ui.musicSwitch.setAttribute("aria-checked", String(musicOn));
+  ui.musicSwitch.textContent = musicOn ? "On" : "Off";
 }
+
+function setSoundPanelOpen(open) {
+  ui.soundPanel.hidden = !open;
+  ui.muteButton.setAttribute("aria-expanded", String(open));
+}
+
+ui.volumeSlider.value = String(Math.round(Sound.getVolume() * 100));
 updateMuteIcon();
 
-// Volume (spec 020): the slider beside the mute button scales effects and music together.
-ui.volumeSlider.value = String(Math.round(Sound.getVolume() * 100));
+ui.muteButton.addEventListener("click", () => {
+  Sound.play("click");
+  setSoundPanelOpen(ui.soundPanel.hidden);
+  ui.muteButton.blur(); // keys go back to walking
+});
+
+ui.soundSwitch.addEventListener("click", () => {
+  if (Sound.isMuted() && Sound.getVolume() === 0) {
+    Sound.setVolume(0.5); // turning sound on with the slider at 0 would stay silent
+    ui.volumeSlider.value = "50";
+  } else {
+    Sound.toggleMute();
+  }
+  updateMuteIcon();
+  if (!Sound.isMuted()) Sound.play("click"); // confirms sound is back on
+  ui.soundSwitch.blur();
+});
+
 ui.volumeSlider.addEventListener("input", () => {
   Sound.setVolume(Number(ui.volumeSlider.value) / 100);
   updateMuteIcon();
@@ -270,32 +307,18 @@ ui.volumeSlider.addEventListener("change", () => {
   ui.volumeSlider.blur(); // arrow keys go back to walking
 });
 
-ui.muteButton.addEventListener("click", () => {
-  if (Sound.isMuted() && Sound.getVolume() === 0) {
-    Sound.setVolume(0.5); // unmuting a slider at 0 would stay silent: bring it back to half
-    ui.volumeSlider.value = "50";
-  } else {
-    Sound.toggleMute();
-  }
-  updateMuteIcon();
-  if (!Sound.isMuted()) Sound.play("click"); // confirms sound is back on
-  ui.muteButton.blur();
-});
-
-// --- Music switch (spec 017): in the help overlay; remembered per browser ----------------
-// The music itself lives entirely in web/music.js; this only reflects/toggles its state.
-
-function updateMusicSwitch() {
-  const on = Music.isOn();
-  ui.musicSwitch.setAttribute("aria-checked", String(on));
-  ui.musicSwitch.textContent = on ? "On" : "Off";
-}
-updateMusicSwitch();
-
 ui.musicSwitch.addEventListener("click", () => {
   Sound.play("click");
   Music.toggle();
-  updateMusicSwitch();
+  updateMuteIcon();
+  ui.musicSwitch.blur();
+});
+
+// A click anywhere outside the panel (and not on the speaker button) closes it.
+document.addEventListener("pointerdown", (event) => {
+  if (ui.soundPanel.hidden) return;
+  if (ui.soundPanel.contains(event.target) || ui.muteButton.contains(event.target)) return;
+  setSoundPanelOpen(false);
 });
 
 let socket = null;
@@ -399,6 +422,37 @@ for (const value of ["any", 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) {
   ui.colorSwatches.append(swatch);
 }
 renderLook();
+
+// Spec 028: colours other players already have are crossed out on the ID card. Asked for
+// when the page opens and every 2 s while the ID card shows; the server still checks the
+// colour on "join", so a failed request just leaves every swatch pickable.
+let takenColors = new Set();
+
+async function refreshTakenColors() {
+  if (ui.joinScreen.hidden) return;
+  try {
+    const response = await fetch("/colors");
+    if (!response.ok) return;
+    const data = await response.json();
+    takenColors = new Set(Array.isArray(data.taken) ? data.taken : []);
+  } catch {
+    return; // offline or the server is waking up: try again in 2 s
+  }
+  if (look.color !== null && takenColors.has(look.color)) {
+    look.color = null; // the own pick was taken in the meantime: back to "Any"
+    ui.joinError.textContent = "That colour was just taken. You get any free one.";
+  }
+  for (const swatch of ui.colorSwatches.children) {
+    const taken = swatch.dataset.color !== "any" && takenColors.has(Number(swatch.dataset.color));
+    swatch.classList.toggle("taken", taken);
+    swatch.disabled = taken;
+    if (taken) swatch.title = "Taken";
+    else swatch.removeAttribute("title");
+  }
+  renderLook();
+}
+refreshTakenColors();
+setInterval(refreshTakenColors, 2000);
 
 // --- Connection -----------------------------------------------------------------
 
@@ -1117,6 +1171,14 @@ function canActuallyVote(state, meeting) {
 // colour, their name, a "you" marker and a "VOTED" stamp once they have voted. Ghosts are
 // greyed out and not votable. Tapping a votable card opens a confirm/cancel step inside
 // it, instead of sending the vote straight away.
+// Spec 029: the examiner team as the own client knows it: the own id and the fellow
+// examiners' ids, and only when the own role is examiner (the server sends
+// fellow_examiners to examiners only). Empty for everyone else.
+function examinerTeam(state) {
+  if (!state || state.role !== "examiner") return new Set();
+  return new Set([welcome.id, ...(state.fellow_examiners || [])]);
+}
+
 function buildPlayerCard(state, playerId, { isGhost, hasVoted, canVote }) {
   const card = document.createElement("div");
   card.className = "meeting-player-card" + (isGhost ? " ghost" : "");
@@ -1125,6 +1187,7 @@ function buildPlayerCard(state, playerId, { isGhost, hasVoted, canVote }) {
   name.className = "player-name";
   name.append(nameOf(playerId)); // appended as text: never read as HTML
   if (playerId === welcome.id) name.append(tag("you", "you"));
+  if (examinerTeam(state).has(playerId)) name.append(tag("examiner", "examiner")); // spec 029
   card.append(name);
   if (hasVoted) {
     const stamp = document.createElement("span");
@@ -1300,6 +1363,7 @@ function renderResult(state, result) {
     name.append(nameOf(playerId)); // appended as text: never read as HTML
     if (playerId === welcome.id) name.append(tag("you", "you"));
     if (playerId === result.surfing) name.append(tag("sent surfing", "surfing"));
+    if (examinerTeam(state).has(playerId)) name.append(tag("examiner", "examiner")); // spec 029
     card.append(name);
     const votesLabel = document.createElement("span");
     votesLabel.className = "count";
@@ -2484,7 +2548,9 @@ class CampusScene extends Phaser.Scene {
     this.updateOthers(latest);
     // In a meeting everyone looks at the meeting table (spec 011).
     const table = lastPhase === "meeting" ? meetingTable() : null;
+    const team = examinerTeam(latestState); // spec 029: empty unless the own role is examiner
     for (const [id, sprite] of this.sprites) {
+      Render.setNameColor(sprite, team.has(id));
       const lookAt = table ? { x: table.x - sprite.x, y: table.y - sprite.y } : null;
       Render.animateCharacter(sprite, { ...sprite.walk, ghost: newest.ghosts.has(id), lookAt }, time);
     }

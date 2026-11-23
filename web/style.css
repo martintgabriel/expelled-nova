@@ -1194,18 +1194,8 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
 .segmented button:disabled:not(.active) { opacity: 0.55; }
 .vote-dot { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
 
-/* Spec 020: the volume slider, right under the "?" and mute buttons, in the strip the
-   panels already keep free (they start 108px from the right). */
-.volume-slider {
-  position: fixed;
-  z-index: 30;
-  top: calc(58px + env(safe-area-inset-top));
-  right: calc(10px + env(safe-area-inset-right));
-  width: 86px;
-  margin: 0;
-  accent-color: var(--ink);
-  cursor: pointer;
-}
+/* Spec 020/027: the volume slider, now inside the sound panel. */
+.volume-slider { width: 130px; margin: 0; accent-color: var(--ink); cursor: pointer; }
 
 /* Spec 021: the surf mini-game. */
 .surf-sea { position: relative; height: 56px; margin: 8px 0 12px; border-radius: 8px; background: linear-gradient(#7cc3e8, #2f80c3); overflow: hidden; }
@@ -1228,3 +1218,25 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
 /* Spec 024: a speech bubble for the group chat and the Helpdesk; file names in monospace. */
 .minigame-bubble { margin: 6px 0; padding: 8px 10px; border-radius: 10px; background: var(--paper-light, #fffaf0); border: 1px solid var(--rule, #c9bfa3); font-size: 14px; }
 .file-options button { font-family: var(--mono, monospace); font-size: 12px; text-align: left; word-break: break-all; }
+
+/* Spec 027: the sound settings panel, right under the round buttons. */
+.sound-panel {
+  position: fixed;
+  z-index: 31;
+  top: calc(58px + env(safe-area-inset-top));
+  right: calc(10px + env(safe-area-inset-right));
+  width: 250px;
+  padding: 10px 14px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+.sound-panel-title { margin: 0 0 6px; font-family: var(--serif); font-size: 16px; font-weight: 700; }
+.sound-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.sound-label { font-size: 13px; font-weight: 700; }
+
+/* Spec 028: a colour someone already has: crossed out, not pickable. */
+.swatch.taken { position: relative; opacity: 0.45; cursor: not-allowed; }
+.swatch.taken::after { content: ""; position: absolute; left: -2px; right: -2px; top: 50%; height: 2px; background: var(--ink); transform: rotate(-45deg); }

@@ -131,11 +131,12 @@ def test_each_new_effect_is_defined_in_sound_js():
 # --- The music switch: inside the help overlay ------------------------------------------
 
 
-def test_the_music_switch_sits_inside_the_help_overlay_with_an_aria_label():
+def test_the_music_switch_exists_with_an_aria_label():
+    # Spec 027 moved the switch from the help overlay into the sound settings panel
+    # (tests/test_spec027.py); what stays from spec 017: one switch with an aria-label.
     page = read("index.html")
-    help_overlay = page[page.index('id="help-panel"') : page.index("<script")]
-    switch = re.search(r'<(?:button|input)[^>]*id="music[^"]*"[^>]*>', help_overlay)
-    assert switch, "no music switch inside the help overlay"
+    switch = re.search(r'<(?:button|input)[^>]*id="music[^"]*"[^>]*>', page)
+    assert switch, "no music switch"
     assert "aria-label" in switch.group(0)
 
 

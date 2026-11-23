@@ -28,6 +28,7 @@ const Render = (() => {
   const BACKDROP = 0x14161b; // behind and around the map
   const FONT = "system-ui, -apple-system, 'Segoe UI', sans-serif";
   const OWN_NAME_COLOR = "#f2b33d"; // the accent colour of the page (style.css)
+  const EXAMINER_NAME_COLOR = "#ff5a5a"; // spec 029: the examiner team, seen by examiners only
 
   // Screens with a high pixel density get a bigger canvas, so shapes and text stay sharp.
   // Capped at 2 to keep phones fast.
@@ -656,7 +657,19 @@ const Render = (() => {
     sprite.setDepth(isOwn ? 2 : 1);
     // The parts animateCharacter() moves, and where the eyes currently look.
     sprite.look = { shadow, feet, outline, figure, eyes, pupils, footY, faceX: 0, faceY: 0 };
+    sprite.nameLabel = label;
+    sprite.isOwn = isOwn;
+    sprite.nameColor = isOwn ? OWN_NAME_COLOR : "#ffffff";
     return sprite;
+  }
+
+  // Spec 029: red for the examiner team (main.js decides who, only from the own role and
+  // fellow_examiners), otherwise the usual colours. Only touches the label on a change.
+  function setNameColor(sprite, examinerTeam) {
+    const color = examinerTeam ? EXAMINER_NAME_COLOR : sprite.isOwn ? OWN_NAME_COLOR : "#ffffff";
+    if (sprite.nameColor === color) return;
+    sprite.nameColor = color;
+    sprite.nameLabel.setColor(color);
   }
 
   // Call every frame. dx and dy are the walking direction (-1, 0 or 1 each);
@@ -1267,6 +1280,7 @@ const Render = (() => {
 
   return {
     BACKDROP,
+    setNameColor,
     makeGym,
     pixelRatio,
     colorCss,
