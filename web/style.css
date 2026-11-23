@@ -1427,3 +1427,4 @@ body.fire-alarm::after { content: ""; position: fixed; inset: 0; z-index: 24; po
   }
 }
 .vote-host[aria-pressed="true"] { background: var(--nova); color: #fff; }
+.lobby-leave { opacity: 0.8; font-size: 0.9em; }

@@ -242,6 +242,7 @@ def test_i_phone_layout_and_new_buttons():
     assert "(pointer: coarse)" in css
     assert 'id="todo-toggle"' in html and 'id="roster-toggle"' in html
     assert 'id="leave-button"' in html and 'send({ type: "leave" })' in js
+    assert 'id="lobby-leave-button"' in html
     assert 'type: "vote_host"' in js
     assert 'type: "kick"' in js
 

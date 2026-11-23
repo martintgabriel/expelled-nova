@@ -47,7 +47,7 @@ after the new one is registered, so its ending never removes the player.
 ### E. Leave the game (`leave`)
 `{"type": "leave"}`: the player leaves the game (`leave`), the connection gets
 `{"type": "left"}`, and the page goes back to the ID card. Button "Leave the game" at the
-bottom of the handbook, for everyone, with two taps.
+bottom of the handbook and under "Invite players" in the lobby, for everyone, with two taps.
 
 ### F. Showing where to go in an emergency
 While the lights are out, the fire alarm runs or the Wi-Fi is down, everyone sees a big red

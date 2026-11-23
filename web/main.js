@@ -2909,10 +2909,12 @@ ui.endRoundButton.addEventListener("click", () => {
 let leavingOnPurpose = false; // set once "left" or "kicked" arrives: no "Connection lost"
 const KICKED_KEY = "expelled-kicked";
 
-ui.leaveButton.addEventListener("click", () => {
-  Sound.play("click");
-  confirmTwice(ui.leaveButton, "Leave the game", () => send({ type: "leave" }), "Tap again: leave the game");
-});
+for (const button of [ui.leaveButton, document.getElementById("lobby-leave-button")]) {
+  button.addEventListener("click", () => {
+    Sound.play("click");
+    confirmTwice(button, "Leave the game", () => send({ type: "leave" }), "Tap again: leave the game");
+  });
+}
 
 // After "kicked" the page reloads; the ID card then says why.
 try {
