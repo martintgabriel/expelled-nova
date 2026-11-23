@@ -17,7 +17,8 @@ from server.game import MAX_PLAYERS, SPEED, Game, load_map
 from server.main import app
 
 TILE = 32
-AREA_NAMES = {"Main Entrance", "Library", "Food Court", "Auditorium", "Student Services", "Courtyard"}
+# Spec 018: the two courtyards are named apart, "Upper" (north) and "Lower" (south).
+AREA_NAMES = {"Main Entrance", "Library", "Food Court", "Auditorium", "Student Services", "Upper Courtyard", "Lower Courtyard"}
 # Spec 011: furniture and plants no longer block walking, so they moved from the solid
 # kinds to the floor kinds.
 SOLID_KINDS = {"sea", "solar", "greenroof", "roof", "glasswall", "screen"}
@@ -89,7 +90,7 @@ def test_the_campus_has_the_six_areas_and_two_courtyards_inside_the_grid():
     campus = load_map()
     names = [area["name"] for area in campus["areas"]]
     assert set(names) == AREA_NAMES
-    assert names.count("Courtyard") == 2
+    assert len(names) == len(set(names))  # spec 018: every area has its own name
     for area in campus["areas"]:
         assert 0 <= area["x"] and area["x"] + area["w"] <= 46  # spec 015: 46 columns
         assert 0 <= area["y"] and area["y"] + area["h"] <= 43
@@ -123,8 +124,8 @@ def test_every_spawn_is_its_own_floor_tile_in_the_main_entrance():
 def test_each_courtyard_is_a_courtyard_and_spine_beach_and_plaza_are_corridors():
     game = Game(load_map())
     # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
-    assert game.area_at(*centre(16, 14)) == "Courtyard"  # north courtyard
-    assert game.area_at(*centre(16, 22)) == "Courtyard"  # south courtyard
+    assert game.area_at(*centre(16, 14)) == "Upper Courtyard"  # north courtyard (spec 018: named apart)
+    assert game.area_at(*centre(16, 22)) == "Lower Courtyard"  # south courtyard (spec 018: named apart)
     for col, row in [(28, 20), (1, 20), (34, 32)]:  # spine, beach, EDP Plaza
         assert not game.blocked(*centre(col, row))
         assert game.area_at(*centre(col, row)) is None
@@ -196,7 +197,8 @@ def test_every_decor_kind_on_the_campus_is_known_and_solid_kinds_cover_only_wall
 def test_the_campus_labels_name_the_halls_and_the_beach():
     texts = {label["text"] for label in load_map()["labels"]}
     # Spec 015: the beach's label is "Carcavelos Beach" now.
-    assert {"Hall B", "Student Hall", "Hall D", "Hall E", "Carcavelos Beach"} <= texts
+    # Spec 018: the Student Hall is called "CTT Student Hall" now.
+    assert {"Hall B", "CTT Student Hall", "Hall D", "Hall E", "Carcavelos Beach"} <= texts
 
 
 # --- Rejected: validate_campus ----------------------------------------------------------------
