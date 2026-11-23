@@ -356,6 +356,13 @@
       <p class="help-intro">It is exam season on campus. Most of you are students with paperwork to do.
         A few of you are examiners in disguise, and they did not come to help.</p>
 
+      <!-- The music switch (spec 017): on by default, remembered per browser. main.js keeps
+           aria-checked and the On/Off text up to date; the mute button still silences all. -->
+      <div class="help-music">
+        <span class="help-music-label">Background music</span>
+        <button id="music-switch" type="button" class="music-switch" role="switch" aria-checked="true" aria-label="Background music">On</button>
+      </div>
+
       <section class="help-section">
         <h3>The two roles</h3>
         <ul>

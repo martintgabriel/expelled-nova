@@ -24,6 +24,7 @@ const VENT_COOLDOWN = 3;
 const VENT_KEY_WINDOW_MS = 80; // two arrow keys pressed this close together count as a diagonal
 const SABOTAGE_COOLDOWN = 30;
 const FOOTSTEP_TICKS = 6; // ticks between two footstep sounds while walking (spec 016)
+const BEACH_RANGE_TILES = 6; // the waves fade out this many tiles from the sea (spec 017)
 const RING_CIRCUMFERENCE = 2 * Math.PI * 35; // matches r="35" on .ring-sweep in index.html
 
 const ui = {
@@ -258,6 +259,22 @@ ui.muteButton.addEventListener("click", () => {
   ui.muteButton.blur();
 });
 
+// --- Music switch (spec 017): in the help overlay; remembered per browser ----------------
+// The music itself lives entirely in web/music.js; this only reflects/toggles its state.
+
+function updateMusicSwitch() {
+  const on = Music.isOn();
+  ui.musicSwitch.setAttribute("aria-checked", String(on));
+  ui.musicSwitch.textContent = on ? "On" : "Off";
+}
+updateMusicSwitch();
+
+ui.musicSwitch.addEventListener("click", () => {
+  Sound.play("click");
+  Music.toggle();
+  updateMusicSwitch();
+});
+
 let socket = null;
 // {id, map, sight_grid, speed, tick_rate, step, player_half, corner_slide, expel_range, report_range,
 // meeting_range, meeting_table_radius, task_range, switch_range, vision_radius,
@@ -283,6 +300,10 @@ let sentSurfing = false; // this player was voted out in this round
 let wasAliveForExpelSound = true; // `alive` one state ago, to catch the moment it flips
 let pendingExpel = false; // an expel was sent and not yet confirmed or rejected
 let knownVoted = new Set(); // voters already played a sound for, this meeting
+// Sound (spec 017): the same idea for the new sounds.
+let wasLightsOn = true; // `lights_on` one state ago
+let lastCountdown = null; // `meeting.seconds_left` one state ago
+let heardOpenVents = new Set(); // hatch ids that showed open one state ago
 // Nicknames and colour numbers by player id. While playing, the server only sends the
 // players in sight (and the living never receive ghosts), so the ones seen earlier
 // (everyone is visible in the lobby) are remembered here.
@@ -450,8 +471,25 @@ function updatePhase(state) {
   // voters this browser has already played a sound for (see renderMeeting).
   if (state.phase === "meeting" && previousPhase !== "meeting") {
     Sound.play("meetingChime");
+    // A report also sounds the alarm, for everyone at once (spec 017).
+    if (state.meeting && state.meeting.reason === "report") Sound.play("reportAlarm");
     knownVoted = new Set();
   }
+  // The end of a round, once, for everyone (spec 017): roles are public by now. `winner` is
+  // "students" or "examiners", `role` is "student" or "examiner", hence the "s".
+  if (state.phase === "ended" && previousPhase !== "ended") {
+    if (state.winner === state.role + "s") Sound.play("winJingle");
+    else Sound.play("loseJingle");
+  }
+  updateMusic(state);
+  // The lights going out or coming back, for everyone at once (spec 017). Only while the
+  // round goes on: a meeting turns the lights back on too, and that plays only the gong.
+  if (previousPhase === "playing" && state.phase === "playing" && state.lights_on !== wasLightsOn) {
+    if (state.lights_on === false) Sound.play("lightsOut");
+    else Sound.play("lightsOn");
+  }
+  wasLightsOn = state.lights_on;
+  checkVentSounds(state);
   // Expel (spec 016): the paper-rip sound is purely local to the two players it belongs to.
   // The expelled player's own `alive` flips to false while still in the "playing" phase
   // (a meeting vote-out instead flips it during the "meeting" phase, so that case never
@@ -489,6 +527,26 @@ function updatePhase(state) {
   const role = describeRole(state);
   setText(ui.roleBadge, role.fellows ? `${role.title} · with ${role.fellows}` : role.title);
   if (justStarted) showRoleScreen(state.role, role);
+}
+
+// The background music's mood (spec 017), from `phase` and `lights_on` only: every player
+// receives both alike, so the music is the same for every role and for ghosts and tells the
+// people sitting next to a phone nothing about its player.
+function updateMusic(state) {
+  if (state.phase === "lobby") Music.setMood("lobby");
+  else if (state.phase === "playing" && state.lights_on === false) Music.setMood("dark");
+  else if (state.phase === "playing") Music.setMood("playing");
+  else Music.setMood("off"); // meeting (the gong and the silence) and ended (the jingle)
+}
+
+// Vent hatches (spec 017): one clank when a hatch newly shows open in this browser's own
+// `open_vents`. The server lists only the hatches in sight, by id only, and the examiner's
+// own vent is in their own list too, so the examiner hears exactly what a bystander hears.
+// Moving between vents opens no hatch, so it makes no sound.
+function checkVentSounds(state) {
+  const open = state.phase === "playing" ? state.open_vents || [] : [];
+  if (open.some((id) => !heardOpenVents.has(id))) Sound.play("ventHatch");
+  heardOpenVents = new Set(open);
 }
 
 function renderLobby(state) {
@@ -904,6 +962,12 @@ function renderMeeting(state) {
     knownVoted.add(id);
     if (id !== welcome.id) Sound.play("voteOther");
   }
+  // The last 5 seconds of voting tick, for everyone (spec 017); not while the result shows.
+  const secondsLeft = meeting.seconds_left;
+  if (!meeting.result && secondsLeft !== lastCountdown && secondsLeft >= 1 && secondsLeft <= 5) {
+    Sound.play("countdownTick");
+  }
+  lastCountdown = secondsLeft;
   setText(ui.meetingTimer, `${meeting.seconds_left} s`);
   const result = meeting.result;
   // Redraw only when something on the screen changes; the timer is updated above, so a
@@ -2030,6 +2094,25 @@ function slide(pos, dx, dy, distance) {
 }
 
 // --- Phaser scene -----------------------------------------------------------------
+
+// How close a position (map pixels) is to the sea, for the waves (spec 017): 1 within one
+// tile of a `sea` decor rectangle (a tile next to the water), falling to 0 at
+// BEACH_RANGE_TILES. Only from the map everyone already has and the own position.
+function beachCloseness(pos) {
+  const t = welcome.map.tile_size;
+  let nearest = Infinity; // in tiles
+  for (const sea of welcome.map.decor || []) {
+    if (sea.kind !== "sea") continue;
+    const left = sea.x * t;
+    const top = sea.y * t;
+    const right = (sea.x + (sea.w || 1)) * t;
+    const bottom = (sea.y + (sea.h || 1)) * t;
+    const dx = Math.max(left - pos.x, 0, pos.x - right);
+    const dy = Math.max(top - pos.y, 0, pos.y - bottom);
+    nearest = Math.min(nearest, Math.hypot(dx, dy) / t);
+  }
+  return Math.min(1, Math.max(0, (BEACH_RANGE_TILES - nearest) / (BEACH_RANGE_TILES - 1)));
+}
 
 class CampusScene extends Phaser.Scene {
   constructor() {
