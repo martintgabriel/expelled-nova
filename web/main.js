@@ -111,6 +111,7 @@ const ui = {
   helpPanel: document.getElementById("help-panel"),
   helpClose: document.getElementById("help-close"),
   muteButton: document.getElementById("mute-button"),
+  volumeSlider: document.getElementById("volume-slider"),
   muteIconOn: document.getElementById("mute-icon-on"),
   muteIconOff: document.getElementById("mute-icon-off"),
   musicSwitch: document.getElementById("music-switch"),
@@ -181,8 +182,24 @@ function updateMuteIcon() {
 }
 updateMuteIcon();
 
+// Volume (spec 019): the slider beside the mute button scales effects and music together.
+ui.volumeSlider.value = String(Math.round(Sound.getVolume() * 100));
+ui.volumeSlider.addEventListener("input", () => {
+  Sound.setVolume(Number(ui.volumeSlider.value) / 100);
+  updateMuteIcon();
+});
+ui.volumeSlider.addEventListener("change", () => {
+  if (!Sound.isMuted()) Sound.play("click"); // a sample of the new volume
+  ui.volumeSlider.blur(); // arrow keys go back to walking
+});
+
 ui.muteButton.addEventListener("click", () => {
-  Sound.toggleMute();
+  if (Sound.isMuted() && Sound.getVolume() === 0) {
+    Sound.setVolume(0.5); // unmuting a slider at 0 would stay silent: bring it back to half
+    ui.volumeSlider.value = "50";
+  } else {
+    Sound.toggleMute();
+  }
   updateMuteIcon();
   if (!Sound.isMuted()) Sound.play("click"); // confirms sound is back on
   ui.muteButton.blur();
@@ -398,11 +415,11 @@ function updatePhase(state) {
     if (state.meeting && state.meeting.reason === "report") Sound.play("reportAlarm");
     knownVoted = new Set();
   }
-  // The end of a round, once, for everyone (spec 017): roles are public by now. `winner` is
-  // "students" or "examiners", `role` is "student" or "examiner", hence the "s".
+  // The end of a round, once, for everyone (spec 017). Spec 019: the sound tells which
+  // side won, the same for every player: `winner` is "students" or "examiners".
   if (state.phase === "ended" && previousPhase !== "ended") {
-    if (state.winner === state.role + "s") Sound.play("winJingle");
-    else Sound.play("loseJingle");
+    if (state.winner === "students") Sound.play("studentsWin");
+    else Sound.play("examinersWin");
   }
   updateMusic(state);
   // The lights going out or coming back, for everyone at once (spec 017). Only while the
@@ -419,6 +436,7 @@ function updatePhase(state) {
   // matches here); the expelling examiner's side is handled by checkExpelSound below.
   if (state.phase === "playing" && previousPhase === "playing" && wasAliveForExpelSound && !state.alive) {
     Sound.play("expel");
+    Sound.play("expelVoice"); // spec 019: "Expelled!"
   }
   wasAliveForExpelSound = state.alive;
   checkExpelSound(state);
@@ -730,6 +748,7 @@ function checkExpelSound(state) {
   if (state.expel_cooldown > 0) {
     pendingExpel = false;
     Sound.play("expel");
+    Sound.play("expelVoice"); // spec 019: "Expelled!"
   }
 }
 

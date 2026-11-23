@@ -15,10 +15,12 @@
 const Sound = (() => {
   const MASTER_VOLUME = 0.22; // the one knob for every sound at once
   const MUTE_KEY = "expelled-nova-muted";
+  const VOLUME_KEY = "expelled-nova-volume"; // spec 019: the slider, 0-1, per browser
 
   let ctx = null;
   let master = null;
   let muted = loadMuted();
+  let volume = loadVolume();
   const unlockCallbacks = []; // waiting for the context (spec 017: music.js)
 
   function loadMuted() {
@@ -27,6 +29,32 @@ const Sound = (() => {
     } catch {
       return false; // storage unavailable: sound on, same as a browser that never muted
     }
+  }
+
+  function loadVolume() {
+    try {
+      const stored = localStorage.getItem(VOLUME_KEY);
+      return stored === null ? 1 : clamp(Number(stored));
+    } catch {
+      return 1; // storage unavailable: full volume, same as a browser that never moved it
+    }
+  }
+
+  function saveVolume(value) {
+    try {
+      localStorage.setItem(VOLUME_KEY, String(value));
+    } catch {
+      // storage unavailable: the choice just does not survive a reload
+    }
+  }
+
+  function clamp(value) {
+    return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
+  }
+
+  // The master gain (spec 019): the slider scales the one MASTER_VOLUME constant.
+  function gainValue() {
+    return muted ? 0 : MASTER_VOLUME * volume;
   }
 
   function saveMuted(value) {
@@ -48,7 +76,7 @@ const Sound = (() => {
     if (!AudioCtx) return; // no Web Audio: ctx stays null, every play() below is a no-op
     ctx = new AudioCtx();
     master = ctx.createGain();
-    master.gain.value = muted ? 0 : MASTER_VOLUME;
+    master.gain.value = gainValue();
     master.connect(ctx.destination);
     for (const callback of unlockCallbacks) callback(ctx, master);
     unlockCallbacks.length = 0;
@@ -170,14 +198,43 @@ const Sound = (() => {
       noise(0.03, { type: "highpass", freq: 2500, gain: 0.5 }); // the switch
       tone(330, 0.3, { type: "triangle", gain: 0.4, delay: 0.03, slideTo: 990 }); // the hum
     },
-    // The end of a round: a short rising phrase for the winners, a falling one for the rest.
-    winJingle: () => {
-      [523, 659, 784, 1046].forEach((freq, i) => tone(freq, i === 3 ? 0.6 : 0.16, { type: "triangle", gain: 0.5, delay: i * 0.13 }));
+    // Spec 019: the end of a round sounds by the winning side, the same for everyone.
+    // Examiners win: three low, gloomy notes ("dun dun dun"), the last one long.
+    examinersWin: () => {
+      [[147, 0], [139, 0.45], [110, 0.9]].forEach(([freq, delay], i) => {
+        tone(freq, i === 2 ? 1.6 : 0.4, { type: "sawtooth", gain: 0.4, delay });
+        tone(freq / 2, i === 2 ? 1.6 : 0.4, { type: "sine", gain: 0.5, delay });
+      });
     },
-    loseJingle: () => {
-      [523, 440, 349, 262].forEach((freq, i) => tone(freq, i === 3 ? 0.8 : 0.2, { type: "triangle", gain: 0.5, delay: i * 0.18 }));
+    // Students win: a rising "wheeey" slide, then a bright major chord.
+    studentsWin: () => {
+      tone(300, 0.7, { type: "triangle", gain: 0.5, slideTo: 1200 });
+      tone(450, 0.7, { type: "sine", gain: 0.3, slideTo: 1800 });
+      for (const freq of [784, 988, 1175, 1568]) tone(freq, 0.9, { type: "triangle", gain: 0.3, delay: 0.7 });
+    },
+    // Spec 019: under the "Expelled!" voice, a deep falling drop (also alone without speech).
+    expelVoice: () => {
+      tone(220, 0.6, { type: "sawtooth", gain: 0.35, slideTo: 55 });
+      say("Expelled!");
     },
   };
+
+  // The browser's own speech synthesis (spec 019): no audio file. Deep and slow; quietly
+  // does nothing when muted or when the browser has no speech synthesis.
+  function say(text) {
+    if (muted || volume === 0 || !("speechSynthesis" in window)) return;
+    try {
+      const line = new SpeechSynthesisUtterance(text);
+      line.lang = "en-US";
+      line.pitch = 0.1; // as deep as the voice goes
+      line.rate = 0.75;
+      line.volume = Math.min(1, volume);
+      window.speechSynthesis.cancel(); // never queue up behind an older line
+      window.speechSynthesis.speak(line);
+    } catch {
+      // speech synthesis failed: the drop tone above still played
+    }
+  }
 
   function play(name) {
     if (muted || !ctx) return;
@@ -187,15 +244,25 @@ const Sound = (() => {
 
   function setMuted(value) {
     muted = Boolean(value);
-    if (master) master.gain.value = muted ? 0 : MASTER_VOLUME;
+    if (master) master.gain.value = gainValue();
     saveMuted(muted);
+  }
+
+  // Spec 019: 0-1 from the slider. Moving it while muted unmutes; 0 counts as muted.
+  function setVolume(value) {
+    volume = clamp(Number(value));
+    saveVolume(volume);
+    if (volume > 0 && muted) setMuted(false);
+    if (master) master.gain.value = gainValue();
   }
 
   return {
     onUnlock,
     play,
-    isMuted: () => muted,
+    isMuted: () => muted || volume === 0,
     setMuted,
+    getVolume: () => volume,
+    setVolume,
     toggleMute: () => setMuted(!muted),
   };
 })();
