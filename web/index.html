@@ -94,7 +94,8 @@
 
   <!-- The own tasks as a notebook page with tick boxes (spec 015). -->
   <div id="task-list" hidden>
-    <h2>Semester to-do</h2>
+    <!-- Spec 037: tapping the title folds the list (folded at the start on a touch screen). -->
+    <h2><button id="todo-toggle" type="button" class="fold-toggle" aria-expanded="true">Semester to-do <span id="todo-count" class="fold-count"></span></button></h2>
     <ul id="task-items"></ul>
   </div>
 
@@ -102,7 +103,7 @@
        hand-over button on the host's screen, and the "N/10" count. -->
   <div id="lobby" class="panel roster" hidden>
     <div class="roster-head">
-      <h2>Class roster</h2>
+      <h2><button id="roster-toggle" type="button" class="fold-toggle" aria-expanded="true">Class roster</button></h2>
       <p class="roster-count"><span id="lobby-count" class="lobby-count"></span> enrolled</p>
     </div>
     <ul id="lobby-players" class="lobby-chips"></ul>
@@ -117,6 +118,8 @@
     </div>
     <button id="start-button" type="button" class="lobby-main" hidden>Start game</button>
     <button id="invite-button" type="button" class="lobby-secondary">Invite players</button>
+    <!-- Spec 037: leaving right from the lobby (two taps), like the button in the handbook. -->
+    <button id="lobby-leave-button" type="button" class="lobby-secondary lobby-leave">Leave the game</button>
     <p id="start-hint" class="hint"></p>
   </div>
 
@@ -309,6 +312,7 @@
           <button type="submit">Send</button>
         </form>
         <p id="chat-status" class="chat-status" role="status"></p>
+        <p id="chat-ghost-note" class="chat-ghost-note" hidden></p>
       </div>
     </div>
   </div>
@@ -413,7 +417,7 @@
         <ul>
           <li><strong>Student &mdash; survive the semester.</strong> Finish your to-do list and find out
             who the examiners are.</li>
-          <li><strong>Undercover Examiner &mdash; fail them all.</strong> Blend in, hand out failed exams
+          <li><strong>Undercover Examiner &mdash; expel them all.</strong> Blend in, hand out failed exams
             and do not get caught.</li>
         </ul>
       </section>
@@ -486,8 +490,10 @@
           <li><strong>Examiners</strong> win when there are as many examiners left as students.</li>
         </ul>
       </section>
-      <!-- Spec 036: any player can end a running round for everyone (two taps). -->
+      <!-- Spec 036/037: the host can end a running round for everyone (two taps); everyone
+           can leave the game (two taps). -->
       <button id="end-round-button" type="button" class="secondary-button end-round-bottom" hidden>End this round for everyone</button>
+      <button id="leave-button" type="button" class="secondary-button end-round-bottom">Leave the game</button>
     </div>
   </div>
 

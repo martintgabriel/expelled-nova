@@ -1426,6 +1426,65 @@ const Render = (() => {
     arrow.parts.g.setRotation(angle);
   }
 
+  // --- Emergency arrow (spec 037) ---------------------------------------------------------
+  // One big red arrow to the place everyone must go during an emergency (light switch,
+  // assembly point, router). Off screen it sits at the screen's edge and points there, like
+  // the task arrows; on screen it bobs right above the place, pointing down. Sized in CSS
+  // pixels like the edge arrows (1 / camera.zoom).
+  const EMERGENCY_RED = 0xd62828;
+  const EMERGENCY_SIZE = 28; // half-length, in screen px
+
+  function makeEmergencyArrow(scene) {
+    const s = EMERGENCY_SIZE;
+    const g = scene.add.graphics();
+    g.fillStyle(EMERGENCY_RED, 1);
+    g.beginPath();
+    g.moveTo(s, 0);
+    g.lineTo(0, -s * 0.8);
+    g.lineTo(0, -s * 0.35);
+    g.lineTo(-s, -s * 0.35);
+    g.lineTo(-s, s * 0.35);
+    g.lineTo(0, s * 0.35);
+    g.lineTo(0, s * 0.8);
+    g.closePath();
+    g.fillPath();
+    g.lineStyle(3, 0xffffff, 1).strokePath();
+    const arrow = scene.add.container(0, 0, [g]).setDepth(14).setVisible(false);
+    arrow.parts = { g };
+    return arrow;
+  }
+
+  // `target` is {x, y} in map pixels, or null (no emergency: hidden).
+  function updateEmergencyArrow(arrow, target, camera, bottomMargin, time) {
+    arrow.setVisible(Boolean(target));
+    if (!target) return;
+    const view = camera.worldView;
+    const scale = 1 / camera.zoom;
+    arrow.setScale(scale);
+    const inView = target.x >= view.x && target.x <= view.right && target.y >= view.y && target.y <= view.bottom;
+    if (inView) {
+      const bob = Math.sin(time / 160) * 6 * scale;
+      arrow.setPosition(target.x, target.y - (EMERGENCY_SIZE + 22) * scale + bob);
+      arrow.parts.g.setRotation(Math.PI / 2);
+      return;
+    }
+    const margin = ARROW_SIDE_MARGIN + EMERGENCY_SIZE;
+    const left = view.x + margin * scale;
+    const right = view.right - margin * scale;
+    const top = view.y + (ARROW_TOP_MARGIN + EMERGENCY_SIZE) * scale;
+    const bottom = view.bottom - (bottomMargin + EMERGENCY_SIZE) * scale;
+    const cx = (left + right) / 2;
+    const cy = (top + bottom) / 2;
+    const angle = Math.atan2(target.y - cy, target.x - cx);
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    const tx = dx === 0 ? Infinity : (dx > 0 ? right - cx : left - cx) / dx;
+    const ty = dy === 0 ? Infinity : (dy > 0 ? bottom - cy : top - cy) / dy;
+    const t = Math.max(0, Math.min(tx, ty));
+    arrow.setPosition(cx + dx * t, cy + dy * t);
+    arrow.parts.g.setRotation(angle);
+  }
+
   // --- The Segway security guard (spec 027) -----------------------------------------------
   // An original character, our own shapes only: a helmet, a "SECURITY" vest, standing on a
   // two-wheeled board he leans on. Created once state.guard first appears and destroyed when
@@ -1779,6 +1838,8 @@ const Render = (() => {
     updateTaskRing,
     makeEdgeArrow,
     updateEdgeArrow,
+    makeEmergencyArrow, // spec 037
+    updateEmergencyArrow, // spec 037
     makeDarkness,
     updateDarkness,
     makeGuard,
