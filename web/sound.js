@@ -19,6 +19,7 @@ const Sound = (() => {
   let ctx = null;
   let master = null;
   let muted = loadMuted();
+  const unlockCallbacks = []; // waiting for the context (spec 017: music.js)
 
   function loadMuted() {
     try {
@@ -49,9 +50,19 @@ const Sound = (() => {
     master = ctx.createGain();
     master.gain.value = muted ? 0 : MASTER_VOLUME;
     master.connect(ctx.destination);
+    for (const callback of unlockCallbacks) callback(ctx, master);
+    unlockCallbacks.length = 0;
   }
   document.addEventListener("pointerdown", unlock, { once: true });
   document.addEventListener("keydown", unlock, { once: true });
+
+  // Spec 017: lets music.js share this one context and master gain instead of creating its
+  // own, so the mute button silences music and effects together. The callback runs once the
+  // context exists (right away if it already does); without Web Audio it never runs.
+  function onUnlock(callback) {
+    if (ctx) callback(ctx, master);
+    else unlockCallbacks.push(callback);
+  }
 
   // --- Two primitives every effect below is built from ----------------------------------
 
@@ -137,6 +148,35 @@ const Sound = (() => {
     },
     typingClick: () => noise(0.02, { type: "highpass", freq: 3000, gain: 0.3 }), // a keystroke
     paperRattle: () => noise(0.06, { type: "bandpass", freq: 900, q: 0.8, gain: 0.4 }), // a jam tap
+
+    // Spec 017: seven more, each heard by every player who receives the same event.
+    // A report: an urgent two-tone alarm, on top of the meeting gong.
+    reportAlarm: () => {
+      for (let i = 0; i < 4; i++) {
+        tone(i % 2 === 0 ? 880 : 660, 0.14, { type: "square", gain: 0.35, delay: i * 0.15 });
+      }
+    },
+    // One of the last 5 seconds of voting.
+    countdownTick: () => tone(1250, 0.04, { type: "triangle", gain: 0.4 }),
+    // A vent hatch moving (climbing in or out), for everyone in sight of it.
+    ventHatch: () => {
+      noise(0.12, { type: "bandpass", freq: 700, q: 3, gain: 0.5 }); // the metal lid
+      tone(190, 0.18, { type: "square", gain: 0.25 }); // the clank
+      tone(470, 0.12, { type: "triangle", gain: 0.25, delay: 0.03 });
+    },
+    // The lights: a power-down slide and a power-up click.
+    lightsOut: () => tone(440, 0.7, { type: "sawtooth", gain: 0.35, slideTo: 55 }),
+    lightsOn: () => {
+      noise(0.03, { type: "highpass", freq: 2500, gain: 0.5 }); // the switch
+      tone(330, 0.3, { type: "triangle", gain: 0.4, delay: 0.03, slideTo: 990 }); // the hum
+    },
+    // The end of a round: a short rising phrase for the winners, a falling one for the rest.
+    winJingle: () => {
+      [523, 659, 784, 1046].forEach((freq, i) => tone(freq, i === 3 ? 0.6 : 0.16, { type: "triangle", gain: 0.5, delay: i * 0.13 }));
+    },
+    loseJingle: () => {
+      [523, 440, 349, 262].forEach((freq, i) => tone(freq, i === 3 ? 0.8 : 0.2, { type: "triangle", gain: 0.5, delay: i * 0.18 }));
+    },
   };
 
   function play(name) {
@@ -152,6 +192,7 @@ const Sound = (() => {
   }
 
   return {
+    onUnlock,
     play,
     isMuted: () => muted,
     setMuted,
