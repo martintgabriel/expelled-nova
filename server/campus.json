@@ -65,11 +65,11 @@
   ],
   "tasks": [
     {"id": "certificate", "joke": "Ticket A-347. Now serving: A-012.", "steps": [
-      {"title": "Print a copy of your certificate", "area": "Library", "x": 37, "y": 22, "minigame": "paper_jam"},
+      {"title": "Print a copy of your certificate", "area": "Library", "x": 37, "y": 22, "minigame": "cert_file"},
       {"title": "Submit your Bachelor certificate", "area": "Student Services", "x": 39, "y": 3, "minigame": "ticket"}
     ]},
-    {"id": "helpdesk", "title": "Ask the Helpdesk for help", "area": "Main Entrance", "x": 24, "y": 3, "minigame": "translate", "joke": "Olá! Só em português, por favor."},
-    {"id": "print", "title": "Print your assignment", "area": "Library", "x": 41, "y": 20, "minigame": "paper_jam", "joke": "PAPER JAM in tray 2. Printed anyway, 1 of 12 pages."},
+    {"id": "helpdesk", "title": "Ask the Helpdesk for help", "area": "Main Entrance", "x": 24, "y": 3, "minigame": "chat", "joke": "Obrigado! You are now fluent. Almost."},
+    {"id": "print", "title": "Print your assignment", "area": "Library", "x": 41, "y": 20, "minigame": "print_file", "joke": "Printed. Your group already submitted the old version."},
     {"id": "socket", "title": "Get your slides on the projector", "area": "Auditorium", "x": 34, "y": 40, "minigame": "cable", "joke": "Projector works. Your laptop battery doesn't."},
     {"id": "gate", "title": "Tap your student card at the gate", "area": "Main Entrance", "x": 28, "y": 6, "minigame": "card", "joke": "Beep. Red. Beep. Red. Beep. Green."},
     {"id": "nata", "title": "Eat your pastel de nata in the sun", "area": "Courtyard", "x": 23, "y": 23, "minigame": "seagull", "joke": "A seagull took it. Task counts anyway."},

@@ -67,11 +67,11 @@ MULTISTEP_MAP = {
 # Spec 015: the beach grew by 4 columns in the west, so every column here moved by 4.
 SPEC_TASKS = {
     "certificate": [
-        ("Library", 37, 22, "paper_jam"),
+        ("Library", 37, 22, "cert_file"),  # spec 024: was paper_jam
         ("Student Services", 39, 3, "ticket"),
     ],
-    "helpdesk": [("Main Entrance", 24, 3, "translate")],
-    "print": [("Library", 41, 20, "paper_jam")],
+    "helpdesk": [("Main Entrance", 24, 3, "chat")],  # spec 024: was translate
+    "print": [("Library", 41, 20, "print_file")],  # spec 024: was paper_jam
     "socket": [("Auditorium", 34, 40, "cable")],
     "gate": [("Main Entrance", 28, 6, "card")],
     "nata": [("Courtyard", 23, 23, "seagull")],

@@ -1165,3 +1165,7 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
 .swatch-any { width: auto; padding: 0 6px; border-radius: 10px; font-size: 10px; font-weight: 700; }
 .swatch.active { outline: 2px solid var(--ink); outline-offset: 2px; }
 .id-photo { overflow: visible; }
+
+/* Spec 024: a speech bubble for the group chat and the Helpdesk; file names in monospace. */
+.minigame-bubble { margin: 6px 0; padding: 8px 10px; border-radius: 10px; background: var(--paper-light, #fffaf0); border: 1px solid var(--rule, #c9bfa3); font-size: 14px; }
+.file-options button { font-family: var(--mono, monospace); font-size: 12px; text-align: left; word-break: break-all; }

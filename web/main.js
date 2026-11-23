@@ -1439,6 +1439,9 @@ const MINIGAME_HINTS = {
   paper_jam: "Clear all 3 paper jams.",
   tray: "Tap in the order of the Nova line.", // spec 021
   surf: "Stand up when the wave is under your board.", // spec 021
+  print_file: "Print exactly the file the group chat asks for.", // spec 024
+  cert_file: "Print exactly the file the office asks for.", // spec 024
+  chat: "Answer the Helpdesk in Portuguese.", // spec 024
 };
 
 const NATA_EATEN_MS = 1200; // how long the "gone" tart stays up after a seagull time-out
@@ -1530,6 +1533,58 @@ function renderChallenge(taskId, challenge) {
   else if (challenge.kind === "paper_jam") renderPaperJam(taskId, challenge);
   else if (challenge.kind === "tray") renderTray(taskId, challenge);
   else if (challenge.kind === "surf") renderSurf(taskId, challenge);
+  else if (challenge.kind === "print_file" || challenge.kind === "cert_file") renderFilePick(taskId, challenge);
+  else if (challenge.kind === "chat") renderChat(taskId, challenge);
+}
+
+// print_file and cert_file (spec 024) — a message says which file to print; four almost
+// identical names to pick from. The file list is shown in a monospace font, so the tiny
+// differences are visible.
+function renderFilePick(taskId, challenge) {
+  const message = document.createElement("p");
+  message.className = "minigame-bubble";
+  const who = challenge.kind === "cert_file" ? "Student Services" : "Group chat";
+  message.textContent = `${who}: "Print ${challenge.request} !!"`;
+  const round = document.createElement("p");
+  round.className = "minigame-hits";
+  round.textContent = `File ${challenge.round}/${challenge.rounds}`;
+  const options = document.createElement("div");
+  options.className = "minigame-options file-options";
+  challenge.options.forEach((name, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `\u{1F4C4} ${name}`;
+    button.addEventListener("click", () => {
+      Sound.play("click");
+      sendTaskInput(taskId, index);
+    });
+    options.append(button);
+  });
+  ui.minigameContent.append(message, round, options);
+}
+
+// chat (spec 024) — the Helpdesk says one line in Portuguese; pick the Portuguese reply that
+// means what you want to say. Which one is right stays on the server.
+function renderChat(taskId, challenge) {
+  const desk = document.createElement("p");
+  desk.className = "minigame-bubble";
+  desk.textContent = `Helpdesk: "${challenge.line}"`;
+  const want = document.createElement("p");
+  want.className = "minigame-hits";
+  want.textContent = `You want to say: ${challenge.want}  (${challenge.step + 1}/${challenge.steps})`;
+  const options = document.createElement("div");
+  options.className = "minigame-options";
+  challenge.options.forEach((reply, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = reply;
+    button.addEventListener("click", () => {
+      Sound.play("typingClick");
+      sendTaskInput(taskId, index);
+    });
+    options.append(button);
+  });
+  ui.minigameContent.append(desk, want, options);
 }
 
 // tray (spec 021) — the Nova cafeteria line: the order is printed, the buttons are shuffled.
@@ -2271,6 +2326,7 @@ class CampusScene extends Phaser.Scene {
     // the server ("welcome"), so the lit area matches what the server sends.
     const { width, height } = Render.drawMap(this, welcome.map, welcome.sight_grid);
     if (welcome.map.meeting_point) Render.makeMeetingPoint(this, welcome.map, welcome.meeting_table_radius);
+    Render.makeGym(this, welcome.map); // spec 025: people working out under a skylight
     for (const vent of welcome.map.vents || []) this.vents.set(vent.id, Render.makeVent(this, welcome.map, vent));
     // Every task place of the map as an object (spec 015); own open ones get a glow below.
     for (const station of Render.taskStations(welcome.map)) Render.makeTaskPlace(this, welcome.map, station);

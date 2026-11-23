@@ -17,6 +17,9 @@ TIME_LIMITS = {
     "seagull": 8,
     "tray": 30,  # spec 021
     "surf": 25,  # spec 021
+    "print_file": 30,  # spec 024
+    "cert_file": 30,  # spec 024
+    "chat": 45,  # spec 024
 }
 
 TIMEOUT_NOTES = {
@@ -28,6 +31,9 @@ TIMEOUT_NOTES = {
     "seagull": "A seagull took it.",
     "tray": "The cafeteria closed.",
     "surf": "The waves are gone. Flat sea.",
+    "print_file": "The printer went to sleep.",
+    "cert_file": "The printer went to sleep.",
+    "chat": "The Helpdesk closed for lunch.",
 }
 
 KINDS = set(TIME_LIMITS)
@@ -52,6 +58,47 @@ SURF_PERIOD = 40  # ticks per wave (2 s at 20 ticks per second)
 SURF_CREST = (15, 25)  # the riding window inside one cycle, half-open: half a second
 SURF_GOAL = 3  # waves to ride
 
+# Spec 024: "pick the right file" for the printer. Each group is four almost identical file
+# names; one of them is the file the group chat (or the office) asks for.
+FILE_GROUPS = {
+    "print_file": [
+        ["Assignment_FINAL_v3.pdf", "Assignment_FINAL_v3 (1).pdf", "Assignment_FINAL_v2.pdf", "Assignment_FINAL_v3_old.pdf"],
+        ["final_REAL_use_this.docx", "final_REAL_use_this_NOT.docx", "final_REAL.docx", "final_real_use_this.docx"],
+        ["group_report_ok_now.pdf", "group_report_ok_now(2).pdf", "group_report_ok.pdf", "group_report_not_ok.pdf"],
+        ["slides_last_minute_v7.pptx", "slides_last_minute_v8.pptx", "slides_last_minute_v7.ppt", "slides_lastminute_v7.pptx"],
+        ["essay_2999_words.pdf", "essay_3001_words.pdf", "essay_2999_words(1).pdf", "essay_299_words.pdf"],
+    ],
+    "cert_file": [
+        ["Bachelor_certificate_SIGNED.pdf", "Bachelor_certificate_UNSIGNED.pdf", "Bachelor_certificate_SIGNED.jpg", "Bachelour_certificate_SIGNED.pdf"],
+        ["certificate_scan_sharp.pdf", "certificate_scan_blurry.pdf", "certificate_photo_from_bed.jpg", "certificate_scan_sharp_cropped.pdf"],
+        ["diploma_translated_EN.pdf", "diploma_translated_DE.pdf", "diploma_google_translated_EN.pdf", "diploma_EN_translated.pdf"],
+    ],
+}
+FILE_ROUNDS = {"print_file": 3, "cert_file": 2}
+WRONG_FILE = "Wrong file. You printed 40 pages of it."
+
+# Spec 024: three short conversations with the Helpdesk, in European Portuguese. "desk" is
+# what the Helpdesk says, "want" what the player wants to answer (in English), "reply" the
+# right Portuguese answer. Wrong options are right answers from other lines.
+CONVERSATIONS = [
+    [
+        {"desk": "Olá! Em que posso ajudar?", "want": "I lost my student card.", "reply": "Perdi o meu cartão de estudante."},
+        {"desk": "Qual é o seu número de aluno?", "want": "I don't remember.", "reply": "Não me lembro."},
+        {"desk": "Então tem de preencher este formulário.", "want": "Thank you, have a nice day!", "reply": "Obrigado, bom dia!"},
+    ],
+    [
+        {"desk": "Bom dia! Diga.", "want": "The Wi-Fi doesn't work.", "reply": "O wifi não funciona."},
+        {"desk": "Já tentou desligar e ligar outra vez?", "want": "Yes, three times.", "reply": "Sim, três vezes."},
+        {"desk": "Então volte amanhã.", "want": "Okay, see you tomorrow.", "reply": "Está bem, até amanhã."},
+    ],
+    [
+        {"desk": "Olá! Precisa de alguma coisa?", "want": "Where is the auditorium?", "reply": "Onde fica o auditório?"},
+        {"desk": "É ali, ao fundo do corredor.", "want": "And the cafeteria?", "reply": "E a cafetaria?"},
+        {"desk": "Também ao fundo. Tudo é ao fundo.", "want": "Thank you very much!", "reply": "Muito obrigado!"},
+    ],
+]
+WRONG_REPLY = "Não percebi. Outra vez, por favor."
+
 INVALID_VALUE = "Invalid value for this task"
 
 
@@ -73,10 +120,36 @@ def make_challenge(kind, rng, tick, tick_rate):
         challenge = {"kind": kind, "items": rng.sample(TRAY_ORDER, len(TRAY_ORDER)), "next": 0}
     elif kind == "surf":
         challenge = {"kind": kind, "start_tick": tick, "rides": 0}
+    elif kind in FILE_GROUPS:
+        challenge = {"kind": kind, "round": 1, "rounds": FILE_ROUNDS[kind], **_new_file_round(kind, rng)}
+    elif kind == "chat":
+        challenge = {"kind": kind, "conversation": rng.randrange(len(CONVERSATIONS)), "step": 0}
+        challenge.update(_chat_line(challenge, rng))
     else:
         raise ValueError(f"Unknown mini-game kind: {kind}")
     challenge["deadline_tick"] = tick + TIME_LIMITS[kind] * tick_rate
     return challenge
+
+
+def _new_file_round(kind, rng):
+    group = rng.choice(FILE_GROUPS[kind])
+    return {"request": rng.choice(group), "options": rng.sample(group, len(group))}
+
+
+def _chat_line(challenge, rng):
+    """The current line of the conversation: what the desk says, what the player wants to
+    say, and three Portuguese replies (the right one and two right replies of other lines)."""
+    conversation = CONVERSATIONS[challenge["conversation"]]
+    line = conversation[challenge["step"]]
+    others = [l["reply"] for c in CONVERSATIONS for l in c if l["reply"] != line["reply"]]
+    options = rng.sample([line["reply"]] + rng.sample(others, 2), 3)
+    return {
+        "steps": len(conversation),
+        "line": line["desk"],
+        "want": line["want"],
+        "options": options,
+        "correct": line["reply"],
+    }
 
 
 def _new_sentence(rng):
@@ -113,6 +186,10 @@ def validate_value(kind, value):
         ok = type(value) is int and 0 <= value < len(TRAY_ORDER)
     elif kind == "surf":
         ok = type(value) is bool and value is True
+    elif kind in FILE_GROUPS:
+        ok = type(value) is int and 0 <= value <= 3
+    elif kind == "chat":
+        ok = type(value) is int and value in (0, 1, 2)
     elif kind == "cable":
         ok = (
             type(value) is dict
@@ -150,6 +227,10 @@ def apply_answer(challenge, value, rng, tick, tick_rate):
         return _apply_tray(challenge, value, rng)
     if kind == "surf":
         return _apply_surf(challenge, tick)
+    if kind in FILE_GROUPS:
+        return _apply_file(challenge, value, rng)
+    if kind == "chat":
+        return _apply_chat(challenge, value, rng)
     raise ValueError(f"Unknown mini-game kind: {kind}")
 
 
@@ -225,6 +306,31 @@ def _apply_tray(challenge, value, rng):
     return False, "Wrong order. Back of the queue."
 
 
+def _apply_file(challenge, value, rng):
+    kind = challenge["kind"]
+    if challenge["options"][value] == challenge["request"]:
+        if challenge["round"] >= challenge["rounds"]:
+            return True, None
+        challenge["round"] += 1
+        challenge.update(_new_file_round(kind, rng))
+        return False, None
+    challenge["round"] = 1
+    challenge.update(_new_file_round(kind, rng))
+    return False, WRONG_FILE
+
+
+def _apply_chat(challenge, value, rng):
+    if challenge["options"][value] == challenge["correct"]:
+        if challenge["step"] + 1 >= challenge["steps"]:
+            return True, None
+        challenge["step"] += 1
+        challenge.update(_chat_line(challenge, rng))
+        return False, None
+    challenge["step"] = 0
+    challenge.update(_chat_line(challenge, rng))
+    return False, WRONG_REPLY
+
+
 def _surf_phase(challenge, tick):
     return (tick - challenge["start_tick"]) % SURF_PERIOD
 
@@ -264,6 +370,24 @@ def public_view(challenge, tick, tick_rate):
         return {"kind": kind, "cell": challenge["cell"], "hits": challenge["hits"]}
     if kind == "tray":
         return {"kind": kind, "items": list(challenge["items"]), "next": challenge["next"], "order": list(TRAY_ORDER)}
+    if kind in FILE_GROUPS:
+        return {
+            "kind": kind,
+            "request": challenge["request"],
+            "options": list(challenge["options"]),
+            "round": challenge["round"],
+            "rounds": challenge["rounds"],
+        }
+    if kind == "chat":
+        # Never "correct": which reply is right stays secret.
+        return {
+            "kind": kind,
+            "line": challenge["line"],
+            "want": challenge["want"],
+            "options": list(challenge["options"]),
+            "step": challenge["step"],
+            "steps": challenge["steps"],
+        }
     if kind == "surf":
         return {
             "kind": kind,

@@ -526,6 +526,84 @@ const Render = (() => {
     return { width: cols * t, height: rows * t };
   }
 
+  // --- The gym (spec 025) --------------------------------------------------------------
+  // The gym is a roofed block nobody walks into. Its roof gets a skylight through which
+  // everyone sees a few original figures working out: two on treadmills, one on the bench
+  // press, one lifting hand weights. Pure decoration: nothing here talks to the server. The
+  // gym is found as the roof under the "Gym" label, so the map data needs no new field.
+  function makeGym(scene, map) {
+    const t = map.tile_size;
+    const label = (map.labels || []).find((l) => l.text === "Gym");
+    if (!label) return null;
+    const roof = (map.decor || []).find(
+      (d) => d.kind === "roof" && label.x >= d.x && label.x <= d.x + d.w && label.y >= d.y && label.y <= d.y + d.h,
+    );
+    if (!roof) return null;
+    const left = (roof.x + 0.25) * t;
+    const right = (roof.x + roof.w - 0.25) * t;
+    const top = (label.y + 0.5) * t; // below the label
+    const bottom = (roof.y + roof.h - 0.12) * t;
+    const midY = (top + bottom) / 2;
+
+    const skylight = scene.add.graphics();
+    skylight.fillStyle(0x16181d).fillRoundedRect(left - 2, top - 2, right - left + 4, bottom - top + 4, 5);
+    skylight.fillStyle(0x3b4250).fillRoundedRect(left, top, right - left, bottom - top, 4); // rubber floor
+    skylight.fillStyle(0xffffff, 0.06);
+    for (let x = left + 8; x < right; x += 16) skylight.fillRect(x, top, 1, bottom - top); // mats
+    skylight.fillStyle(0xffffff, 0.12).fillTriangle(left, top, left + 40, top, left, bottom); // glass glare
+    const parts = [skylight];
+    const slot = (i, n) => left + ((i + 0.5) / n) * (right - left);
+    const person = (x, y, color) => {
+      const body = scene.add.circle(x, y, 7, color).setStrokeStyle(1.5, OUTLINE);
+      const eyes = [-1, 1].map((side) => scene.add.circle(x + side * 2.4, y - 1, 1.3, 0xffffff));
+      return [body, ...eyes];
+    };
+
+    // Treadmill runner: a belt, and a figure bobbing quickly up and down.
+    const treadmill = (x, color) => {
+      const belt = scene.add.rectangle(x, midY + 6, 26, 9, 0x1d1f24).setStrokeStyle(1, 0x596072);
+      const rail = scene.add.rectangle(x, midY - 7, 22, 2, 0x8d96a8);
+      const runner = scene.add.container(0, 0, person(x, midY - 2, color));
+      scene.tweens.add({ targets: runner, y: -3, duration: 180, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+      return [belt, rail, runner];
+    };
+    // Bench press: a bench, a lying figure and a bar that goes up and down.
+    const bench = (x, color) => {
+      const seat = scene.add.rectangle(x, midY + 4, 30, 8, 0x6b2d2d).setStrokeStyle(1, OUTLINE);
+      const lifter = person(x, midY + 1, color);
+      const bar = scene.add.container(x, midY - 8, [
+        scene.add.rectangle(0, 0, 34, 2.5, 0xc9ced8),
+        scene.add.rectangle(-16, 0, 4, 11, 0x23262e),
+        scene.add.rectangle(16, 0, 4, 11, 0x23262e),
+      ]);
+      scene.tweens.add({ targets: bar, y: midY - 1, duration: 700, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+      return [seat, ...lifter, bar];
+    };
+    // Hand weights: two small weights that go up and down in turn.
+    const curls = (x, color) => {
+      const lifter = person(x, midY, color);
+      const weights = [-1, 1].map((side, i) => {
+        const weight = scene.add.container(x + side * 11, midY + 4, [
+          scene.add.rectangle(0, 0, 2, 7, 0xc9ced8),
+          scene.add.rectangle(0, -3.5, 5, 2.5, 0x23262e),
+          scene.add.rectangle(0, 3.5, 5, 2.5, 0x23262e),
+        ]);
+        scene.tweens.add({ targets: weight, y: midY - 4, duration: 550, delay: i * 550, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+        return weight;
+      });
+      return [...lifter, ...weights];
+    };
+
+    parts.push(
+      ...treadmill(slot(0, 4), 0x4cb963),
+      ...bench(slot(1, 4), 0xf08a24),
+      ...curls(slot(2, 4), 0x8e5bd9),
+      ...treadmill(slot(3, 4), 0x2ec4b6),
+    );
+    // Above the map and its labels, below failed exams, vents and players.
+    return scene.add.container(0, 0, parts).setDepth(0.3);
+  }
+
   // --- Characters --------------------------------------------------------------------
 
   // Our own figure: a round body in the player's colour with eyes, two feet, a
@@ -1188,6 +1266,7 @@ const Render = (() => {
 
   return {
     BACKDROP,
+    makeGym,
     pixelRatio,
     colorCss,
     cameraZoom,
