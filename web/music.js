@@ -8,7 +8,7 @@
 //
 // It never makes an audio context of its own: Sound.onUnlock() (sound.js) hands over the
 // shared one and its master gain once the first tap or key press has created them. So the
-// mute button silences the music too, and until then (or without Web Audio at all) every
+// volume slider scales the music too, and until then (or without Web Audio at all) every
 // call below only remembers what was asked for, silently.
 //
 // Loaded after sound.js and before main.js (index.html); main.js is the only file calling it.

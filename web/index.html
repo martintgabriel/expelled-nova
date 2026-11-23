@@ -350,24 +350,22 @@
     </svg>
   </button>
 
-  <!-- Mute (spec 016): always next to the "?" button, on every screen. The two icon states
-       are plain inline SVG (no images); main.js toggles which one is hidden. -->
-  <button id="mute-button" type="button" class="help-button mute-button" aria-label="Mute sound" title="Mute sound">
+  <!-- Sound settings (spec 028): the one speaker button, always next to the "?" button, on
+       every screen. It opens the small panel #sound-panel (further down) with every sound
+       control. It keeps the id of the mute button of spec 016, which it replaces. The
+       diagonal strike shows while the music is off or the volume is 0 (main.js). Plain
+       inline SVG, no images. -->
+  <button id="mute-button" type="button" class="help-button mute-button" aria-label="Sound settings" title="Sound settings" aria-expanded="false" aria-controls="sound-panel">
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <g id="mute-icon-on">
-        <path d="M4 9v6h4l5 5V4L8 9H4Z" fill="currentColor"></path>
-        <path d="M16.2 9a4.2 4.2 0 0 1 0 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
-        <path d="M18.8 6.8a7.6 7.6 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
-      </g>
-      <g id="mute-icon-off" hidden>
-        <path d="M4 9v6h4l5 5V4L8 9H4Z" fill="currentColor"></path>
-        <line x1="15" y1="9" x2="21" y2="15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></line>
-        <line x1="21" y1="9" x2="15" y2="15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></line>
+      <path d="M4 9v6h4l5 5V4L8 9H4Z" fill="currentColor"></path>
+      <path d="M16.2 9a4.2 4.2 0 0 1 0 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+      <path d="M18.8 6.8a7.6 7.6 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+      <g class="sound-strike" hidden>
+        <line class="sound-strike-edge" x1="3.5" y1="3.5" x2="20.5" y2="20.5"></line>
+        <line class="sound-strike-line" x1="3.5" y1="3.5" x2="20.5" y2="20.5"></line>
       </g>
     </svg>
   </button>
-  <!-- Volume (spec 020): beside the mute button, on every screen. -->
-  <input id="volume-slider" class="volume-slider" type="range" min="0" max="100" step="5" value="100" aria-label="Volume">
 
   <button id="help-button" type="button" class="help-button" aria-label="How to play" title="How to play (H)">?</button>
 
@@ -378,13 +376,6 @@
       <h2 id="help-title">How to play</h2>
       <p class="help-intro">It is exam season on campus. Most of you are students with paperwork to do.
         A few of you are examiners in disguise, and they did not come to help.</p>
-
-      <!-- The music switch (spec 017): on by default, remembered per browser. main.js keeps
-           aria-checked and the On/Off text up to date; the mute button still silences all. -->
-      <div class="help-music">
-        <span class="help-music-label">Background music</span>
-        <button id="music-switch" type="button" class="music-switch" role="switch" aria-checked="true" aria-label="Background music">On</button>
-      </div>
 
       <section class="help-section">
         <h3>The two roles</h3>
@@ -408,6 +399,7 @@
           <li class="hint-touch" hidden>Drag the joystick (bottom left) to walk.</li>
           <li class="hint-touch" hidden>Tap the round buttons (bottom right) to act. A grey button tells you why it is not possible right now.</li>
           <li class="hint-touch" hidden>The map button (top right) shows the whole campus, to say where you were.</li>
+          <li>The speaker button (top right) opens the sound settings.</li>
         </ul>
       </section>
 
@@ -464,6 +456,49 @@
       <!-- The own open tasks, numbered like their green markers on the map. main.js fills
            it as text from the own snapshot, only while playing. -->
       <ol id="map-tasks" class="map-tasks" aria-label="Your open tasks" hidden></ol>
+    </div>
+  </div>
+
+  <!-- Sound settings (spec 028): a small panel under the speaker button, not a full-screen
+       overlay, so the game and the join card stay visible. It bundles every sound control:
+       the background music (spec 017), the one volume for music and effects (spec 020) and
+       the sound effects. main.js keeps the switches, the slider and the strike up to date;
+       every choice is remembered per browser. -->
+  <div id="sound-panel" class="sound-panel" role="dialog" aria-label="Sound settings" hidden>
+    <div class="sound-head">
+      <svg class="sound-head-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path d="M4 9v6h4l5 5V4L8 9H4Z" fill="currentColor"></path>
+      <path d="M16.2 9a4.2 4.2 0 0 1 0 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+      <path d="M18.8 6.8a7.6 7.6 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+      <g class="sound-strike" hidden>
+        <line class="sound-strike-edge" x1="3.5" y1="3.5" x2="20.5" y2="20.5"></line>
+        <line class="sound-strike-line" x1="3.5" y1="3.5" x2="20.5" y2="20.5"></line>
+      </g>
+      </svg>
+      <h2>Sound settings</h2>
+      <button id="sound-close" type="button" class="sound-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="sound-row">
+      <span class="sound-row-name">Background music</span>
+      <button id="music-switch" type="button" class="music-switch" role="switch" aria-checked="true" aria-label="Background music">On</button>
+    </div>
+    <div class="sound-row">
+      <span class="sound-row-name">Volume</span>
+      <div class="sound-volume">
+        <svg viewBox="0 0 24 24" width="18" height="18" role="img" aria-label="Quiet">
+          <path d="M7 9v6h4l5 5V4l-5 5H7Z" fill="currentColor"></path>
+        </svg>
+        <input id="volume-slider" class="volume-slider" type="range" min="0" max="100" step="5" value="100" aria-label="Volume">
+        <svg viewBox="0 0 24 24" width="18" height="18" role="img" aria-label="Loud">
+          <path d="M4 9v6h4l5 5V4L8 9H4Z" fill="currentColor"></path>
+          <path d="M16.2 9a4.2 4.2 0 0 1 0 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+          <path d="M18.8 6.8a7.6 7.6 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+        </svg>
+      </div>
+    </div>
+    <div class="sound-row">
+      <span class="sound-row-name">Sound effects</span>
+      <button id="effects-switch" type="button" class="music-switch" role="switch" aria-checked="true" aria-label="Sound effects">On</button>
     </div>
   </div>
 

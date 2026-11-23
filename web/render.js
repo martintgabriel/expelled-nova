@@ -28,6 +28,9 @@ const Render = (() => {
   const BACKDROP = 0x14161b; // behind and around the map
   const FONT = "system-ui, -apple-system, 'Segoe UI', sans-serif";
   const OWN_NAME_COLOR = "#f2b33d"; // the accent colour of the page (style.css)
+  // Spec 028: the name colours that tell the own side. Red: an examiner's own name and the
+  // fellow examiner's. Green: a student's own name. Every other name keeps its normal colour.
+  const NAME_TONE_COLORS = { examiner: "#ff5a52", student: "#5fe07a" };
 
   // Screens with a high pixel density get a bigger canvas, so shapes and text stay sharp.
   // Capped at 2 to keep phones fast.
@@ -640,12 +643,13 @@ const Render = (() => {
     const figure = scene.add.container(0, 0, [...feet, outline, body, shine, ...eyes, ...pupils, cap]);
     figure.setScale(FIGURE_SCALE);
 
+    const nameColor = isOwn ? OWN_NAME_COLOR : "#ffffff";
     const label = scene.add
       .text(0, (top - 7) * FIGURE_SCALE, name, {
         fontFamily: FONT,
         fontSize: "11px",
         fontStyle: "bold",
-        color: isOwn ? OWN_NAME_COLOR : "#ffffff",
+        color: nameColor,
         stroke: "#101216",
         strokeThickness: 3,
         resolution: TEXT_RESOLUTION,
@@ -656,7 +660,19 @@ const Render = (() => {
     sprite.setDepth(isOwn ? 2 : 1);
     // The parts animateCharacter() moves, and where the eyes currently look.
     sprite.look = { shadow, feet, outline, figure, eyes, pupils, footY, faceX: 0, faceY: 0 };
+    sprite.nameTag = { label, color: nameColor, tone: null }; // for setNameTone()
     return sprite;
+  }
+
+  // Spec 028: the name above a character in a tone's colour ("examiner": red, "student":
+  // green) or, with tone null, back in the colour it was made with (yellow for the own
+  // name, white for everyone else). main.js says which tone, from the own snapshot only.
+  // Cheap to call every frame: it only redraws the text on a change.
+  function setNameTone(sprite, tone) {
+    const tag = sprite.nameTag;
+    if (tag.tone === tone) return;
+    tag.tone = tone;
+    tag.label.setColor(NAME_TONE_COLORS[tone] || tag.color);
   }
 
   // Call every frame. dx and dy are the walking direction (-1, 0 or 1 each);
@@ -1270,6 +1286,7 @@ const Render = (() => {
     makeGym,
     pixelRatio,
     colorCss,
+    setNameTone,
     cameraZoom,
     drawMap,
     makeCharacter,

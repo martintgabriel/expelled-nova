@@ -510,6 +510,15 @@ class Game:
         taken = {p.color for p in self.players.values()}
         return min(color for color in PLAYER_COLORS if color not in taken)
 
+    def taken_colors(self):
+        """Spec 028: which colours are taken, as {colour number: that player's nickname}.
+
+        For the colour picker on the join screen, so it is also given to someone who has
+        not joined yet. It holds only what the lobby shows anyway (nickname and colour):
+        no player id, no role, no position, and a ghost keeps its colour like everyone.
+        """
+        return {p.color: p.name for p in self.players.values()}
+
     # --- Expelling ----------------------------------------------------------------
 
     def expel(self, player_id, target_id):

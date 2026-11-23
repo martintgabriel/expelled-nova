@@ -14,12 +14,13 @@
 
 const Sound = (() => {
   const MASTER_VOLUME = 0.22; // the one knob for every sound at once
+  // Spec 028: this key now remembers the "Sound effects" switch ("1" = effects off).
   const MUTE_KEY = "expelled-nova-muted";
   const VOLUME_KEY = "expelled-nova-volume"; // spec 020: the slider, 0-1, per browser
 
   let ctx = null;
   let master = null;
-  let muted = loadMuted();
+  let muted = loadMuted(); // the sound effects are switched off (spec 028: effects only)
   let volume = loadVolume();
   const unlockCallbacks = []; // waiting for the context (spec 017: music.js)
 
@@ -52,9 +53,11 @@ const Sound = (() => {
     return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
   }
 
-  // The master gain (spec 020): the slider scales the one MASTER_VOLUME constant.
+  // The master gain (spec 020): the slider scales the one MASTER_VOLUME constant. Music and
+  // effects both run through it, so the slider is the one volume for everything. Spec 028:
+  // the effects switch no longer touches it, or it would silence the music as well.
   function gainValue() {
-    return muted ? 0 : MASTER_VOLUME * volume;
+    return MASTER_VOLUME * volume;
   }
 
   function saveMuted(value) {
@@ -85,7 +88,7 @@ const Sound = (() => {
   document.addEventListener("keydown", unlock, { once: true });
 
   // Spec 017: lets music.js share this one context and master gain instead of creating its
-  // own, so the mute button silences music and effects together. The callback runs once the
+  // own, so the volume slider scales music and effects together. The callback runs once the
   // context exists (right away if it already does); without Web Audio it never runs.
   function onUnlock(callback) {
     if (ctx) callback(ctx, master);
@@ -242,27 +245,26 @@ const Sound = (() => {
     if (effect) effect();
   }
 
-  function setMuted(value) {
-    muted = Boolean(value);
-    if (master) master.gain.value = gainValue();
+  // Spec 028: the "Sound effects" switch. Off: play() and the voice do nothing; the music
+  // (music.js, with its own switch) plays on.
+  function setEffectsOn(value) {
+    muted = !value;
     saveMuted(muted);
   }
 
-  // Spec 020: 0-1 from the slider. Moving it while muted unmutes; 0 counts as muted.
+  // Spec 020: 0-1 from the slider, for music and effects together; 0 is silence.
   function setVolume(value) {
     volume = clamp(Number(value));
     saveVolume(volume);
-    if (volume > 0 && muted) setMuted(false);
     if (master) master.gain.value = gainValue();
   }
 
   return {
     onUnlock,
     play,
-    isMuted: () => muted || volume === 0,
-    setMuted,
+    effectsOn: () => !muted,
+    setEffectsOn,
     getVolume: () => volume,
     setVolume,
-    toggleMute: () => setMuted(!muted),
   };
 })();

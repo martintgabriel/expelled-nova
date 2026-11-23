@@ -204,7 +204,8 @@ button:disabled { opacity: 0.55; box-shadow: none; cursor: not-allowed; }
   line-height: 1;
   z-index: 30; /* above every overlay, below the handbook itself */
 }
-/* Mute (spec 016): same circle as the "?" button, one slot to its left. */
+/* Sound settings (spec 028; the mute button of spec 016): same circle as the "?" button,
+   one slot to its left. */
 .mute-button {
   right: calc(56px + env(safe-area-inset-right));
   display: flex;
@@ -244,11 +245,63 @@ button:disabled { opacity: 0.55; box-shadow: none; cursor: not-allowed; }
 .help-section ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 .help-keys { list-style: none; padding-left: 0 !important; }
 .help-keys kbd.key { margin-right: 2px; }
-/* The music switch (spec 017): a label and a small On/Off button; Off looks like plain paper. */
-.help-music { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.help-music-label { color: var(--ink); font-size: 14px; font-weight: 700; }
+
+/* --- Sound settings (spec 028): a small panel under the speaker button -------------------- */
+
+.sound-panel {
+  position: fixed;
+  top: calc(58px + env(safe-area-inset-top));
+  right: calc(10px + env(safe-area-inset-right));
+  width: min(290px, calc(100vw - 20px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--lift);
+  z-index: 31; /* above every overlay, like its button; below the handbook and the map */
+}
+.sound-head { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 3px double var(--ink); }
+.sound-head h2 { flex: 1; font-size: 18px; }
+.sound-head-icon { flex-shrink: 0; }
+.sound-close {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--paper-light);
+  font-size: 20px;
+  line-height: 1;
+  box-shadow: 1px 2px 0 var(--ink);
+}
+.sound-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; }
+.sound-row-name { font-size: 14px; font-weight: 700; }
+/* The switches (music: spec 017, effects: spec 028): a small On/Off button; Off looks like plain paper. */
 .music-switch { min-width: 64px; padding: 6px 12px; font-size: 14px; }
 .music-switch[aria-checked="false"] { background: var(--paper-shade); color: var(--ink-soft); }
+/* The volume slider (spec 020) between a quiet and a loud speaker. */
+.sound-volume { flex: 1; max-width: 172px; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.sound-volume svg { flex-shrink: 0; }
+.volume-slider {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--ink);
+  cursor: pointer;
+}
+/* The muted mark: a red diagonal strike over the speaker, on the button and in the panel,
+   shown by main.js while the music is off or the volume is 0. The wider line under it has
+   the colour of what lies behind, so the strike stays clear of the speaker's waves. */
+.sound-strike-line { stroke: var(--stamp-red); stroke-width: 2.6; stroke-linecap: round; }
+.sound-strike-edge { stroke: var(--paper); stroke-width: 5.4; stroke-linecap: round; }
+.mute-button .sound-strike-edge { stroke: var(--accent); }
 
 /* --- Join screen (spec 015): a student ID card ------------------------------------------ */
 
@@ -1194,19 +1247,6 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
 .segmented button:disabled:not(.active) { opacity: 0.55; }
 .vote-dot { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
 
-/* Spec 020: the volume slider, right under the "?" and mute buttons, in the strip the
-   panels already keep free (they start 108px from the right). */
-.volume-slider {
-  position: fixed;
-  z-index: 30;
-  top: calc(58px + env(safe-area-inset-top));
-  right: calc(10px + env(safe-area-inset-right));
-  width: 86px;
-  margin: 0;
-  accent-color: var(--ink);
-  cursor: pointer;
-}
-
 /* Spec 021: the surf mini-game. */
 .surf-sea { position: relative; height: 56px; margin: 8px 0 12px; border-radius: 8px; background: linear-gradient(#7cc3e8, #2f80c3); overflow: hidden; }
 .surf-crest { position: absolute; top: 0; bottom: 0; background: rgba(255, 255, 255, 0.25); }
@@ -1223,6 +1263,25 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
 .swatch { width: 20px; height: 20px; padding: 0; border: 2px solid rgba(0, 0, 0, 0.35); border-radius: 50%; cursor: pointer; }
 .swatch-any { width: auto; padding: 0 6px; border-radius: 10px; font-size: 10px; font-weight: 700; }
 .swatch.active { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* Spec 028: a colour another player already has. Not clickable (main.js disables it), its
+   colour washed out by a veil of paper, and crossed out with a diagonal ink line. */
+.swatch { position: relative; }
+.swatch.taken { opacity: 1; cursor: not-allowed; border-color: var(--rule); }
+.swatch.taken::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--paper); opacity: 0.6; }
+.swatch.taken::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  background: linear-gradient(to top right, transparent calc(50% - 1.5px), var(--ink) calc(50% - 1.5px), var(--ink) calc(50% + 1.5px), transparent calc(50% + 1.5px));
+}
+
+/* Spec 028: name colours on the meeting, voting and result cards and on the end screen.
+   Red (5.7:1 on paper): an examiner's own name and the fellow examiner's. Green (5.7:1): a
+   student's own name. main.js sets the classes from the own role and from the own
+   snapshot's `fellow_examiners` (sent to examiners only), so a student's page never colours
+   anyone else's name. The second selector of each rule wins over a ghost card's grey name. */
+.name-examiner, .meeting-player-card.ghost .player-name.name-examiner { color: var(--stamp-red); }
+.name-student, .meeting-player-card.ghost .player-name.name-student { color: var(--stamp-green); }
 .id-photo { overflow: visible; }
 
 /* Spec 024: a speech bubble for the group chat and the Helpdesk; file names in monospace. */
