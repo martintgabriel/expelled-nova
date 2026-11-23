@@ -18,7 +18,7 @@ from server.main import app
 
 TILE = 32
 # Spec 018: the two courtyards are named apart, "Upper" (north) and "Lower" (south).
-AREA_NAMES = {"Main Entrance", "Library", "Food Court", "Auditorium", "Student Services", "Upper Courtyard", "Lower Courtyard"}
+AREA_NAMES = {"Main Entrance", "Library", "Cafeteria", "Auditorium", "Student Services", "Upper Courtyard", "Lower Courtyard"}
 # Spec 011: furniture and plants no longer block walking, so they moved from the solid
 # kinds to the floor kinds.
 SOLID_KINDS = {"sea", "solar", "greenroof", "roof", "glasswall", "screen"}

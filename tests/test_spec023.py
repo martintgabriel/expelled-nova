@@ -167,7 +167,8 @@ def test_the_fire_alarm_counts_down_and_counts_the_evacuated():
     game.sabotage(examiner.id, "fire")
     for player in (examiner, *students):
         state = emergency(game, player)
-        assert state == {"kind": "fire", "seconds_left": rules.FIRE_SECONDS, "evacuated": 0, "students": len(students)}
+        # Spec 035: "total" counts every living player (examiners must go too).
+        assert state == {"kind": "fire", "seconds_left": rules.FIRE_SECONDS, "evacuated": 0, "total": len(students) + 1}
     evacuate(game, students[0])
     game.step()
     assert emergency(game, students[1])["evacuated"] == 1

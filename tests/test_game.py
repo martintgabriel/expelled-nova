@@ -342,7 +342,7 @@ def test_campus_map_is_valid():
     assert names == {
         "Main Entrance",
         "Library",
-        "Food Court",
+        "Cafeteria",
         "Auditorium",
         "Student Services",
         # Spec 018: the two courtyards are named apart.

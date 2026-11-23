@@ -64,6 +64,7 @@ SWITCH_RANGE = 48  # px from a player's centre to the centre of the switch's til
 SABOTAGE_KINDS = ("lights", "fire", "wifi")
 FIRE_SECONDS = 40  # time for every living student to reach the assembly point
 FIRE_TICKS = FIRE_SECONDS * TICK_RATE
+FIRE_MISSING_TICKS = 8 * TICK_RATE  # spec 035: how long everyone sees who did not come
 NO_WIFI = "No Wi-Fi. Try again later."
 # Spec 029: the meeting chat.
 CHAT_MAX = 80  # characters per message
@@ -80,10 +81,10 @@ PLAYER_COLORS = range(MAX_PLAYERS)
 HAT_COUNT = 10  # spec 022: hat numbers 0-9, drawn by web/hats.js; 0 is the graduation cap
 
 # The Segway security guard (spec 027): a hazard, never a player (see server/guard.py).
-GUARD_SPEED = 1.6 * SPEED  # px/s: faster than any player, so nobody can outrun or escort him
+GUARD_SPEED = 1.3 * SPEED  # px/s: faster than any player (spec 035: was 1.6x, now easier to read)
 GUARD_STEP = GUARD_SPEED / TICK_RATE  # px/tick
-GUARD_VISION_TILES = 4  # a smaller, narrower view than a player's own (VISION_TILES = 6)
-GUARD_CONE_DEGREES = 70
+GUARD_VISION_TILES = 6  # spec 035: was 4, too small to matter
+GUARD_CONE_DEGREES = 100  # spec 035: was 70
 GUARD_PAUSE_CHANCE = 0.25  # checked once with self.rng each time he arrives at a waypoint
 GUARD_PAUSE_SECONDS = (1, 3)  # (min, max), both inclusive, drawn with self.rng
 GUARD_SWEEP_DEGREES = 25  # how far his facing sweeps either side of sweep_base while paused
@@ -388,6 +389,10 @@ class Game:
         # {"kind": "wifi"}.
         self.emergency = None
         self.fire_lost = False  # the round ended because the fire alarm ran out
+        # Spec 035: who was not at the assembly point when the alarm ended, and until when
+        # everyone sees it.
+        self.fire_missing = []
+        self.fire_missing_until = 0
         self.next_sabotage_tick = 0  # first tick at which an examiner may turn the lights off
         self.players = {}  # by id, in join order (Python dicts keep insertion order)
         # The host's player id (spec 015): the first player to join, until the host hands
@@ -969,6 +974,8 @@ class Game:
         self.guard = None  # spec 027: he does not exist in the lobby
         self.emergency = None  # spec 023
         self.fire_lost = False
+        self.fire_missing = []
+        self.fire_missing_until = 0
         self.security_witnessed = False
         self.lights_on = True
         self.next_sabotage_tick = 0
@@ -1291,11 +1298,16 @@ class Game:
         if self.emergency is None:
             return
         if self.emergency["kind"] == "fire":
-            students = [p for p in self.players.values() if p.role == STUDENT and p.alive]
-            for student in students:
-                if self._in_assembly(student):
-                    self.emergency["evacuated"].add(student.id)
+            # Spec 035: everyone alive checks in, examiners too; the alarm ends once every
+            # living student is in, and then names whoever did not come.
+            living = [p for p in self.players.values() if p.alive]
+            for player in living:
+                if self._in_assembly(player):
+                    self.emergency["evacuated"].add(player.id)
+            students = [p for p in living if p.role == STUDENT]
             if all(s.id in self.emergency["evacuated"] for s in students):
+                self.fire_missing = [p.id for p in living if p.id not in self.emergency["evacuated"]]
+                self.fire_missing_until = self.tick + FIRE_MISSING_TICKS
                 self._end_emergency()
             elif self.tick >= self.emergency["ends_tick"]:
                 self.fire_lost = True
@@ -1317,13 +1329,13 @@ class Game:
         if self.emergency is None:
             return None
         if self.emergency["kind"] == "fire":
-            students = [p for p in self.players.values() if p.role == STUDENT and p.alive]
-            evacuated = sum(s.id in self.emergency["evacuated"] for s in students)
+            living = [p for p in self.players.values() if p.alive]  # spec 035: everyone
+            evacuated = sum(p.id in self.emergency["evacuated"] for p in living)
             return {
                 "kind": "fire",
                 "seconds_left": self._seconds_until(self.emergency["ends_tick"]),
                 "evacuated": evacuated,
-                "students": len(students),
+                "total": len(living),
             }
         return {"kind": "wifi", "seconds_left": None}
 
@@ -1670,6 +1682,8 @@ class Game:
         if self.phase != LOBBY:
             state["lights_on"] = self.lights_on
             state["emergency"] = self._emergency_for()  # spec 023
+            if self.tick < self.fire_missing_until:  # spec 035
+                state["fire_missing"] = list(self.fire_missing)
             state["vision_radius"] = self._vision_radius_for(me)
             # Spec 033: every role can fix, so every role gets its own "fixing".
             state["fixing"] = None

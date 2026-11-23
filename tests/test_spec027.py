@@ -386,7 +386,9 @@ def test_the_guards_starting_waypoint_is_far_enough_from_every_spawn_on_the_real
 
 def test_seen_by_guard_requires_range_angle_and_a_clear_line():
     game, _, _ = playing()
-    game.guard.x, game.guard.y = centre(5, 3)
+    # Spec 035: his view grew to 6 tiles, so he stands further left to keep the far point
+    # inside this small hall (it was centre(5, 3) with a 4-tile view).
+    game.guard.x, game.guard.y = centre(2, 3)
     game.guard.facing = 0.0  # facing straight along +x
 
     within_cone_and_range = (game.guard.x + GUARD_VISION_TILES * TILE - 1, game.guard.y)

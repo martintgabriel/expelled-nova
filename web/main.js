@@ -651,7 +651,9 @@ function updateControls(state) {
   ui.controlReport.hidden = ui.reportButton.hidden;
   ui.controlMeeting.hidden = ui.meetingButton.hidden || ui.meetingButton.disabled;
   ui.controlUse.hidden = ui.taskButton.hidden && ui.fixButton.hidden;
-  setText(ui.controlUseLabel, ui.fixButton.hidden ? "task" : "fix lights");
+  // Spec 035: "router" while the Wi-Fi is down, "lights" while the lights are off.
+  const target = ui.fixButton.hidden ? null : fixTarget(state);
+  setText(ui.controlUseLabel, target ? target.short : "task");
   ui.controlDoor.hidden = ui.doorItem.hidden || ui.doorActionButton.disabled;
   ui.controlSabotage.hidden = ui.sabotageButton.hidden;
 }
@@ -1684,12 +1686,15 @@ const MINIGAME_HINTS = {
   ticket: "Press when your number is called.",
   translate: "Pick the right translation.",
   paper_jam: "Clear all 3 paper jams.",
-  tray: "Tap in the order of the Nova line.", // spec 021
+  tray: "Drag the food onto your tray in the order of the Nova line, then pay.", // spec 021/035
   surf: "Stand up when the wave is under your board.", // spec 021
   print_file: "Print exactly the file the group chat asks for.", // spec 024
   cert_file: "Print exactly the file the office asks for.", // spec 024
   chat: "Answer the Helpdesk in Portuguese.", // spec 024
   nata: "Tap the seagulls before they reach your pastel.", // spec 031
+  beer: "Tap Sip! fast. Pause too long and it gets warm.", // spec 035
+  frisbee: "Tap a frisbee while it flies to catch it.", // spec 035
+  seat: "Tap the free seat before someone else takes it.", // spec 035
 };
 
 const NATA_EATEN_MS = 1200; // how long the "gone" tart stays up after a seagull time-out
@@ -1747,15 +1752,15 @@ function updateMinigame(state) {
   // Spec 021: the surf wave's phase changes every tick; leave it out of the key so the
   // panel (and its button) is not rebuilt 20 times a second, and only move the wave.
   // Spec 031: the same for the seagulls' clock ("age") and the bite count.
-  const { phase, age, bites, ...stable } = doing.challenge;
-  const moving = doing.challenge.kind === "surf" || doing.challenge.kind === "nata";
+  const { phase, age, bites, next_in: nextIn, ...stable } = doing.challenge;
+  const moving = ["surf", "nata", "frisbee", "seat"].includes(doing.challenge.kind); // spec 035 too
   const key = JSON.stringify([doing.task, moving ? stable : doing.challenge]);
   if (key !== minigameKey) {
     minigameKey = key;
     renderChallenge(doing.task, doing.challenge);
   }
   if (doing.challenge.kind === "surf") moveWave(doing.challenge);
-  if (doing.challenge.kind === "nata") syncNata(doing.challenge);
+  if (doing.challenge.kind === "nata" || doing.challenge.kind === "frisbee") syncNata(doing.challenge);
   const note = state.task_note || "";
   if (note !== minigameNoteShown) {
     minigameNoteShown = note;
@@ -1786,7 +1791,9 @@ function renderChallenge(taskId, challenge) {
   else if (challenge.kind === "surf") renderSurf(taskId, challenge);
   else if (challenge.kind === "print_file" || challenge.kind === "cert_file") renderFilePick(taskId, challenge);
   else if (challenge.kind === "chat") renderChat(taskId, challenge);
-  else if (challenge.kind === "nata") renderNata(taskId, challenge);
+  else if (challenge.kind === "nata" || challenge.kind === "frisbee") renderNata(taskId, challenge);
+  else if (challenge.kind === "beer") renderBeer(taskId, challenge);
+  else if (challenge.kind === "seat") renderSeat(taskId, challenge);
 }
 
 // nata (spec 031) — you hold your pastel de nata, seagulls swoop in from all sides; tap
@@ -1801,20 +1808,29 @@ function renderNata(taskId, challenge) {
   counter.className = "minigame-hits";
   const sky = document.createElement("div");
   sky.className = "nata-sky";
-  const tart = renderNataTart(false);
-  tart.classList.add("nata-center");
+  // Spec 035: the frisbee game uses the same flight engine: hands instead of a pastel.
+  const frisbee = challenge.kind === "frisbee";
+  let tart;
+  if (frisbee) {
+    tart = document.createElement("span");
+    tart.className = "nata-center frisbee-hands";
+    tart.textContent = "\u{1F64C}";
+  } else {
+    tart = renderNataTart(false);
+    tart.classList.add("nata-center");
+  }
   sky.append(tart);
   const gulls = challenge.gulls.map((plan, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "nata-gull";
-    button.textContent = "\u{1F426}";
-    button.setAttribute("aria-label", "Shoo the seagull");
+    button.textContent = frisbee ? "\u{1F94F}" : "\u{1F426}";
+    button.setAttribute("aria-label", frisbee ? "Catch the frisbee" : "Shoo the seagull");
     button.hidden = true;
     button.addEventListener("pointerdown", (event) => {
       event.preventDefault(); // a tap counts at once, without waiting for the click
-      Sound.play("seagullHit");
-      flinchTart(tart);
+      Sound.play(frisbee ? "cardAccept" : "seagullHit");
+      if (!frisbee) flinchTart(tart);
       sendTaskInput(taskId, index);
     });
     sky.append(button);
@@ -1831,7 +1847,10 @@ function syncNata(challenge) {
   if (!nataView) return;
   nataView.age0 = challenge.age;
   nataView.t0 = performance.now();
-  nataView.counter.textContent = `Shooed: ${challenge.shooed}/${challenge.goal} · Bites: ${challenge.bites}/2`;
+  nataView.counter.textContent =
+    challenge.kind === "frisbee"
+      ? `Caught: ${challenge.shooed}/${challenge.goal} · Dropped: ${challenge.bites}/3`
+      : `Shooed: ${challenge.shooed}/${challenge.goal} · Bites: ${challenge.bites}/2`;
   challenge.gulls.forEach((plan, i) => {
     if (nataView.gulls[i]) nataView.gulls[i].shooed = plan.shooed;
   });
@@ -1909,23 +1928,110 @@ function renderChat(taskId, challenge) {
 // tray (spec 021) — the Nova cafeteria line: the order is printed, the buttons are shuffled.
 const TRAY_ICONS = { "Main course": "\u{1F35D}", Soup: "\u{1F963}", Drink: "\u{1F964}", Dessert: "\u{1F36E}", Pay: "\u{1F4B6}" };
 
+// beer (spec 035) — tap "Sip!" fast; the server measures the pauses with its own clock.
+function renderBeer(taskId, challenge) {
+  const glasses = document.createElement("p");
+  glasses.className = "beer-glasses";
+  glasses.textContent = Array.from({ length: challenge.goal }, (_, i) => (i < challenge.beers ? "\u2705" : "\u{1F37A}")).join(" ");
+  const meter = document.createElement("div");
+  meter.className = "beer-meter";
+  const fill = document.createElement("div");
+  fill.className = "beer-fill";
+  fill.style.height = `${100 - (challenge.sips / challenge.per_beer) * 100}%`;
+  meter.append(fill);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "beer-sip";
+  button.textContent = "Sip!";
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    Sound.play("taskStep");
+    sendTaskInput(taskId, true);
+  });
+  ui.minigameContent.append(glasses, meter, button);
+}
+
+// seat (spec 035) — twelve seats, one free; the free one moves every 1.5 s (the server's clock).
+function renderSeat(taskId, challenge) {
+  const count = document.createElement("p");
+  count.className = "minigame-hits";
+  count.textContent = `Lectures attended: ${challenge.sits}/${challenge.goal}`;
+  const board = document.createElement("div");
+  board.className = "seat-board";
+  for (let i = 0; i < challenge.seats; i++) {
+    const seat = document.createElement("button");
+    seat.type = "button";
+    seat.className = "seat" + (i === challenge.free ? " free" : "");
+    seat.textContent = i === challenge.free ? "\u{1FA91}" : "\u{1F464}";
+    seat.setAttribute("aria-label", i === challenge.free ? "Free seat" : "Taken seat");
+    seat.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      Sound.play("click");
+      sendTaskInput(taskId, i);
+    });
+    board.append(seat);
+  }
+  const front = document.createElement("p");
+  front.className = "seat-front";
+  front.textContent = "\u{1F4FD}\uFE0F front";
+  ui.minigameContent.append(count, front, board);
+}
+
 function renderTray(taskId, challenge) {
+  // Spec 035: a real tray. Drag the food onto it in the order of the Nova line, then pay.
+  // A tap on an item works too (phones). The order is checked on the server (spec 021).
   const line = document.createElement("p");
   line.className = "minigame-hits";
   line.textContent = challenge.order.map((item, i) => (i < challenge.next ? `\u2713 ${item}` : item)).join("  \u2192  ");
-  const options = document.createElement("div");
-  options.className = "minigame-options";
+  const plate = document.createElement("div");
+  plate.className = "tray-plate";
+  for (const item of challenge.order.slice(0, challenge.next)) {
+    if (item === "Pay") continue;
+    const placed = document.createElement("span");
+    placed.className = "tray-food";
+    placed.textContent = TRAY_ICONS[item] || "";
+    plate.append(placed);
+  }
+  const counter = document.createElement("div");
+  counter.className = "tray-counter";
+  const pick = (index) => {
+    Sound.play("click");
+    sendTaskInput(taskId, index);
+  };
   challenge.items.forEach((item, index) => {
     const button = document.createElement("button");
     button.type = "button";
+    if (item === "Pay") {
+      button.className = "tray-pay";
+      button.textContent = "\u{1F4B6} Pay";
+      button.addEventListener("click", () => pick(index));
+      return counter.append(button);
+    }
+    button.className = "tray-item";
     button.textContent = `${TRAY_ICONS[item] || ""} ${item}`;
-    button.addEventListener("click", () => {
-      Sound.play("click");
-      sendTaskInput(taskId, index);
+    let start = null;
+    button.addEventListener("pointerdown", (event) => {
+      start = { x: event.clientX, y: event.clientY };
+      button.setPointerCapture(event.pointerId);
+      button.classList.add("dragging");
     });
-    options.append(button);
+    button.addEventListener("pointermove", (event) => {
+      if (!start) return;
+      button.style.transform = `translate(${event.clientX - start.x}px, ${event.clientY - start.y}px)`;
+    });
+    button.addEventListener("pointerup", (event) => {
+      if (!start) return;
+      const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+      const box = plate.getBoundingClientRect();
+      const onTray = event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+      start = null;
+      button.classList.remove("dragging");
+      button.style.transform = "";
+      if (onTray || moved < 6) pick(index); // dropped on the tray, or simply tapped
+    });
+    counter.append(button);
   });
-  ui.minigameContent.append(line, options);
+  ui.minigameContent.append(line, plate, counter);
 }
 
 // surf (spec 021) — a wave rolls under the board every 2 s; stand up on the crest. The
@@ -2286,11 +2392,11 @@ function fixTarget(state) {
   const kind = state.emergency ? state.emergency.kind : null;
   if (kind === "lights" && welcome.map.light_switch) {
     const [x, y] = welcome.map.light_switch;
-    return { x, y, label: "Fix the lights" };
+    return { x, y, kind: "lights", label: "Fix the lights", short: "lights" };
   }
   if (kind === "wifi") {
     const router = sabotagePlace("wifi");
-    return router ? { x: router.x, y: router.y, label: "Restart router" } : null;
+    return router ? { x: router.x, y: router.y, kind: "wifi", label: "Restart router", short: "router" } : null;
   }
   return null;
 }
@@ -2319,6 +2425,8 @@ function updateLights(state) {
   if (!ui.fixButton.hidden) {
     ui.fixButton.disabled = false;
     setActionReason(ui.fixButton, "", fixTarget(state).label);
+    // Spec 035: the label under the button too ("Fix lights" or "Restart router").
+    setText(document.getElementById("fix-label"), fixTarget(state).kind === "wifi" ? "Restart router" : "Fix lights");
   }
   updateEmergency(state);
 
@@ -2386,10 +2494,20 @@ function updateEmergency(state) {
   lastEmergencyKind = kind;
   document.body.classList.toggle("fire-alarm", kind === "fire");
   ui.emergencyBanner.hidden = kind !== "fire" && kind !== "wifi";
+  // Spec 035: after the alarm, who did not come to the assembly point, for everyone.
+  if (!kind && state.phase === "playing" && Array.isArray(state.fire_missing)) {
+    ui.emergencyBanner.hidden = false;
+    setText(
+      ui.emergencyBanner,
+      state.fire_missing.length
+        ? `Fire alarm over. Not at the assembly point: ${state.fire_missing.map(nameOf).join(", ")}`
+        : "Fire alarm over. Everyone made it to the assembly point.",
+    );
+  }
   if (kind === "fire") {
     const s = emergency.seconds_left;
     const clock = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-    setText(ui.emergencyBanner, `FIRE ALARM! Everyone to the assembly point on the EDP Plaza. ${clock} · Evacuated ${emergency.evacuated}/${emergency.students}`);
+    setText(ui.emergencyBanner, `FIRE ALARM! Everyone to the assembly point on the EDP Plaza. ${clock} · Evacuated ${emergency.evacuated}/${emergency.total}`);
   } else if (kind === "wifi") {
     setText(ui.emergencyBanner, "eduroam is down: no tasks. Restart the router in the Library.");
   }
@@ -2401,15 +2519,115 @@ function updateEmergency(state) {
 
 // Key F: fix the lights at the switch, otherwise do a task (no task place is that close).
 function tryUse() {
-  if (latestState && canFix(latestState)) send({ type: "fix" });
+  if (latestState && canFix(latestState)) openFixPanel(fixTarget(latestState).kind);
   else tryTask();
 }
 
 ui.fixButton.addEventListener("click", () => {
   Sound.play("click");
-  send({ type: "fix" });
+  if (latestState && canFix(latestState)) openFixPanel(fixTarget(latestState).kind);
   ui.fixButton.blur();
 });
+
+// --- The action before a fix (spec 035) ---------------------------------------------------
+// Lights: drag the lever up to the top. Router: pull the plug out, then push it back in.
+// Only then is "fix" sent; the server keeps its own rules and its 3 seconds (spec 008/033).
+const fixUi = {
+  panel: document.getElementById("fix-panel"),
+  title: document.getElementById("fix-title"),
+  hint: document.getElementById("fix-hint"),
+  content: document.getElementById("fix-content"),
+  close: document.getElementById("fix-close"),
+};
+
+function closeFixPanel() {
+  fixUi.panel.hidden = true;
+  fixUi.content.replaceChildren();
+}
+fixUi.close.addEventListener("click", () => {
+  Sound.play("click");
+  closeFixPanel();
+});
+
+// A handle dragged along a vertical track: calls onMove(fraction 0 = bottom .. 1 = top)
+// while dragging and onRelease(fraction) when let go.
+function verticalDrag(track, handle, onMove, onRelease) {
+  let dragging = false;
+  const fractionAt = (event) => {
+    const box = track.getBoundingClientRect();
+    return Math.min(1, Math.max(0, (box.bottom - event.clientY) / box.height));
+  };
+  handle.addEventListener("pointerdown", (event) => {
+    dragging = true;
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  handle.addEventListener("pointermove", (event) => {
+    if (dragging) onMove(fractionAt(event));
+  });
+  handle.addEventListener("pointerup", (event) => {
+    if (!dragging) return;
+    dragging = false;
+    onRelease(fractionAt(event));
+  });
+}
+
+function openFixPanel(kind) {
+  closeFixPanel();
+  fixUi.panel.hidden = false;
+  const track = document.createElement("div");
+  track.className = "fix-track";
+  const handle = document.createElement("div");
+  handle.setAttribute("role", "slider");
+  handle.tabIndex = 0;
+  track.append(handle);
+  const place = (fraction) => {
+    handle.style.bottom = `calc(${fraction * 100}% - ${fraction * 44}px)`;
+  };
+  const done = () => {
+    Sound.play("taskDone");
+    send({ type: "fix" });
+    closeFixPanel();
+  };
+  if (kind === "lights") {
+    setText(fixUi.title, "Fix the lights");
+    setText(fixUi.hint, "Push the lever all the way up.");
+    track.classList.add("lever-track");
+    handle.className = "fix-handle lever";
+    handle.setAttribute("aria-label", "Light lever");
+    place(0);
+    verticalDrag(track, handle, place, (fraction) => {
+      if (fraction > 0.92) done();
+      else place(0); // not far enough: it falls back down
+    });
+  } else {
+    setText(fixUi.title, "Restart the router");
+    setText(fixUi.hint, "Pull the plug out of the router, then push it back in.");
+    track.classList.add("plug-track");
+    handle.className = "fix-handle plug";
+    handle.setAttribute("aria-label", "Router plug");
+    const socket = document.createElement("div");
+    socket.className = "router-box";
+    socket.textContent = "\u{1F4F6}";
+    track.prepend(socket);
+    let pulled = false;
+    place(1);
+    verticalDrag(track, handle, place, (fraction) => {
+      if (!pulled && fraction < 0.15) {
+        pulled = true; // out: the router's lights go off
+        socket.classList.add("off");
+        setText(fixUi.hint, "Now push the plug back in.");
+        place(0);
+      } else if (pulled && fraction > 0.85) {
+        place(1);
+        done();
+      } else {
+        place(pulled ? 0 : 1);
+      }
+    });
+  }
+  fixUi.content.append(track);
+}
 
 ui.sabotageButton.addEventListener("click", () => {
   Sound.play("click");
@@ -2761,12 +2979,14 @@ class CampusScene extends Phaser.Scene {
     if (welcome.map.meeting_point) Render.makeMeetingPoint(this, welcome.map, welcome.meeting_table_radius);
     Render.makeGym(this, welcome.map); // spec 025: people working out under a skylight
     Render.makeSabotagePlaces(this, welcome.map); // spec 023: assembly point and router
+    Render.makeNovaSign(this, welcome.map); // spec 035: the big letters in the Main Entrance
     for (const vent of welcome.map.vents || []) this.vents.set(vent.id, Render.makeVent(this, welcome.map, vent));
     // Every task place of the map as an object (spec 015); own open ones get a glow below.
     for (const station of Render.taskStations(welcome.map)) Render.makeTaskPlace(this, welcome.map, station);
     this.taskRing = Render.makeTaskRing(this);
     this.darkness = Render.makeDarkness(this, welcome.map, welcome.sight_grid, welcome.vision_radius);
     this.switchMark = welcome.map.light_switch ? Render.makeSwitch(this, welcome.map) : null;
+    this.routerMark = Render.makeRouterMark(this, welcome.map); // spec 035
 
     const camera = this.cameras.main;
     camera.setBounds(0, 0, width, height);
@@ -2871,6 +3091,16 @@ class CampusScene extends Phaser.Scene {
       const near = own && Math.hypot((col + 0.5) * t - own.x, (row + 0.5) * t - own.y) <= welcome.switch_range;
       Render.updateSwitch(this.switchMark, off, time, near);
     }
+    if (this.routerMark) {
+      // Spec 035: the router flashes while the Wi-Fi is down, like the switch's bolt.
+      const down = lastPhase === "playing" && latestState.emergency && latestState.emergency.kind === "wifi";
+      const router = sabotagePlace("wifi");
+      const t = welcome.map.tile_size;
+      const near = own && Math.hypot((router.x + 0.5) * t - own.x, (router.y + 0.5) * t - own.y) <= welcome.switch_range;
+      Render.updateSwitch(this.routerMark, Boolean(down), time, near);
+    }
+    // Spec 035: the fix panel closes once fixing is not possible any more (moved away, fixed).
+    if (!fixUi.panel.hidden && !(latestState && canFix(latestState))) closeFixPanel();
 
     // Tasks: a glow on the own open task places and the ring while one runs. The ring
     // moves smoothly from the time the task was first seen; the seconds are the server's.

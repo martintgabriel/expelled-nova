@@ -211,7 +211,10 @@ const Music = (() => {
   function updateWaves() {
     if (!wavesGain) return;
     const inRound = wanted === "playing" || wanted === "dark";
-    const target = on && !document.hidden && inRound ? beach * WAVES_VOLUME : 0;
+    // Spec 035: the waves play in the lobby too, and there quietly anywhere on the campus.
+    const inLobby = wanted === "lobby";
+    const closeness = inLobby ? Math.max(beach, 0.25) : beach;
+    const target = on && !document.hidden && (inRound || inLobby) ? closeness * WAVES_VOLUME : 0;
     if (Math.abs(target - wavesTarget) < 0.01) return; // called every tick: only real changes
     wavesTarget = target;
     wavesGain.gain.setTargetAtTime(target, ctx.currentTime, 0.6);
