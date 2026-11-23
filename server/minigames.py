@@ -15,6 +15,8 @@ TIME_LIMITS = {
     "paper_jam": 30,
     "cable": 25,
     "seagull": 8,
+    "tray": 30,  # spec 020
+    "surf": 25,  # spec 020
 }
 
 TIMEOUT_NOTES = {
@@ -24,6 +26,8 @@ TIMEOUT_NOTES = {
     "paper_jam": "Someone else cleared it.",
     "cable": "Out of time.",
     "seagull": "A seagull took it.",
+    "tray": "The cafeteria closed.",
+    "surf": "The waves are gone. Flat sea.",
 }
 
 KINDS = set(TIME_LIMITS)
@@ -39,6 +43,14 @@ SENTENCES = [
 
 # The five projector/cable port types of the "cable" mini-game (socket, Auditorium).
 PORT_TYPES = ["HDMI", "USB-C", "VGA", "DisplayPort", "Mini DisplayPort"]
+
+# Spec 020: the Nova cafeteria line, in order (tray mini-game, Food Court).
+TRAY_ORDER = ["Main course", "Soup", "Drink", "Dessert", "Pay"]
+# Spec 020: the surf mini-game (beach). A wave rolls by every SURF_PERIOD ticks; standing
+# up while its crest is under the board (ticks SURF_CREST of the cycle) rides it.
+SURF_PERIOD = 40  # ticks per wave (2 s at 20 ticks per second)
+SURF_CREST = (15, 25)  # the riding window inside one cycle, half-open: half a second
+SURF_GOAL = 3  # waves to ride
 
 INVALID_VALUE = "Invalid value for this task"
 
@@ -57,6 +69,10 @@ def make_challenge(kind, rng, tick, tick_rate):
         challenge = {"kind": kind, "round": 1, "wrong": 0, **_new_cable_round(rng)}
     elif kind == "seagull":
         challenge = {"kind": kind, "cell": rng.randrange(9), "hits": 0}
+    elif kind == "tray":
+        challenge = {"kind": kind, "items": rng.sample(TRAY_ORDER, len(TRAY_ORDER)), "next": 0}
+    elif kind == "surf":
+        challenge = {"kind": kind, "start_tick": tick, "rides": 0}
     else:
         raise ValueError(f"Unknown mini-game kind: {kind}")
     challenge["deadline_tick"] = tick + TIME_LIMITS[kind] * tick_rate
@@ -93,6 +109,10 @@ def validate_value(kind, value):
         ok = isinstance(value, str) and len(value) == 5 and value.isascii() and value.isdigit()
     elif kind in ("paper_jam", "seagull"):
         ok = type(value) is int and 0 <= value <= 8
+    elif kind == "tray":
+        ok = type(value) is int and 0 <= value < len(TRAY_ORDER)
+    elif kind == "surf":
+        ok = type(value) is bool and value is True
     elif kind == "cable":
         ok = (
             type(value) is dict
@@ -126,6 +146,10 @@ def apply_answer(challenge, value, rng, tick, tick_rate):
         return _apply_cable(challenge, value, rng)
     if kind == "seagull":
         return _apply_seagull(challenge, value, rng)
+    if kind == "tray":
+        return _apply_tray(challenge, value, rng)
+    if kind == "surf":
+        return _apply_surf(challenge, tick)
     raise ValueError(f"Unknown mini-game kind: {kind}")
 
 
@@ -192,6 +216,30 @@ def _apply_seagull(challenge, value, rng):
     return False, None
 
 
+def _apply_tray(challenge, value, rng):
+    if challenge["items"][value] == TRAY_ORDER[challenge["next"]]:
+        challenge["next"] += 1
+        return challenge["next"] == len(TRAY_ORDER), None
+    challenge["next"] = 0
+    challenge["items"] = rng.sample(TRAY_ORDER, len(TRAY_ORDER))
+    return False, "Wrong order. Back of the queue."
+
+
+def _surf_phase(challenge, tick):
+    return (tick - challenge["start_tick"]) % SURF_PERIOD
+
+
+def _apply_surf(challenge, tick):
+    # Like the ticket game, the value (always True) carries no information: the server's
+    # own tick decides whether the player stood up on the crest.
+    low, high = SURF_CREST
+    if low <= _surf_phase(challenge, tick) < high:
+        challenge["rides"] += 1
+        return challenge["rides"] >= SURF_GOAL, None
+    challenge["rides"] = 0
+    return False, "Wipeout! Paddle back out."
+
+
 def public_view(challenge, tick, tick_rate):
     """The subset of `challenge` the owning player may see, with its secrets removed."""
     kind = challenge["kind"]
@@ -214,4 +262,15 @@ def public_view(challenge, tick, tick_rate):
         }
     if kind == "seagull":
         return {"kind": kind, "cell": challenge["cell"], "hits": challenge["hits"]}
+    if kind == "tray":
+        return {"kind": kind, "items": list(challenge["items"]), "next": challenge["next"], "order": list(TRAY_ORDER)}
+    if kind == "surf":
+        return {
+            "kind": kind,
+            "phase": _surf_phase(challenge, tick),
+            "period": SURF_PERIOD,
+            "crest": list(SURF_CREST),
+            "rides": challenge["rides"],
+            "goal": SURF_GOAL,
+        }
     raise ValueError(f"Unknown mini-game kind: {kind}")

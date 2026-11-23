@@ -72,7 +72,9 @@
     {"id": "print", "title": "Print your assignment", "area": "Library", "x": 41, "y": 20, "minigame": "paper_jam", "joke": "PAPER JAM in tray 2. Printed anyway, 1 of 12 pages."},
     {"id": "socket", "title": "Get your slides on the projector", "area": "Auditorium", "x": 34, "y": 40, "minigame": "cable", "joke": "Projector works. Your laptop battery doesn't."},
     {"id": "gate", "title": "Tap your student card at the gate", "area": "Main Entrance", "x": 28, "y": 6, "minigame": "card", "joke": "Beep. Red. Beep. Red. Beep. Green."},
-    {"id": "nata", "title": "Eat your pastel de nata in the sun", "area": "Courtyard", "x": 23, "y": 23, "minigame": "seagull", "joke": "A seagull took it. Task counts anyway."}
+    {"id": "nata", "title": "Eat your pastel de nata in the sun", "area": "Courtyard", "x": 23, "y": 23, "minigame": "seagull", "joke": "A seagull took it. Task counts anyway."},
+    {"id": "tray", "title": "Fill your tray at the Cafeteria", "area": "Food Court", "x": 41, "y": 12, "minigame": "tray", "joke": "Soup of the day: the same as yesterday."},
+    {"id": "surf", "title": "Catch a wave at Carcavelos", "area": "Beach", "x": 3, "y": 19, "minigame": "surf", "joke": "Three waves ridden. Class? What class?"}
   ],
   "decor": [
     {"kind": "sea", "x": 0, "y": 0, "w": 1, "h": 43},

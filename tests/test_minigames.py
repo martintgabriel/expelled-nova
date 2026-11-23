@@ -639,9 +639,10 @@ def receive_until(ws, predicate, limit=10 * TICK_RATE):
 
 
 def test_a_student_solves_a_minigame_over_the_websocket_and_another_player_sees_progress(fresh_game):
-    # Seed 1 deals the real campus: Ada (joins first) is a student with "gate" (the
+    # Seed 4 deals the real campus: Ada (joins first) is a student with "gate" (the
     # "card" mini-game) as her first task, Bo is the examiner (checked once, below).
-    fresh_game.rng = random.Random(1)
+    # Spec 020: was seed 1 before the campus had 8 tasks.
+    fresh_game.rng = random.Random(4)
     with TestClient(app) as client:
         with (
             client.websocket_connect("/ws") as a,

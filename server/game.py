@@ -67,6 +67,7 @@ MEETING_TICKS = MEETING_SECONDS * TICK_RATE  # 1200
 RESULT_TICKS = RESULT_SECONDS * TICK_RATE  # 100
 # Colour numbers 0-9, one per player. Which number is which colour is drawing (web/render.js).
 PLAYER_COLORS = range(MAX_PLAYERS)
+HAT_COUNT = 10  # spec 021: hat numbers 0-9, drawn by web/hats.js; 0 is the graduation cap
 
 # Game phases.
 LOBBY = "lobby"  # before the start: players join and walk around
@@ -105,6 +106,7 @@ class Player:
     role: str | None = None  # None in the lobby, then STUDENT or EXAMINER
     alive: bool = True  # False = ghost: walks through walls, cannot expel or be expelled
     color: int = 0  # colour number, unique in the game, kept until the player leaves
+    hat: int = 0  # spec 021: chosen when joining, 0 = the graduation cap
     next_expel_tick: int = 0  # first tick at which this player may expel (again)
     vent: str | None = None  # id of the vent this examiner is inside right now, or None
     next_vent_tick: int = 0  # first tick at which this player may climb into a vent (again)
@@ -367,7 +369,9 @@ class Game:
 
     # --- Joining and leaving --------------------------------------------------
 
-    def join(self, raw_name):
+    def join(self, raw_name, hat=0, color=None):
+        """Spec 021: `hat` 0-9 and `color` 0-9 (or None for any free colour) are chosen on
+        the ID card. Checks everything before changing anything."""
         if self.phase != LOBBY:
             raise GameError("Game already running")
         if len(self.players) >= MAX_PLAYERS:
@@ -375,8 +379,16 @@ class Game:
         name = validate_nickname(raw_name)
         if any(p.name.casefold() == name.casefold() for p in self.players.values()):
             raise GameError("Nickname is already taken")
+        # type() instead of isinstance(): True/False are ints in Python and must be rejected.
+        if not (type(hat) is int and 0 <= hat < HAT_COUNT):
+            raise GameError(f"Hat must be a number from 0 to {HAT_COUNT - 1}")
+        if color is not None and not (type(color) is int and color in PLAYER_COLORS):
+            raise GameError(f"Colour must be a number from 0 to {MAX_PLAYERS - 1}")
+        if color is not None and any(p.color == color for p in self.players.values()):
+            raise GameError("Colour is already taken")
         x, y = self._tile_centre(*self._free_spawn())
-        player = Player(id=f"p{self.next_id}", name=name, x=x, y=y, color=self._free_color())
+        chosen = self._free_color() if color is None else color
+        player = Player(id=f"p{self.next_id}", name=name, x=x, y=y, color=chosen, hat=hat)
         self.next_id += 1
         self.players[player.id] = player
         if self.host_id is None:
@@ -1363,6 +1375,7 @@ class Game:
             ],
             # Kept next to the player entries, so those stay exactly {id, name, x, y}.
             "colors": {p.id: p.color for p in players},
+            "hats": {p.id: p.hat for p in players},  # spec 021
             "failed_exams": [{"id": e.id, "x": round(e.x, 1), "y": round(e.y, 1)} for e in exams],
             "open_vents": open_vents,
         }

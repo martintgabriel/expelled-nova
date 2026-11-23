@@ -533,7 +533,7 @@ const Render = (() => {
   // the server. The figure is drawn a little bigger than that (FIGURE_SCALE) so it reads
   // well; it may overlap a wall by a few pixels, the server's square never does.
   // Returns a container; move it with setPosition() and call animateCharacter() each frame.
-  function makeCharacter(scene, { name, color, isOwn, half }) {
+  function makeCharacter(scene, { name, color, hat, isOwn, half }) {
     const fill = colorOf(color);
     const radius = half + 1;
 
@@ -552,25 +552,10 @@ const Render = (() => {
     const eyes = [-1, 1].map((side) => scene.add.ellipse(side * 3.7, -1, 5.2, 6.6, 0xffffff));
     const pupils = [-1, 1].map((side) => scene.add.circle(side * 3.7, -0.6, 1.6, OUTLINE));
 
-    // Graduation cap: a band on the head, a flat board on top and a yellow tassel.
+    // The hat (spec 021): one of the ten shared shapes from hats.js; 0 is the graduation cap.
     const cap = scene.add.graphics();
     const top = -radius;
-    cap.fillStyle(0x23262e).fillRoundedRect(-6.5, top - 0.5, 13, 5, 2);
-    cap.fillStyle(0x2d313b);
-    cap.fillPoints(
-      [
-        { x: -radius - 1, y: top - 1 },
-        { x: 0, y: top - 5 },
-        { x: radius + 1, y: top - 1 },
-        { x: 0, y: top + 3 },
-      ],
-      true,
-    );
-    cap.lineStyle(1, 0x596072).lineBetween(-radius - 1, top - 1, 0, top - 5);
-    cap.lineBetween(0, top - 5, radius + 1, top - 1);
-    cap.lineStyle(1.2, 0xf2b33d).lineBetween(0, top - 1, 7.5, top - 0.5);
-    cap.lineBetween(7.5, top - 0.5, 8, top + 4);
-    cap.fillStyle(0xf2b33d).fillCircle(8, top + 5, 1.5);
+    Hats.drawPhaser(cap, hat || 0, top);
 
     // Everything that bobs and floats together, apart from the shadow and the name.
     const figure = scene.add.container(0, 0, [...feet, outline, body, shine, ...eyes, ...pupils, cap]);

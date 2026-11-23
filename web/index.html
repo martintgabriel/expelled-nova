@@ -23,17 +23,27 @@
         <svg class="id-photo" viewBox="0 0 40 46" aria-hidden="true">
           <rect width="40" height="46" fill="#dfe6f2"></rect>
           <circle cx="20" cy="27" r="14" fill="#e5484d" stroke="#16181d" stroke-width="2"></circle>
-          <path d="M6 19 L20 12 L34 19 L20 23 Z" fill="#2d313b" stroke="#596072" stroke-width="1"></path>
-          <path d="M20 19 L29 20 L29.5 26" fill="none" stroke="#f2b33d" stroke-width="1.4"></path>
           <circle cx="15.5" cy="26" r="2.3" fill="#fff"></circle>
           <circle cx="24.5" cy="26" r="2.3" fill="#fff"></circle>
           <circle cx="15.5" cy="26.4" r="0.9" fill="#16181d"></circle>
           <circle cx="24.5" cy="26.4" r="0.9" fill="#16181d"></circle>
+          <g id="id-photo-hat"></g>
         </svg>
         <div class="id-fields">
           <label for="nickname">Name</label>
           <input id="nickname" name="nickname" type="text" maxlength="16" autocomplete="off"
                  placeholder="1–16 letters, digits, spaces" autofocus>
+          <!-- Spec 021: the look, chosen before enrolling. main.js fills the swatches. -->
+          <div class="look-row">
+            <span class="look-label">Hat</span>
+            <button id="hat-prev" type="button" class="look-arrow" aria-label="Previous hat">&lsaquo;</button>
+            <span id="hat-name" class="hat-name" aria-live="polite"></span>
+            <button id="hat-next" type="button" class="look-arrow" aria-label="Next hat">&rsaquo;</button>
+          </div>
+          <div class="look-row">
+            <span class="look-label">Colour</span>
+            <div id="color-swatches" class="swatches" role="group" aria-label="Colour"></div>
+          </div>
           <dl class="id-facts">
             <div><dt>Programme</dt><dd>BSc Surviving the Semester</dd></div>
             <div><dt>Valid until</dt><dd>expelled</dd></div>
@@ -429,6 +439,7 @@
   </div>
 
   <script src="vendor/phaser.min.js"></script>
+  <script src="hats.js"></script>
   <script src="render.js"></script>
   <script src="controls.js"></script>
   <script src="sound.js"></script>

@@ -426,13 +426,17 @@ def join(ws, name, **extra):
     return receive_until(ws, lambda m: m["type"] in ("welcome", "error"))
 
 
-def test_clients_receive_server_colours_and_cannot_pick_their_own():
+def test_clients_receive_server_colours_and_a_picked_colour_stays_unique():
+    # Spec 021 replaces spec 005's "cannot pick their own": a player may now pick a free
+    # colour on the ID card; a taken one is rejected, and without a pick the server still
+    # hands out the lowest free colour.
     with TestClient(app) as client:
         with client.websocket_connect("/ws") as a, client.websocket_connect("/ws") as b:
-            welcome_a = join(a, "Alice", color=7)  # the extra field is ignored
+            welcome_a = join(a, "Alice", color=7)
             assert welcome_a["type"] == "welcome"
             assert welcome_a["vision_radius"] == VISION_TILES * welcome_a["map"]["tile_size"]
-            welcome_b = join(b, "Bob", color=7)
+            assert join(b, "Bob", color=7) == {"type": "error", "reason": "Colour is already taken"}
+            welcome_b = join(b, "Bob")
             a_id, b_id = welcome_a["id"], welcome_b["id"]
 
             def both(m):
@@ -440,7 +444,7 @@ def test_clients_receive_server_colours_and_cannot_pick_their_own():
 
             state_a = receive_until(a, both)
             state_b = receive_until(b, both)
-            assert state_a["colors"] == state_b["colors"] == {a_id: 0, b_id: 1}
+            assert state_a["colors"] == state_b["colors"] == {a_id: 7, b_id: 0}
             assert state_a["area"] == "Main Entrance"
 
 

@@ -31,6 +31,11 @@ const ui = {
   joinScreen: document.getElementById("join-screen"),
   joinForm: document.getElementById("join-form"),
   nickname: document.getElementById("nickname"),
+  hatPrev: document.getElementById("hat-prev"),
+  hatNext: document.getElementById("hat-next"),
+  hatName: document.getElementById("hat-name"),
+  colorSwatches: document.getElementById("color-swatches"),
+  idPhotoHat: document.getElementById("id-photo-hat"),
   joinButton: document.getElementById("join-button"),
   joinError: document.getElementById("join-error"),
   hud: document.getElementById("hud"),
@@ -255,6 +260,73 @@ let heardOpenVents = new Set(); // hatch ids that showed open one state ago
 // (everyone is visible in the lobby) are remembered here.
 const knownNames = new Map();
 const knownColors = new Map();
+const knownHats = new Map(); // spec 021: player id -> hat number, also for players out of sight
+
+// --- The look on the ID card (spec 021): hat and colour, sent with "join" -------------
+// Remembered per browser; the server checks both again (range, colour not taken).
+const LOOK_KEY = "expelled-nova-look";
+const look = loadLook();
+
+function loadLook() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOOK_KEY) || "{}");
+    const hat = Number.isInteger(saved.hat) && saved.hat >= 0 && saved.hat < Hats.COUNT ? saved.hat : 0;
+    const color = Number.isInteger(saved.color) && saved.color >= 0 && saved.color < 10 ? saved.color : null;
+    return { hat, color };
+  } catch {
+    return { hat: 0, color: null }; // storage unavailable or broken: the defaults
+  }
+}
+
+function saveLook() {
+  try {
+    localStorage.setItem(LOOK_KEY, JSON.stringify(look));
+  } catch {
+    // storage unavailable: the look just does not survive a reload
+  }
+}
+
+function renderLook() {
+  ui.hatName.textContent = Hats.names[look.hat];
+  ui.idPhotoHat.replaceChildren(Hats.svg(look.hat, 20, 13, 14 / 11));
+  const photoBody = ui.idPhotoHat.parentNode.querySelector("circle");
+  photoBody.setAttribute("fill", look.color === null ? "#e5484d" : Render.colorCss(look.color));
+  for (const swatch of ui.colorSwatches.children) {
+    const value = swatch.dataset.color === "any" ? null : Number(swatch.dataset.color);
+    swatch.classList.toggle("active", value === look.color);
+    swatch.setAttribute("aria-pressed", String(value === look.color));
+  }
+}
+
+function stepHat(delta) {
+  look.hat = (look.hat + delta + Hats.COUNT) % Hats.COUNT;
+  saveLook();
+  renderLook();
+}
+
+ui.hatPrev.addEventListener("click", () => stepHat(-1));
+ui.hatNext.addEventListener("click", () => stepHat(1));
+
+for (const value of ["any", 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+  const swatch = document.createElement("button");
+  swatch.type = "button";
+  swatch.className = "swatch" + (value === "any" ? " swatch-any" : "");
+  swatch.dataset.color = String(value);
+  if (value === "any") {
+    swatch.textContent = "Any";
+    swatch.setAttribute("aria-label", "Any free colour");
+  } else {
+    swatch.style.background = Render.colorCss(value);
+    swatch.setAttribute("aria-label", `Colour ${value + 1}`);
+  }
+  swatch.addEventListener("click", () => {
+    look.color = value === "any" ? null : value;
+    saveLook();
+    renderLook();
+  });
+  ui.colorSwatches.append(swatch);
+}
+renderLook();
 
 // --- Connection -----------------------------------------------------------------
 
@@ -301,6 +373,7 @@ function handleMessage(message) {
     latestState = message;
     for (const p of message.players) knownNames.set(p.id, p.name);
     for (const [id, color] of Object.entries(message.colors)) knownColors.set(id, color);
+    for (const [id, hat] of Object.entries(message.hats || {})) knownHats.set(id, hat);
     // Keep about one second of history.
     while (snapshots.length > welcome.tick_rate) snapshots.shift();
     updateHud(message);
@@ -335,20 +408,26 @@ function playerColor(state, playerId) {
   return state.colors[playerId] ?? knownColors.get(playerId);
 }
 
+// Spec 021: the hat, like the colour also for players out of sight.
+function playerHat(state, playerId) {
+  return (state.hats && state.hats[playerId]) ?? knownHats.get(playerId) ?? 0;
+}
+
 // A small original character (spec 014), echoing the one drawn on the map (render.js) at a
 // glance: a round body in the player's colour, a graduation cap and two eyes. Used for the
 // lobby chips and the meeting cards; a ghost is drawn greyed out with CSS (.ghost), not here.
-function characterChip(colorNumber, size = 32) {
+function characterChip(colorNumber, size = 32, hat = 0) {
   const svg = svgEl("svg", { viewBox: "0 0 40 40", width: size, height: size, class: "chip-figure" });
   const fill = Render.colorCss(colorNumber);
   svg.append(
     svgEl("circle", { cx: 20, cy: 23, r: 14, fill, stroke: "#16181d", "stroke-width": 2 }),
-    svgEl("path", { d: "M6 15 L20 8 L34 15 L20 19 Z", fill: "#2d313b", stroke: "#596072", "stroke-width": 1 }),
     svgEl("circle", { cx: 15.5, cy: 22, r: 2.3, fill: "#fff" }),
     svgEl("circle", { cx: 24.5, cy: 22, r: 2.3, fill: "#fff" }),
     svgEl("circle", { cx: 15.5, cy: 22.4, r: 0.9, fill: "#16181d" }),
     svgEl("circle", { cx: 24.5, cy: 22.4, r: 0.9, fill: "#16181d" }),
+    Hats.svg(hat, 20, 9, 14 / 11), // spec 021: this head (r 14, top at y 9) is 14/11 of the map's
   );
+  svg.style.overflow = "visible"; // tall hats may stick out of the 40x40 box
   return svg;
 }
 
@@ -512,7 +591,7 @@ function renderLobby(state) {
         // and, for the host, the hand-over button on every other player's line.
         const item = document.createElement("li");
         item.className = "lobby-chip";
-        item.append(characterChip(playerColor(state, p.id), 32));
+        item.append(characterChip(playerColor(state, p.id), 32, playerHat(state, p.id)));
         const name = document.createElement("span");
         name.className = "lobby-chip-name";
         name.append(p.name); // appended as text: never read as HTML
@@ -782,7 +861,7 @@ function renderEnd(state) {
       ...state.players.map((p) => {
         const role = state.roles[p.id];
         const item = document.createElement("li");
-        item.append(characterChip(playerColor(state, p.id), 24), p.name); // appended as text: never read as HTML
+        item.append(characterChip(playerColor(state, p.id), 24, playerHat(state, p.id)), p.name); // appended as text: never read as HTML
         item.append(tag(role === "examiner" ? "Examiner" : "Student", role));
         // "ghost", not "expelled": a ghost may also have been voted out (spec 006).
         if (ghosts.has(p.id)) item.append(tag("ghost", "ghost"));
@@ -961,7 +1040,7 @@ function canActuallyVote(state, meeting) {
 function buildPlayerCard(state, playerId, { isGhost, hasVoted, canVote }) {
   const card = document.createElement("div");
   card.className = "meeting-player-card" + (isGhost ? " ghost" : "");
-  card.append(characterChip(playerColor(state, playerId), 40));
+  card.append(characterChip(playerColor(state, playerId), 40, playerHat(state, playerId)));
   const name = document.createElement("span");
   name.className = "player-name";
   name.append(nameOf(playerId)); // appended as text: never read as HTML
@@ -1135,7 +1214,7 @@ function renderResult(state, result) {
   const cards = Object.entries(result.votes).map(([playerId, count]) => {
     const card = document.createElement("div");
     card.className = "meeting-player-card";
-    card.append(characterChip(playerColor(state, playerId), 40));
+    card.append(characterChip(playerColor(state, playerId), 40, playerHat(state, playerId)));
     const name = document.createElement("span");
     name.className = "player-name";
     name.append(nameOf(playerId)); // appended as text: never read as HTML
@@ -1358,6 +1437,8 @@ const MINIGAME_HINTS = {
   ticket: "Press when your number is called.",
   translate: "Pick the right translation.",
   paper_jam: "Clear all 3 paper jams.",
+  tray: "Tap in the order of the Nova line.", // spec 020
+  surf: "Stand up when the wave is under your board.", // spec 020
 };
 
 const NATA_EATEN_MS = 1200; // how long the "gone" tart stays up after a seagull time-out
@@ -1412,11 +1493,15 @@ function updateMinigame(state) {
   const task = (state.tasks || []).find((t) => t.id === doing.task);
   setText(ui.minigameTitle, task ? task.title : "");
   setText(ui.minigameHint, MINIGAME_HINTS[doing.challenge.kind] || "");
-  const key = JSON.stringify([doing.task, doing.challenge]);
+  // Spec 020: the surf wave's phase changes every tick; leave it out of the key so the
+  // panel (and its button) is not rebuilt 20 times a second, and only move the wave.
+  const { phase, ...stable } = doing.challenge;
+  const key = JSON.stringify([doing.task, doing.challenge.kind === "surf" ? stable : doing.challenge]);
   if (key !== minigameKey) {
     minigameKey = key;
     renderChallenge(doing.task, doing.challenge);
   }
+  if (doing.challenge.kind === "surf") moveWave(doing.challenge);
   const note = state.task_note || "";
   if (note !== minigameNoteShown) {
     minigameNoteShown = note;
@@ -1443,6 +1528,76 @@ function renderChallenge(taskId, challenge) {
   else if (challenge.kind === "ticket") renderTicket(taskId, challenge);
   else if (challenge.kind === "translate") renderTranslate(taskId, challenge);
   else if (challenge.kind === "paper_jam") renderPaperJam(taskId, challenge);
+  else if (challenge.kind === "tray") renderTray(taskId, challenge);
+  else if (challenge.kind === "surf") renderSurf(taskId, challenge);
+}
+
+// tray (spec 020) — the Nova cafeteria line: the order is printed, the buttons are shuffled.
+const TRAY_ICONS = { "Main course": "\u{1F35D}", Soup: "\u{1F963}", Drink: "\u{1F964}", Dessert: "\u{1F36E}", Pay: "\u{1F4B6}" };
+
+function renderTray(taskId, challenge) {
+  const line = document.createElement("p");
+  line.className = "minigame-hits";
+  line.textContent = challenge.order.map((item, i) => (i < challenge.next ? `\u2713 ${item}` : item)).join("  \u2192  ");
+  const options = document.createElement("div");
+  options.className = "minigame-options";
+  challenge.items.forEach((item, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `${TRAY_ICONS[item] || ""} ${item}`;
+    button.addEventListener("click", () => {
+      Sound.play("click");
+      sendTaskInput(taskId, index);
+    });
+    options.append(button);
+  });
+  ui.minigameContent.append(line, options);
+}
+
+// surf (spec 020) — a wave rolls under the board every 2 s; stand up on the crest. The
+// server decides by its own tick; this only draws the wave from the latest `phase`.
+let surfWave = null;
+
+function renderSurf(taskId, challenge) {
+  const rides = document.createElement("p");
+  rides.className = "minigame-hits";
+  rides.textContent = `Waves ridden: ${challenge.rides}/${challenge.goal}`;
+  const sea = document.createElement("div");
+  sea.className = "surf-sea";
+  const crest = document.createElement("div");
+  crest.className = "surf-crest";
+  const board = document.createElement("div");
+  board.className = "surf-board";
+  board.textContent = "\u{1F3C4}";
+  const wave = document.createElement("div");
+  wave.className = "surf-wave";
+  wave.textContent = "\u{1F30A}";
+  sea.append(crest, wave, board);
+  surfWave = { wave, crest, board };
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Stand up!";
+  button.addEventListener("click", () => {
+    Sound.play("click");
+    sendTaskInput(taskId, true);
+  });
+  ui.minigameContent.append(rides, sea, button);
+  moveWave(challenge);
+}
+
+// The wave travels from right to left once per cycle; the board sits where the crest
+// window is, so "wave under the board" is exactly the moment the server accepts.
+function moveWave(challenge) {
+  if (!surfWave) return;
+  const [low, high] = challenge.crest;
+  const mid = (low + high) / 2;
+  const at = (phase) => 100 - (phase / challenge.period) * 100; // percent from the left
+  surfWave.wave.style.left = `${at(challenge.phase)}%`;
+  surfWave.board.style.left = `${at(mid)}%`;
+  surfWave.crest.style.left = `${at(high)}%`;
+  surfWave.crest.style.width = `${((high - low) / challenge.period) * 100}%`;
+  const riding = challenge.phase >= low && challenge.phase < high;
+  surfWave.crest.classList.toggle("now", riding);
 }
 
 // certificate, step 2 — "Now serving": press "That's me!" exactly when your number comes up.
@@ -1979,7 +2134,7 @@ ui.joinForm.addEventListener("submit", async (event) => {
   try {
     if (!socket) await connect();
     // The server validates the nickname and answers with "welcome" or "error".
-    send({ type: "join", name: ui.nickname.value });
+    send({ type: "join", name: ui.nickname.value, hat: look.hat, color: look.color });
   } finally {
     ui.joinButton.disabled = false;
   }
@@ -2328,6 +2483,7 @@ class CampusScene extends Phaser.Scene {
       const sprite = Render.makeCharacter(this, {
         name: p.name,
         color: latestState.colors[id],
+        hat: playerHat(latestState, id),
         isOwn,
         half: welcome.player_half,
       });
