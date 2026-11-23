@@ -429,11 +429,8 @@ class Game:
         if len(self.players) >= MAX_PLAYERS:
             raise GameError(f"Game is full ({MAX_PLAYERS} players)")
         name = validate_nickname(raw_name)
-        same = next((p for p in self.players.values() if p.name.casefold() == name.casefold()), None)
-        if same is not None:
-            # Spec 037: the same nickname is the same player again (an old phone connection
-            # may still be open); main.py closes the older connection.
-            return same
+        if any(p.name.casefold() == name.casefold() for p in self.players.values()):
+            raise GameError("Nickname is already taken")
         # type() instead of isinstance(): True/False are ints in Python and must be rejected.
         if not (type(hat) is int and 0 <= hat < HAT_COUNT):
             raise GameError(f"Hat must be a number from 0 to {HAT_COUNT - 1}")
@@ -469,6 +466,10 @@ class Game:
             player.role = STUDENT
             player.alive = False
             return player
+        if not player.away:
+            # Spec 037: a nickname in use is never taken over; only a player whose
+            # connection was lost (away) can come back with it.
+            raise GameError("Nickname is already taken")
         player.away = False
         if self.host_id is None or self.players[self.host_id].away:
             self.host_id = player.id

@@ -156,25 +156,40 @@ def test_b_e_new_message_types_need_joining():
             parse_message(f'{{"type": "{kind}"}}', joined=False)
 
 
-# --- D. enrolling again in the lobby ---------------------------------------------------------
+# --- D. a nickname in use is never taken over --------------------------------------------------
 
 
-def test_d_the_same_nickname_in_the_lobby_is_the_same_player_again():
+def test_d_a_taken_nickname_is_rejected_in_the_lobby():
     game, players = lobby()
-    again = game.join("p2")
-    assert again is players[2] and len(game.players) == 4
+    with pytest.raises(GameError, match="Nickname is already taken"):
+        game.join("p2")
+    assert len(game.players) == 4
 
 
-def test_d_the_new_connection_is_registered_before_the_old_one_closes():
-    with TestClient(app) as client, client.websocket_connect("/ws") as old:
-        old.send_json({"type": "join", "name": "Phone"})
-        first = receive_until(old, lambda m: m["type"] == "welcome")
-        with client.websocket_connect("/ws") as new:
-            new.send_json({"type": "join", "name": "phone"})
-            second = receive_until(new, lambda m: m["type"] == "welcome")
-            assert second["id"] == first["id"]
-            state = receive_until(new, lambda m: m["type"] == "state")
-            assert [p["name"] for p in state["players"]] == ["Phone"]
+def test_d_a_connected_players_nickname_is_rejected_during_a_round():
+    game, players = started(5)
+    role = players[2].role
+    with pytest.raises(GameError, match="Nickname is already taken"):
+        game.join("P2")
+    assert players[2].role == role and not players[2].away
+
+
+def test_d_only_a_player_who_lost_the_connection_can_come_back():
+    game, players = started(5)
+    game.disconnect(players[2].id)
+    assert game.join("p2") is players[2] and not players[2].away
+
+
+def test_d_a_second_connection_cannot_take_a_name_over_the_websocket():
+    with TestClient(app) as client, client.websocket_connect("/ws") as first:
+        first.send_json({"type": "join", "name": "Leonard"})
+        receive_until(first, lambda m: m["type"] == "welcome")
+        with client.websocket_connect("/ws") as second:
+            second.send_json({"type": "join", "name": "leonard"})
+            error = receive_until(second, lambda m: m["type"] in ("welcome", "error"))
+            assert error == {"type": "error", "reason": "Nickname is already taken"}
+        state = receive_until(first, lambda m: m["type"] == "state")
+        assert [p["name"] for p in state["players"]] == ["Leonard"]
 
 
 # --- E. leaving and kicking over the WebSocket -----------------------------------------------

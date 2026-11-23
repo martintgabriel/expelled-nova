@@ -3112,7 +3112,7 @@ class CampusScene extends Phaser.Scene {
     this.exams = new Map(); // failed exam id -> sheet from Render.makeExam()
     this.taskMarkers = new Map(); // own open task id -> glow from Render.makeTaskGlow()
     this.edgeArrows = new Map(); // own open task id -> arrow from Render.makeEdgeArrow()
-    this.emergencyArrow = Render.makeEmergencyArrow(this); // spec 037
+    this.emergencyArrow = null; // spec 037: made on the first frame (the scene draws only then)
     this.lastSent = { dx: 0, dy: 0 };
     // The own character, predicted in whole server ticks (see updateOwn).
     this.predicted = null; // position after the newest predicted tick
@@ -3271,6 +3271,7 @@ class CampusScene extends Phaser.Scene {
     // moves smoothly from the time the task was first seen; the seconds are the server's.
     this.syncTaskMarkers(latestState.tasks || [], own, time);
     this.syncEdgeArrows(latestState.tasks || [], lastPhase === "meeting", actionsBottomMargin());
+    if (!this.emergencyArrow) this.emergencyArrow = Render.makeEmergencyArrow(this);
     Render.updateEmergencyArrow(this.emergencyArrow, emergencyTarget(latestState), this.cameras.main, actionsBottomMargin(), time); // spec 037
     const doing = lastPhase === "playing" ? latestState.doing : null;
     const fixing = lastPhase === "playing" ? latestState.fixing : null;

@@ -79,15 +79,13 @@ def test_invalid_messages_get_an_error_and_connection_stays_usable():
             assert join(ws, "Carol")["type"] == "welcome"
 
 
-def test_the_same_nickname_over_websocket_is_the_same_player_again():
-    # Spec 037 (was: rejected as taken): enrolling again with a nickname in the lobby makes
-    # you that player again, e.g. after a phone kept an old connection open.
+def test_duplicate_nickname_over_websocket_is_rejected():
     with TestClient(app) as client:
         with client.websocket_connect("/ws") as a, client.websocket_connect("/ws") as b:
-            first = join(a, "Dana")
-            assert first["type"] == "welcome"
+            assert join(a, "Dana")["type"] == "welcome"
             reply = join(b, "dana")
-            assert reply["type"] == "welcome" and reply["id"] == first["id"]
+            assert reply["type"] == "error"
+            assert "taken" in reply["reason"]
 
 
 def test_flooding_messages_are_rate_limited():

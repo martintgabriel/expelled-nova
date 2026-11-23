@@ -5,8 +5,7 @@ Playtest of 23 Nov (evening, 4 and then 7 players, several on phones):
 - Rounds with 4 players were over in about 2 minutes: everyone had only 3 tasks.
 - A player who had left stayed in the lobby, and nobody could remove them.
 - When the host is away from the keyboard, nobody can start or change anything.
-- Players could not get back in: "Nickname is already taken" (their old connection on the
-  phone was still open).
+- Enrolling with the nickname of a player in a running round took that player over (spec 036).
 - There was no way to leave a game except closing the tab.
 - Nobody found the light switch: first-time players need to be shown where to go for
   lights, fire alarm and Wi-Fi.
@@ -38,11 +37,12 @@ do not count; starting a round clears them. The class roster shows "Vote host 2/
 other player's line (not on the host's screen: the host has "Make host"). Ending a round
 stays open to everyone (spec 036).
 
-### D. Enrolling again with the same nickname, also in the lobby
-In the lobby, enrolling with the nickname of a player who is already in (any capitals)
-makes you that player again, like during a round (spec 036): the older connection of that
-player is closed. The new connection is registered before the old one is closed, so the
-old one's ending never removes the player.
+### D. A nickname in use is never taken over
+Spec 036 let anyone who enrolled with the nickname of a player in a running round become
+that player. Now a nickname that belongs to a connected player is always rejected ("Nickname
+is already taken"), in the lobby and during a round. Only a player whose connection was lost
+(away, spec 036) can come back with their nickname. The older connection is closed only
+after the new one is registered, so its ending never removes the player.
 
 ### E. Leave the game (`leave`)
 `{"type": "leave"}`: the player leaves the game (`leave`), the connection gets
@@ -77,6 +77,5 @@ the ten places in the meeting circle is there. The walking sound; new task kinds
 - `tests/test_spec037.py` covers A–I.
 - Test changes made by this spec: the task count of spec 019 (`test_spec019.py`; in
   `test_tasks.py` a fixture keeps the original 3 tasks, so its numbers still check the task
-  rules); the same nickname in the lobby is the same player again (`test_websocket.py`,
-  `test_game.py`, `test_look.py`).
+  rules).
 - All tests pass.

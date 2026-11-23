@@ -92,18 +92,19 @@ def test_non_text_nicknames_are_rejected(name):
     assert game.players == {}
 
 
-# Spec 037 (was: rejected as taken): the same nickname in the lobby is the same player again.
-def test_duplicate_nickname_is_the_same_player_again():
+def test_duplicate_nickname_is_rejected():
     game = new_game()
-    ana = game.join("Ana")
-    assert game.join("Ana") is ana
+    game.join("Ana")
+    with pytest.raises(GameError, match="taken"):
+        game.join("Ana")
     assert len(game.players) == 1
 
 
 def test_duplicate_nickname_ignores_case_and_spaces():
     game = new_game()
-    ana = game.join("Ana")
-    assert game.join(" ana ") is ana
+    game.join("Ana")
+    with pytest.raises(GameError, match="taken"):
+        game.join(" ana ")
     assert len(game.players) == 1
 
 
