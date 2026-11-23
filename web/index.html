@@ -308,6 +308,7 @@
           <input id="chat-input" type="text" maxlength="80" placeholder="Say something…" aria-label="Chat message">
           <button type="submit">Send</button>
         </form>
+        <p id="chat-status" class="chat-status" role="status"></p>
       </div>
     </div>
   </div>
@@ -365,6 +366,7 @@
       <p class="doc-kicker">IT Services regrets</p>
       <h2>Connection lost</h2>
       <p>The campus Wi-Fi gave up: the server closed the connection.</p>
+      <p>Your place in the round is kept: enrol again with the same nickname to get back in.</p>
       <button type="button" onclick="location.reload()">Reload and rejoin</button>
     </div>
   </div>
@@ -484,6 +486,8 @@
           <li><strong>Examiners</strong> win when there are as many examiners left as students.</li>
         </ul>
       </section>
+      <!-- Spec 036: any player can end a running round for everyone (two taps). -->
+      <button id="end-round-button" type="button" class="secondary-button end-round-bottom" hidden>End this round for everyone</button>
     </div>
   </div>
 

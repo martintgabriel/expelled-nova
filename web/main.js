@@ -17,6 +17,7 @@ const BLEND_RATE = 8; // per second: how fast the drawn character glides after a
 const MAX_TICKS_PER_FRAME = 5; // after a very long frame (hidden tab), do not replay it all
 const ROLE_SCREEN_MS = 3000; // how long the role screen shows at the start
 // REPEATS SERVER RULE: MIN_PLAYERS in server/game.py. Only for the hint; the server decides.
+const NICKNAME_KEY = "expelled-nickname"; // spec 036: remembered to rejoin a running round
 const MIN_PLAYERS = 4;
 // REPEATS SERVER RULE: EXPEL_COOLDOWN/VENT_COOLDOWN/SABOTAGE_COOLDOWN in server/game.py.
 // Only to size the cooldown ring's sweep; the server is the only one that counts down.
@@ -84,6 +85,8 @@ const ui = {
   meetingChat: document.getElementById("meeting-chat"),
   chatLog: document.getElementById("chat-log"),
   chatForm: document.getElementById("chat-form"),
+  chatStatus: document.getElementById("chat-status"), // spec 036
+  endRoundButton: document.getElementById("end-round-button"), // spec 036
   chatInput: document.getElementById("chat-input"),
   emergencyBanner: document.getElementById("emergency-banner"),
   switchArea: document.getElementById("switch-area"),
@@ -159,10 +162,21 @@ ui.inviteClose.addEventListener("click", () => {
 // --- How to play (spec 015): the "?" button, key H, closed with Esc or the cross ----------
 // Only in the browser: it shows static text from index.html and does not pause the game.
 
+// Spec 036: the nickname of the last enrolment, so coming back into a running round is
+// just "Enrol" again.
+try {
+  const saved = localStorage.getItem(NICKNAME_KEY);
+  if (saved && !ui.nickname.value) ui.nickname.value = saved;
+} catch {
+  // private mode: nothing remembered
+}
+
 function setHelpOpen(open) {
   if (open) setMapOpen(false); // one overlay at a time (spec 018)
   if (open) setSoundOpen(false); // the handbook would cover the sound panel (spec 028)
   ui.helpPanel.hidden = !open;
+  // Spec 036: during a round every player can end it here (e.g. when the host is gone).
+  ui.endRoundButton.hidden = !(welcome && lastPhase && lastPhase !== "lobby");
   ui.helpButton.setAttribute("aria-expanded", String(open));
   if (open) ui.helpClose.focus();
   else ui.helpButton.blur(); // keys go back to walking
@@ -516,6 +530,7 @@ function handleMessage(message) {
   } else if (message.type === "error") {
     if (welcome) {
       showToast(message.reason);
+      if (performance.now() - chatSentAt < 2000) setText(ui.chatStatus, message.reason); // spec 036
       meetingKey = ""; // redraw the meeting screen: re-enables the vote buttons
       pendingExpel = false; // the expel was rejected: no sound for it (spec 016)
     } else {
@@ -1098,9 +1113,9 @@ function renderEnd(state) {
       }),
     );
   }
-  const isHost = state.host === welcome.id;
-  ui.restartButton.hidden = !isHost;
-  setText(ui.restartHint, isHost ? "" : "Waiting for the host to start a new round");
+  // Spec 036: anyone can take everyone back to the lobby; nobody waits for the host.
+  ui.restartButton.hidden = false;
+  setText(ui.restartHint, "Anyone can start the next round.");
 }
 
 ui.expelButton.addEventListener("click", () => {
@@ -1111,8 +1126,8 @@ ui.expelButton.addEventListener("click", () => {
 
 ui.restartButton.addEventListener("click", () => {
   Sound.play("click");
-  // The server checks host and phase; a rejection comes back as a toast.
-  send({ type: "restart" });
+  // Spec 036: "end_round" works for every player; the server checks the phase.
+  send({ type: "end_round" });
   ui.restartButton.blur();
 });
 
@@ -2409,7 +2424,7 @@ function sabotagePlace(kind) {
 // The name of the area the switch is in, for the banner (from the map's areas).
 function switchAreaName() {
   const [col, row] = welcome.map.light_switch;
-  const area = welcome.map.areas.find((a) => col >= a.x && col < a.x + a.w && row >= a.y && row < a.y + a.h);
+  const area = welcome.map.areas.find((a) => Render.inArea(a, col, row));
   return area ? area.name : "the corridor";
 }
 
@@ -2787,6 +2802,11 @@ ui.joinForm.addEventListener("submit", async (event) => {
     if (!socket) await connect();
     // The server validates the nickname and answers with "welcome" or "error".
     send({ type: "join", name: ui.nickname.value, hat: look.hat, color: look.color });
+    try {
+      localStorage.setItem(NICKNAME_KEY, ui.nickname.value); // spec 036: to come back after a lost connection
+    } catch {
+      // private mode: nothing remembered
+    }
   } finally {
     ui.joinButton.disabled = false;
   }
@@ -2796,6 +2816,29 @@ function showJoinError(reason) {
   ui.joinError.textContent = reason;
   ui.nickname.focus();
 }
+
+// Spec 036: two taps, so nobody ends a round by accident.
+function confirmTwice(button, label, action) {
+  if (button.dataset.armed) {
+    delete button.dataset.armed;
+    button.textContent = label;
+    action();
+  } else {
+    button.dataset.armed = "1";
+    button.textContent = "Tap again: end it for everyone";
+    setTimeout(() => {
+      delete button.dataset.armed;
+      button.textContent = label;
+    }, 3000);
+  }
+}
+
+ui.endRoundButton.addEventListener("click", () => {
+  confirmTwice(ui.endRoundButton, "End this round for everyone", () => {
+    send({ type: "end_round" });
+    setHelpOpen(false);
+  });
+});
 
 function showToast(text) {
   ui.toast.textContent = text;
@@ -2900,6 +2943,7 @@ function beachCloseness(pos) {
 // --- Meeting chat (spec 029) ---------------------------------------------------------------
 // The server keeps the messages and checks every rule; this shows them and sends "chat".
 let chatKey = "";
+let chatSentAt = 0; // spec 036: a rejected message is explained under the input
 let campusScene = null; // set in CampusScene.create(), to switch its keys off while typing
 
 function renderMeetingChat(state) {
@@ -2935,7 +2979,10 @@ ui.chatForm.addEventListener("submit", (event) => {
   const text = ui.chatInput.value.trim();
   if (!text) return;
   send({ type: "chat", text });
+  chatSentAt = performance.now();
+  setText(ui.chatStatus, "");
   ui.chatInput.value = "";
+  ui.chatInput.focus(); // spec 036: keep typing without clicking again
 });
 
 // While typing, the game's keys (W, A, S, D, E, …) must neither act nor swallow the letters.
@@ -3039,7 +3086,13 @@ class CampusScene extends Phaser.Scene {
   sendDirection(dx, dy) {
     if (dx === this.lastSent.dx && dy === this.lastSent.dy) return;
     this.lastSent = { dx, dy };
-    send({ type: "input", dx, dy });
+    // Spec 036: a stop says where this browser drew the character standing; the server
+    // takes that spot if it is at most two steps off, so stopping never jumps back.
+    if (dx === 0 && dy === 0 && this.predicted) {
+      send({ type: "input", dx, dy, at: { x: Math.round(this.predicted.x * 10) / 10, y: Math.round(this.predicted.y * 10) / 10 } });
+    } else {
+      send({ type: "input", dx, dy });
+    }
   }
 
   // A held joystick wins over the keys (readKeys still runs on a laptop with no joystick).

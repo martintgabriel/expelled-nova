@@ -140,9 +140,10 @@ def test_join_while_playing_changes_no_colours():
     game, players = lobby(4)
     before = colours_in_game(game)  # saved in the lobby, so a change at the start shows too
     game.start(players[0].id)
-    with pytest.raises(GameError, match="already running"):
-        game.join("Late")
-    assert colours_in_game(game) == before
+    late = game.join("Late")  # spec 036: a late ghost, with a free colour of its own
+    after = colours_in_game(game)
+    after.pop(late.id) if isinstance(after, dict) else after.remove(late.color)
+    assert after == before
 
 
 # --- Colours: edge cases --------------------------------------------------------

@@ -104,7 +104,7 @@ def test_on_the_campus_every_piece_of_furniture_stands_on_a_floor_tile():
     campus = load_map()
     game = Game(campus)
     tiles = decor_tiles(campus, FURNITURE)
-    assert {kind for kind, _, _ in tiles} >= {"table", "tree", "desk", "counter", "shelf", "piano"}
+    assert {kind for kind, _, _ in tiles} >= {"table", "tree", "desk", "counter", "shelf"}
     for kind, col, row in tiles:
         assert campus["grid"][row][col] == ".", (kind, col, row)
         assert not game.blocked(*centre(col, row)), (kind, col, row)

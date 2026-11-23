@@ -27,6 +27,7 @@ FLOOR_KINDS = {
     "counter", "shelf", "desk", "studytable", "table", "cafetable", "woodtable", "shopshelf",
     "foodcounter", "piano", "steps", "picnic", "tree",
     "surfboard",  # spec 015: surfboards on the beach
+    "pokecounter", "pizzacounter",  # spec 036: the Cafeteria's two food counters
 }
 
 # A small valid map: a 6 x 5 room with walls all around (columns/rows 0 and the last).

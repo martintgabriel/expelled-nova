@@ -553,12 +553,12 @@ def test_start_from_unknown_player_is_rejected():
     assert_rejected_without_change(game, lambda: game.start("nobody"), "Unknown player")
 
 
-def test_join_while_playing_is_rejected():
+def test_join_while_playing_comes_in_as_a_ghost():
+    # Spec 036: was "rejected"; a late player now watches as a ghost without tasks.
     game, players = game_with(4)
     game.start(players[0].id)
-    before = state_of(game)
-    assert_rejected_without_change(game, lambda: game.join("Late"), "already running")
-    assert state_of(game) == before
+    late = game.join("Late")
+    assert not late.alive and late.tasks == [] and game.phase == "playing"
 
 
 def test_start_before_joining_is_rejected():
