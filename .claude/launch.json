@@ -4,7 +4,7 @@
     {
       "name": "expelled",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "uvicorn", "server.main:app", "--reload", "--ws-ping-interval", "10", "--ws-ping-timeout", "10"],
+      "runtimeArgs": ["run", "uvicorn", "server.main:app", "--reload", "--ws-ping-interval", "10", "--ws-ping-timeout", "10", "--ws-max-size", "4096"],
       "port": 8000
     }
   ]

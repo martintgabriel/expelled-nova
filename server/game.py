@@ -23,6 +23,7 @@ TICK_RATE = 20  # server updates per second
 SPEED = 160.0  # pixels per second
 STEP = SPEED / TICK_RATE  # pixels per tick (8)
 SETTLE_DISTANCE = 2 * STEP  # spec 036: px a stop may move the player to the browser's spot
+MAX_COORDINATE = 1_000_000  # px, far outside any map: a bigger `at` is rejected (spec 038)
 PLAYER_HALF = 10  # a player is a 20 x 20 px square; this is half its side
 # How far a straight walk slides sideways round the corner of a wall (spec 011): half a
 # player, so whoever is at least half in front of a gap slips into it.
@@ -148,6 +149,8 @@ class Player:
     task_note: str | None = None  # the latest wrong-answer/cancel/time-out message, or None
     fix_done_tick: int | None = None  # while fixing the lights: the tick at which they go on
     away: bool = False  # spec 036: lost the connection during a round; may come back
+    # Spec 038: px a stop may still move this player (see _settle); refills by STEP a tick.
+    settle_budget: float = SETTLE_DISTANCE
 
 
 @dataclass
@@ -1552,7 +1555,9 @@ class Game:
         if at is not None and not (
             (dx, dy) == (0, 0)
             and isinstance(at, dict)
-            and all(type(at.get(k)) in (int, float) and math.isfinite(at[k]) for k in ("x", "y"))
+            # Spec 038 (M4): a range check, not math.isfinite(), which raised OverflowError
+            # for a huge int. NaN and infinity fail the comparison, so they are rejected too.
+            and all(type(at.get(k)) in (int, float) and abs(at[k]) < MAX_COORDINATE for k in ("x", "y"))
         ):
             raise GameError("at must be {x, y} and only comes with a stop")
         player.dx, player.dy = dx, dy
@@ -1565,13 +1570,18 @@ class Game:
         late), and moving the character back afterwards looked like a jump. The server
         takes the browser's spot if it is at most SETTLE_DISTANCE away and reachable by
         the walking rules (no wall in between); otherwise the server's own spot stays."""
-        if math.hypot(x - player.x, y - player.y) > SETTLE_DISTANCE:
+        distance = math.hypot(x - player.x, y - player.y)
+        if distance > SETTLE_DISTANCE or distance > player.settle_budget:
             return
         before = (player.x, player.y)
         self._move_axis(player, x - player.x, 0)
         self._move_axis(player, 0, y - player.y)
         if math.hypot(x - player.x, y - player.y) > 0.5:
             player.x, player.y = before
+            return
+        # Spec 038: paid from the budget, so stopping again and again (or walking and
+        # stopping every tick) is never faster than walking, whatever the browser sends.
+        player.settle_budget -= distance
 
     def step(self):
         """Advance the game by one tick: move every player in their direction, then let
@@ -1584,9 +1594,13 @@ class Game:
             self._step_meeting()
             return
         for player in self.players.values():
+            # Spec 038: the settle budget refills by one step a tick and walking uses that
+            # step, so per tick a player moves at most one step plus what is left over.
+            player.settle_budget = min(SETTLE_DISTANCE, player.settle_budget + STEP)
             if player.dx == 0 and player.dy == 0:
                 continue
             self._walk(player)
+            player.settle_budget = max(0.0, player.settle_budget - STEP)
         if self.phase == PLAYING and self.guard is not None:
             guard.step_guard(
                 self.guard,

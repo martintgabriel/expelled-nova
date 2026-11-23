@@ -1,4 +1,4 @@
-# AGENTS.md — Expelled! (working title)
+# AGENTS.md — Expelled!
 
 Shared rulebook for every coding agent in this repository (Claude Code, Codex, …). Read it completely before each task.
 
