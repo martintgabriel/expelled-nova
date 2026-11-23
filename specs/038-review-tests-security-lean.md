@@ -120,23 +120,37 @@ are not edited, deleted or skipped.
   actions in the wrong phase, a second tab trying host actions).
 
 ### Part 4 — Security hardening
-Only the must-fix and should items of audit 2 that the audit confirmed. Likely candidates:
-- reject a WebSocket whose `Origin` is not the page's own host (so it keeps working on
-  `localhost` and on Render, and through the QR code);
-- a maximum size for one client message;
-- security headers on every response: `X-Content-Type-Options: nosniff`, a
-  `Content-Security-Policy` that allows only the page's own scripts, styles, images and
-  WebSocket, and `frame-ancestors 'none'`. Note: `web/index.html` has one inline
-  `onclick="location.reload()"` (the "Reload and rejoin" button), which a strict policy
-  blocks: replace it with a listener in `main.js` first;
-- length and character limits for nicknames and chat, if any are missing.
-Also the confirmed must-fix code bugs from `docs/review.md`:
-- M2: the browser's expel cooldown ring uses its own `EXPEL_COOLDOWN = 20` (`web/main.js`)
-  while the server uses 30. One source of truth: the server sends the cooldowns (expel,
-  vent, sabotage) in the welcome message and the browser uses those.
-- M3 (phantom player after a failed welcome), M4 (`OverflowError` on a huge `at`), M5 (one
-  slow reader stalls the game loop).
-No change to game rules. Tests first for each item.
+Exactly these items from `docs/review.md`, each with a failing test first (decided after the
+audit; values chosen by the team):
+1. **M2:** the browser's cooldown rings use the server's numbers. The server sends the
+   cooldowns (expel, vent, sabotage) in the welcome message; `web/main.js` has no cooldown
+   numbers of its own.
+2. **M3:** a browser that is gone before its welcome arrives leaves no player behind.
+3. **M4:** a huge number in any message is a normal rejection, never a crash.
+4. **M5:** a slow or stuck browser never freezes the game loop: every send has a timeout
+   (`SEND_TIMEOUT = 1.0` s); a browser that times out is treated as disconnected.
+5. **S7:** the server limits movement per tick, whatever the browser sends: a stop's settle
+   is paid from a small movement budget, so walking and stopping is never faster than
+   walking.
+6. **S1:** coming back as an away player needs the rejoin token from that player's welcome,
+   not only the nickname. The check lives in `server/main.py` only, so `server/game.py` and
+   all existing tests stay as they are. The browser keeps the token in `localStorage`, so
+   reloading or closing and reopening the tab still works; a token is valid only for that
+   player in the running server.
+7. **S8–S12:** the WebSocket accepts only the page's own host as `Origin` (a missing Origin
+   is allowed, so tests and the QR code keep working); security headers on every response
+   (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy:
+   no-referrer` and a `Content-Security-Policy` that allows only the page's own scripts,
+   styles, images, `data:` images for Phaser, and its own WebSocket, with
+   `frame-ancestors 'none'`); the inline `onclick` on "Reload and rejoin" becomes a listener
+   in `main.js` first; `/docs`, `/redoc` and `/openapi.json` are turned off; at most
+   `MAX_CONNECTIONS = 30` open WebSocket connections.
+8. **S10:** `--ws-max-size 4096` (eight times the 512-byte message limit) in
+   `.claude/launch.json` and in the README's run and deploy commands. The Render start
+   command is changed by hand in the Render dashboard.
+
+Not done, by decision (see Limits): `/taken-colors` keeps showing nicknames (S2), and a late
+joiner still watches the round as a ghost (S3). No change to game rules.
 
 ### Part 5 — Leaner code (after parts 1–4 are merged)
 From the leanness audit, re-run against the then-current `main`. Only findings that are
@@ -198,7 +212,13 @@ balance or look.
 (Filled in after implementation.)
 
 ## Limits
-(Filled in after implementation.)
+- Nicknames in the game are visible on the join screen by design (spec 028, `/taken-colors`).
+  Since part 4 a nickname alone no longer lets anyone take over a player.
+- A player could open a second tab during a round and watch as a ghost (spec 036); accepted
+  for a game among friends, and wanted for the demo when people join by QR code.
+- When a student leaves or is kicked during a round, the shared task total drops, which shows
+  that they were a student (`Game._task_progress` counts only players still in the game). No
+  code change.
 
 ## Files created or changed
 (Filled in after implementation.)

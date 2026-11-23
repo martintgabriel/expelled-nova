@@ -53,7 +53,7 @@ the lobby for the next round.
 | **EX13** | Phone play | Touch joystick and round action buttons, QR-code join, a phone layout with foldable to-do list and roster. |
 | **EX14** | Campus map | A map of the whole campus (key C or the map button) with the own position and open tasks, to say where one was. |
 | **EX15** | Sound and music | Generated sound effects, background music and beach waves, with a sound panel (effects, music, volume). |
-| **EX16** | Leave and come back | "Leave the game" at any time. A player whose connection drops during a round stays in it (marked away) and can come back with the same nickname. A new player can join a running round as a ghost. |
+| **EX16** | Leave and come back | "Leave the game" at any time. A player whose connection drops during a round stays in it (marked away) and can come back with the same nickname from the same browser. A new player can join a running round as a ghost. |
 
 ## Business rules
 
@@ -71,9 +71,9 @@ the lobby for the next round.
 | **R10** | The meeting button works only at the meeting table (within 48 px of its edge), once per player per round, not during the fire alarm. Reports still work during the fire alarm. |
 | **R11** | The guard moves at 1.2 × the players' speed and sees 6 tiles in a 100° cone. If he sees the examiner or the student at the moment of an expel, a security meeting starts naming that examiner. |
 | **R12** | Only the host starts a round, changes the settings (lobby only) and kicks players (any time, never themselves). The host hands over in the lobby only. A lobby host vote wins when more than half of the players in the game vote for the same player. If the host leaves, the player who has been in the game longest becomes host. |
-| **R13** | In the lobby a lost connection removes the player. During a round the player stays (standing still, marked away) and may come back with the same nickname; if nobody is connected any more, an empty lobby opens. A new nickname during a round joins as a ghost without tasks (not during a meeting, not when the game is full). Any player in the game can end a running or finished round. |
+| **R13** | In the lobby a lost connection removes the player. During a round the player stays (standing still, marked away) and may come back with the same nickname and the rejoin token their browser received when it joined; if nobody is connected any more, an empty lobby opens. A new nickname during a round joins as a ghost without tasks (not during a meeting, not when the game is full). Any player in the game can end a running or finished round. |
 | **R14** | Chat: living players only, while the vote is open; 1–80 characters, no line breaks or control characters, one message per player every 1.5 s; a meeting keeps the last 30 messages. |
-| **R15** | Every message from a browser is checked: at most 512 bytes, valid JSON, a known type, allowed in the current phase, at most 30 messages per second per connection. |
+| **R15** | Every message from a browser is checked: at most 512 bytes, valid JSON, a known type, allowed in the current phase, at most 30 messages per second per connection. The server accepts WebSockets only from its own page and at most 30 at once, and a player never moves faster than walking, whatever the browser sends. |
 
 ## What the product must remember
 The fixed content (the map, areas, tasks, vents, sabotage places and the guard's route) is
@@ -81,7 +81,7 @@ loaded from `server/campus.json` when the server starts. During a game the serve
 players, positions, roles, tasks, cooldowns, votes, chat and the game phase in memory only.
 A server restart ends a running game (accepted limit). Nothing is stored permanently: no
 accounts, no cookies, no match history. The browser remembers only the own nickname, look
-and sound settings (local storage).
+and sound settings, and a rejoin token per nickname (local storage).
 
 ## Acceptance criteria
 
@@ -95,7 +95,7 @@ and sound settings (local storage).
 | **A6** Invalid join | An empty, too long or duplicate nickname and an 11th player are rejected with a message. |
 | **A7** Sabotage | The lights go out for students until someone fixes them at the switch; a fire alarm that not every living student answers within 40 s ends the round with an examiner win. |
 | **A8** Host | Only the host can start, change the settings and kick; a kicked player's page is told and goes back to the ID card; a lobby majority elects a new host. |
-| **A9** Come back | A player whose connection drops during a round comes back with the same nickname into the same role; a nickname of a connected player is rejected. |
+| **A9** Come back | A player whose connection drops during a round comes back from the same browser with the same nickname into the same role; the same nickname from another browser, or of a connected player, is rejected. |
 | **A10** Handbook | Every number in the in-game handbook matches the rules (guarded by `tests/test_spec038.py`). |
 
 ## Scope boundaries
@@ -133,4 +133,5 @@ repository (reference only); no real people (staff, professors) by name or photo
 | Anyone can end a round; a lost connection keeps the player in the round; late join as a ghost | the host lost the connection and nobody could continue (playtest) | 036, 037 |
 | No vote for yourself; ballots shown after counting | a bug; nobody could see who voted for whom | 008, 019 |
 | Sabotage, guard, chat, phone controls, sound and music added | roadmap items F1–F5 and F10 | 007, 008, 016, 017, 023, 027, 029 |
+| Coming back needs the rejoin token of the same browser; WebSockets only from the own page, at most 30; movement limited per tick | the review found a nickname was enough to take over a player, and other gaps | 038 |
 | EX09–EX16, R9–R15 and A7–A10 added | describe what the later specs built | 007–038 |

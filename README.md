@@ -54,7 +54,15 @@ uv sync
 Run the app, then open http://localhost:8000:
 
 ```bash
-uv run uvicorn server.main:app --reload
+uv run uvicorn server.main:app --reload --ws-max-size 4096
+```
+
+`--ws-max-size 4096` makes the server refuse any WebSocket message over 4 KiB before
+reading it (the game's own limit is 512 bytes). The same flag belongs in the start command
+on Render (Settings → Start Command), for example:
+
+```bash
+uv run uvicorn server.main:app --host 0.0.0.0 --port $PORT --ws-max-size 4096
 ```
 
 ## Tests
@@ -91,7 +99,8 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **In memory only:** players, roles, positions, tasks, votes, chat and the game phase live
   only in the server's memory. A server restart ends a running game.
 - **Nothing permanent:** no database, no accounts, no cookies. A nickname exists only for
-  one session. The browser remembers the own nickname, look and sound settings locally.
+  one session. The browser remembers the own nickname, look and sound settings locally,
+  and a rejoin token per nickname (valid only for that player in the running server).
 
 ## Security measures
 
@@ -100,16 +109,28 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - Every message is checked: at most 512 bytes, valid JSON, a known type, allowed in the
   current phase and for this player (host-only actions included).
 - A rejected action changes nothing and returns a short reason.
-- Rate limit: 30 messages per second per connection.
+- Rate limit: 30 messages per second per connection; at most 30 open connections; a message
+  over 4 KiB is refused by the server before it is read (`--ws-max-size 4096`).
+- The WebSocket accepts only pages from the game's own address (`Origin` check).
+- Every HTTP answer carries security headers, including a Content-Security-Policy that allows
+  only the page's own scripts, styles and images and its own WebSocket (no inline code).
+- A player who lost the connection comes back only from a browser that holds their rejoin
+  token, not with the nickname alone.
+- The game loop never waits for one slow browser: a browser that does not take a state
+  within 1 s is treated as disconnected. The server also limits how far a player can move
+  per tick, whatever the browser sends.
 - Nicknames are 1–16 letters, digits or spaces; chat messages are 1–80 characters with no
   control characters. Both are always shown as text, never as HTML.
-- The QR code ignores any input. Dependencies are pinned (`pyproject.toml`, `uv.lock`,
+- The QR code ignores any input; FastAPI's API pages (`/docs`) are off. Dependencies are pinned (`pyproject.toml`, `uv.lock`,
   `web/vendor`). No secrets are in the repository.
 
 ## Limits
 
 - One game at a time; a server restart ends it.
-- A player who lost the connection comes back with the nickname alone (no password).
+- A player who lost the connection can come back only from the same browser (the rejoin
+  token is kept there).
+- Nicknames are visible on the join screen, and anyone can join a running round as a ghost
+  and watch (spec 036).
 - Anyone in the game can end a round, and the host is trusted (a kick can decide a round).
 - The open findings of the review are in [docs/review.md](docs/review.md).
 
@@ -140,6 +161,6 @@ expelled-nova/
 - [Architecture](docs/ARCHITECTURE.md): how it is built, for the walkthrough
 - [Business requirements (BRD)](docs/brd.md)
 - [Specs](specs/README.md): one spec per change, with an index
-- [Manual test checklist](docs/manual-test-checklist.md) (follows in spec 038, part 3)
+- [Manual test checklist](docs/manual-test-checklist.md): every workflow to click through on the deployed app
 - [Walkthrough and exam preparation](docs/walkthrough.md) (follows in spec 038, part 6)
 - [Review](docs/review.md): the audit from spec 038

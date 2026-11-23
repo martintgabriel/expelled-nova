@@ -81,7 +81,8 @@ allowed in the current phase, at most 30 per second):
 | Everyone in a round | `task`, `task_input`, `task_cancel`, `fix`, `report`, `meeting` |
 | Meetings | `vote`, `chat` |
 
-**Server → browser:** `welcome` (once: own id, the map, speed and ranges), `state` (20 times
+**Server → browser:** `welcome` (once: own id, the map, speed, ranges, cooldowns and the
+rejoin token), `state` (20 times
 per second, per player), `error` (with a reason), `kicked`, `left`.
 
 ## How the server keeps roles secret
@@ -96,19 +97,31 @@ per second, per player), `error` (with a reason), `kicked`, `left`.
 - Rejected actions are checked in an order that tells a student nothing: an expel is checked
   for the sender's role before the target.
 
+## Protection at the edges (spec 038)
+- `server/main.py` refuses a WebSocket from another site's page (`Origin` must be this
+  server's own address), allows at most 30 open connections, and checks the rejoin token
+  when someone comes back as an away player.
+- Every send in the game loop has a 1 s timeout: a browser that stops reading is treated as
+  disconnected, so it can never freeze the game for the others.
+- Every HTTP answer carries security headers and a Content-Security-Policy; the page has no
+  inline code. The start command sets `--ws-max-size 4096`.
+- In `game.py`, a stop's correction (`_settle`) is paid from a small movement budget, so no
+  browser can move faster than walking.
+
 ## Data and what survives a restart
 | What | Where | After a server restart |
 |---|---|---|
 | Map, areas, tasks, vents, sabotage places, guard route | `server/campus.json`, loaded at start | loaded again |
 | Players, roles, positions, tasks, cooldowns, votes, chat, phase | `Game` in server memory | gone: the running game ends |
-| Own nickname, look, sound settings | the browser's local storage | kept in that browser |
+| Own nickname, look, sound settings, rejoin token per nickname | the browser's local storage | kept in that browser; a token is only valid in the running server |
 
 Nothing is stored permanently: no database, no accounts, no cookies.
 
 ## Limits
 - One game at a time; a server restart ends it (the free Render server also sleeps after 15
   minutes without visitors).
-- A player who lost the connection comes back with the nickname alone; there is no password.
+- A player who lost the connection comes back only from the same browser, which holds the
+  rejoin token; a server restart makes every token useless (the game is gone anyway).
 - Anyone in the game can end a round; the host is trusted (a kick can decide a round).
 - More limits and the security findings are in [review.md](review.md).
 

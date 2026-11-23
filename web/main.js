@@ -18,13 +18,15 @@ const MAX_TICKS_PER_FRAME = 5; // after a very long frame (hidden tab), do not r
 const ROLE_SCREEN_MS = 3000; // how long the role screen shows at the start
 // REPEATS SERVER RULE: MIN_PLAYERS in server/game.py. Only for the hint; the server decides.
 const NICKNAME_KEY = "expelled-nickname"; // spec 036: remembered to rejoin a running round
+// Spec 038: the secret from the own welcome, needed to come back as the same player after a
+// lost connection. localStorage, so reloading or closing and reopening the tab still works;
+// one per nickname, so several tabs in one browser (several players) keep their own.
+const REJOIN_KEY = "expelled-rejoin-token:";
+let joiningName = ""; // the nickname sent with "join", to file the token under
 const MIN_PLAYERS = 4;
-// REPEATS SERVER RULE: EXPEL_COOLDOWN/VENT_COOLDOWN/SABOTAGE_COOLDOWN in server/game.py.
-// Only to size the cooldown ring's sweep; the server is the only one that counts down.
-const EXPEL_COOLDOWN = 20;
-const VENT_COOLDOWN = 3;
+// The full cooldowns (expel, vent, sabotage) come from the server in welcome.cooldowns
+// (spec 038): they only size the cooldown ring's sweep; the server alone counts down.
 const VENT_KEY_WINDOW_MS = 80; // two arrow keys pressed this close together count as a diagonal
-const SABOTAGE_COOLDOWN = 30;
 const FOOTSTEP_TICKS = 6; // ticks between two footstep sounds while walking (spec 016)
 const BEACH_RANGE_TILES = 6; // the waves fade out this many tiles from the sea (spec 017)
 const RING_CIRCUMFERENCE = 2 * Math.PI * 35; // matches r="35" on .ring-sweep in index.html
@@ -47,6 +49,7 @@ const ui = {
   playerCount: document.getElementById("player-count"),
   toast: document.getElementById("toast"),
   disconnected: document.getElementById("disconnected"),
+  reloadButton: document.getElementById("reload-button"),
   lobby: document.getElementById("lobby"),
   lobbyCount: document.getElementById("lobby-count"),
   lobbyPlayers: document.getElementById("lobby-players"),
@@ -518,6 +521,10 @@ function connect() {
   return new Promise((resolve) => socket.addEventListener("open", resolve, { once: true }));
 }
 
+// "Reload and rejoin" on the connection-lost card. A listener, not an inline onclick: the
+// Content-Security-Policy allows no inline code (spec 038).
+ui.reloadButton.addEventListener("click", () => location.reload());
+
 function send(message) {
   if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(message));
@@ -527,6 +534,11 @@ function send(message) {
 function handleMessage(message) {
   if (message.type === "welcome") {
     welcome = message;
+    try {
+      localStorage.setItem(REJOIN_KEY + joiningName, message.rejoin_token); // spec 038
+    } catch {
+      // private mode: coming back after a lost connection is not possible in this browser
+    }
     clearInterval(takenColorsTimer); // joined: the colour picker is gone (spec 028)
     ui.mapSlot.append(CampusMap.build(welcome.map)); // once: opening the map never rebuilds it
     ui.mapButton.hidden = false;
@@ -536,6 +548,11 @@ function handleMessage(message) {
   } else if (message.type === "left" || message.type === "kicked") {
     // Spec 037: left on purpose or removed by the host: back to the ID card.
     leavingOnPurpose = true;
+    try {
+      localStorage.removeItem(REJOIN_KEY + joiningName); // spec 038: that player is gone, so is the token
+    } catch {
+      // private mode: nothing was kept
+    }
     if (message.type === "kicked") {
       try {
         sessionStorage.setItem(KICKED_KEY, message.reason || "The host removed you from the game.");
@@ -1058,7 +1075,7 @@ function updateExpelButton(state) {
   else reason = `Expel ${target.name}`; // the full reason, e.g. on hover; the label stays "Expel"
   if (insideVent(state)) ui.expelButton.disabled = true;
   setActionReason(ui.expelButton, reason, "Expel");
-  setCooldownRing(ui.expelButton, cooldown, EXPEL_COOLDOWN);
+  setCooldownRing(ui.expelButton, cooldown, welcome.cooldowns.expel);
 }
 
 function tryExpel() {
@@ -2507,7 +2524,7 @@ function updateLights(state) {
     else if (running) reason = "An emergency is already running";
     else if (cooldown > 0) reason = `Ready in ${cooldown} s`;
     setActionReason(ui.sabotageButton, reason, welcome.map.sabotages ? "Sabotage" : "Lights off");
-    setCooldownRing(ui.sabotageButton, cooldown, SABOTAGE_COOLDOWN);
+    setCooldownRing(ui.sabotageButton, cooldown, welcome.cooldowns.sabotage);
   }
 
   // Fixing that was running in the previous state and is not any more.
@@ -2789,7 +2806,7 @@ function updateVents(state) {
   setActionReason(ui.doorActionButton, reason, inside ? "Leave the vent" : "Climb into the vent");
   setText(ui.doorActionLabel, inside ? "Leave vent" : "Vent");
   ui.doorActionButton.classList.toggle("inside", Boolean(inside));
-  setCooldownRing(ui.doorActionButton, cooldown, VENT_COOLDOWN);
+  setCooldownRing(ui.doorActionButton, cooldown, welcome.cooldowns.vent);
 
   // While inside: one arrow card per other vent, pointing toward it (spec 015).
   const key = inside ? inside.id : "";
@@ -2866,7 +2883,14 @@ ui.joinForm.addEventListener("submit", async (event) => {
   try {
     if (!socket) await connect();
     // The server validates the nickname and answers with "welcome" or "error".
-    send({ type: "join", name: ui.nickname.value, hat: look.hat, color: look.color });
+    joiningName = ui.nickname.value.trim().toLowerCase();
+    let rejoinToken = null;
+    try {
+      rejoinToken = localStorage.getItem(REJOIN_KEY + joiningName); // spec 038: only used if this player is away
+    } catch {
+      // private mode: a new player only
+    }
+    send({ type: "join", name: ui.nickname.value, hat: look.hat, color: look.color, rejoin_token: rejoinToken });
     try {
       localStorage.setItem(NICKNAME_KEY, ui.nickname.value); // spec 036: to come back after a lost connection
     } catch {
