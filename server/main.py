@@ -162,6 +162,8 @@ async def websocket_endpoint(ws: WebSocket):
                     connections[player_id] = ws
                 elif message["type"] == "start":
                     game.start(player_id)
+                elif message["type"] == "settings":
+                    game.set_settings(player_id, message)
                 elif message["type"] == "make_host":
                     game.make_host(player_id, message.get("target"))
                 elif message["type"] == "expel":

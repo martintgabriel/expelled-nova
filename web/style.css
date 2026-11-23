@@ -1123,3 +1123,14 @@ kbd.arrow.right::before { border-right-width: 0; border-left: 4px solid var(--in
   .action-primary .action-circle { width: 88px; height: 88px; }
   #actions { gap: 8px; right: calc(10px + env(safe-area-inset-right)); }
 }
+
+/* Spec 018: the host's examiner setting in the lobby. */
+.lobby-settings { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; }
+.lobby-settings-label { font-size: 13px; font-weight: 700; }
+.segmented { display: inline-flex; border: 2px solid var(--ink); border-radius: 8px; overflow: hidden; }
+.segmented button { border: 0; border-radius: 0; padding: 6px 12px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.segmented button + button { border-left: 2px solid var(--ink); }
+.segmented button.active { background: var(--ink); color: var(--paper, #fff); }
+.segmented button:disabled { cursor: default; }
+.segmented button:disabled:not(.active) { opacity: 0.55; }
+.vote-dot { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }

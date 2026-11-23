@@ -94,6 +94,15 @@
       <p class="roster-count"><span id="lobby-count" class="lobby-count"></span> enrolled</p>
     </div>
     <ul id="lobby-players" class="lobby-chips"></ul>
+    <!-- Spec 018: the host picks the number of examiners; everyone else only sees it. -->
+    <div id="lobby-settings" class="lobby-settings" role="group" aria-label="Number of Undercover Examiners">
+      <span id="examiner-setting-label" class="lobby-settings-label">Undercover Examiners</span>
+      <div class="segmented">
+        <button type="button" data-expellers="auto">Auto</button>
+        <button type="button" data-expellers="1">1</button>
+        <button type="button" data-expellers="2">2</button>
+      </div>
+    </div>
     <button id="start-button" type="button" class="lobby-main" hidden>Start game</button>
     <button id="invite-button" type="button" class="lobby-secondary">Invite players</button>
     <p id="start-hint" class="hint"></p>

@@ -41,6 +41,7 @@ const ui = {
   lobby: document.getElementById("lobby"),
   lobbyCount: document.getElementById("lobby-count"),
   lobbyPlayers: document.getElementById("lobby-players"),
+  lobbySettings: document.getElementById("lobby-settings"),
   inviteButton: document.getElementById("invite-button"),
   inviteScreen: document.getElementById("invite-screen"),
   inviteUrl: document.getElementById("invite-url"),
@@ -517,6 +518,7 @@ function renderLobby(state) {
       }),
     );
   }
+  renderLobbySettings(state, isHost);
   const enough = state.players.length >= MIN_PLAYERS;
   ui.startButton.hidden = !isHost;
   ui.startButton.disabled = !enough;
@@ -525,6 +527,29 @@ function renderLobby(state) {
   if (!isHost) hint = enough ? "Waiting for the host to start" : `Need at least ${MIN_PLAYERS} players`;
   setText(ui.startHint, hint);
 }
+
+// Spec 018: the examiner setting. Only the host can press the buttons; the server checks
+// again (host, lobby, value) and answers a rejection with a toast.
+function renderLobbySettings(state, isHost) {
+  const chosen = state.settings ? state.settings.expellers : null;
+  for (const button of ui.lobbySettings.querySelectorAll("button")) {
+    const value = button.dataset.expellers === "auto" ? null : Number(button.dataset.expellers);
+    const active = value === chosen;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+    button.disabled = !isHost;
+    button.title = isHost ? "" : "Only the host can change this";
+  }
+}
+
+ui.lobbySettings.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-expellers]");
+  if (!button || button.disabled) return;
+  Sound.play("click");
+  const raw = button.dataset.expellers;
+  send({ type: "settings", expellers: raw === "auto" ? null : Number(raw) });
+  button.blur();
+});
 
 function tag(text, kind) {
   const span = document.createElement("span");
@@ -1063,17 +1088,27 @@ function renderVoting(state, meeting) {
   buildVotingGrid();
 }
 
-// `count` small dots, one per vote (spec 014) — only a count, never an identity: the
-// server does not tell a client who voted for whom (R2, docs/brd.md).
-function voteDots(count) {
+// One small dot per vote (spec 014). Spec 018: once the vote is counted the server sends
+// `ballots` (voter -> target), so each dot is drawn in the voter's colour; while voting it
+// never does. `voters` is the list of voter ids for this card.
+function voteDots(state, voters) {
   const wrap = document.createElement("span");
   wrap.className = "vote-dots";
-  for (let i = 0; i < count; i++) {
+  for (const voterId of voters) {
     const dot = document.createElement("span");
     dot.className = "vote-dot";
+    const color = playerColor(state, voterId);
+    if (color !== undefined) dot.style.background = Render.colorCss(color);
+    dot.title = `${nameOf(voterId)} voted`;
     wrap.append(dot);
   }
   return wrap;
+}
+
+function votersFor(state, target) {
+  return Object.entries(state.ballots || {})
+    .filter(([, choice]) => choice === target)
+    .map(([voterId]) => voterId);
 }
 
 function renderResult(state, result) {
@@ -1091,7 +1126,7 @@ function renderResult(state, result) {
     const votesLabel = document.createElement("span");
     votesLabel.className = "count";
     votesLabel.textContent = count === 1 ? "1 vote" : `${count} votes`;
-    card.append(votesLabel, voteDots(count));
+    card.append(votesLabel, voteDots(state, votersFor(state, playerId)));
     return card;
   });
   const skipCard = document.createElement("div");
@@ -1102,7 +1137,7 @@ function renderResult(state, result) {
   const skipCount = document.createElement("span");
   skipCount.className = "count";
   skipCount.textContent = String(result.skips);
-  skipCard.append(skipLabel, skipCount);
+  skipCard.append(skipLabel, skipCount, voteDots(state, votersFor(state, "skip")));
   ui.meetingPlayers.classList.remove("locked");
   ui.meetingPlayers.replaceChildren(...cards, skipCard);
   ui.skipButton.hidden = true;

@@ -263,13 +263,15 @@ def test_the_task_constants():
 
 
 @pytest.mark.parametrize("count", [4, 7, 10])
-def test_every_player_gets_three_different_tasks_from_the_same_pool(count):
-    # Replaces spec 004's test of the same shape: examiners now get TASKS_PER_STUDENT
-    # fake tasks too, from the same pool as students (spec 012, part 3).
+def test_every_player_gets_different_tasks_from_the_same_pool(count):
+    # Replaces spec 004's test of the same shape: examiners now get the same number of
+    # fake tasks too, from the same pool as students (spec 012, part 3). Spec 018: the
+    # number grows with the player count (tasks_per_player).
     game, examiners, students = new_round(count)
     known = {task["id"] for task in TASK_MAP["tasks"]}
+    expected = min(rules.tasks_per_player(count), len(TASK_MAP["tasks"]))
     for player in (*examiners, *students):
-        assert len(player.tasks) == len(set(player.tasks)) == TASKS_PER_STUDENT
+        assert len(player.tasks) == len(set(player.tasks)) == expected
         assert set(player.tasks) <= known
         assert player.tasks_done == [] and player.doing is None
 
@@ -283,10 +285,11 @@ def test_the_same_seed_deals_the_same_tasks():
     assert len({json.dumps(dealt(seed)) for seed in range(10)}) > 1  # and it is random
 
 
-def test_on_the_campus_every_student_gets_three_of_the_six_tasks():
+def test_on_the_campus_every_student_gets_tasks_per_player_of_the_campus_tasks():
+    # Spec 018: with 10 players everyone gets tasks_per_player(10) tasks, not 3.
     game, _, students = new_round(10, campus=load_map())
     for student in students:
-        assert len(set(student.tasks)) == TASKS_PER_STUDENT
+        assert len(set(student.tasks)) == min(rules.tasks_per_player(10), len(game.tasks))
         assert set(student.tasks) <= set(SPEC_TASKS)
 
 
@@ -973,9 +976,10 @@ def test_finishing_a_task_shows_the_others_only_the_shared_progress():
     before = other_views(game, student)
     game.step()
     after = other_views(game, student)
+    total = len(students) * rules.tasks_per_player(7)  # spec 018: 4 tasks each with 7 players
     for player_id, view in after.items():
-        assert view.pop("task_progress") == {"done": 1, "total": 15}
-        assert before[player_id].pop("task_progress") == {"done": 0, "total": 15}
+        assert view.pop("task_progress") == {"done": 1, "total": total}
+        assert before[player_id].pop("task_progress") == {"done": 0, "total": total}
         assert view == before[player_id]
 
 

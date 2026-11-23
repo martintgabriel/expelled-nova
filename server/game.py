@@ -36,9 +36,10 @@ MESSAGE_TYPES |= {"expel", "report", "meeting", "vote", "task"}  # actions in a 
 MESSAGE_TYPES |= {"vent_enter", "vent_move", "vent_leave"}  # examiners in the vents
 MESSAGE_TYPES |= {"task_input", "task_cancel"}  # answering or closing a task's mini-game
 MESSAGE_TYPES |= {"sabotage", "fix"}  # the lights
+MESSAGE_TYPES |= {"settings"}  # the host's lobby settings (spec 018)
 EXPEL_RANGE = 48  # px between centres, about 1.5 tiles
-EXPEL_COOLDOWN = 20  # seconds between two expels by the same examiner
-EXPEL_COOLDOWN_TICKS = EXPEL_COOLDOWN * TICK_RATE  # 400
+EXPEL_COOLDOWN = 30  # seconds between two expels by the same examiner (spec 018: was 20)
+EXPEL_COOLDOWN_TICKS = EXPEL_COOLDOWN * TICK_RATE  # 600
 VISION_TILES = 6  # how far a living player sees while playing, in tiles
 REPORT_RANGE = 48  # px from a player's centre to a failed exam, about 1.5 tiles
 # The meeting point (spec 011): a round table with an emergency button. It is drawn on the
@@ -58,7 +59,7 @@ LIGHTS_OUT_TILES = 1.5  # how far a living student sees while the lights are off
 FIX_SECONDS = 3  # how long a student stays at the light switch to fix the lights
 FIX_TICKS = FIX_SECONDS * TICK_RATE  # 60
 SWITCH_RANGE = 48  # px from a player's centre to the centre of the switch's tile
-TASKS_PER_STUDENT = 3  # dealt to every student at the start
+TASKS_PER_STUDENT = 3  # dealt to every player at the start with 4-5 players (see tasks_per_player)
 TASK_RANGE = 48  # px from a player's centre to the centre of a task's tile, about 1.5 tiles
 MEETING_SECONDS = 60  # voting time
 RESULT_SECONDS = 5  # how long the result is shown before play resumes
@@ -298,6 +299,19 @@ def examiner_count(player_count):
     return 1 if player_count <= 6 else 2
 
 
+EXAMINER_SETTINGS = (None, 1, 2)  # None = automatic (examiner_count), spec 018
+MIN_PLAYERS_FOR_TWO_EXAMINERS = 6
+
+
+def tasks_per_player(player_count):
+    """Spec 018: 3 tasks for 4-5 players, 4 for 6-7, 5 for 8-10, so bigger rounds last longer."""
+    if player_count <= 5:
+        return TASKS_PER_STUDENT
+    if player_count <= 7:
+        return TASKS_PER_STUDENT + 1
+    return TASKS_PER_STUDENT + 2
+
+
 def is_direction(value):
     # type() instead of isinstance(): True/False are ints in Python and must be rejected.
     return type(value) is int and value in (-1, 0, 1)
@@ -338,6 +352,8 @@ class Game:
         # The host's player id (spec 015): the first player to join, until the host hands
         # over (make_host) or leaves (then the player who has been in the game longest).
         self.host_id = None
+        # The host's lobby settings (spec 018). None = automatic number of examiners.
+        self.examiner_setting = None
         self.tick = 0
         self.next_id = 1
         self.phase = LOBBY
@@ -378,6 +394,7 @@ class Game:
         if not self.players:
             # Everyone has gone: open a clean lobby again, otherwise nobody could ever join.
             self.host_id = None
+            self.examiner_setting = None
             self._reset_round()
             return
         if player_id == self.host_id:
@@ -410,6 +427,23 @@ class Game:
             raise GameError("Unknown target")
         self.host_id = target_id
 
+    def set_settings(self, player_id, message):
+        """The host changes a lobby setting (spec 018). For now only the number of
+        examiners: None (automatic), 1 or 2. Checks everything before changing anything."""
+        if player_id not in self.players:
+            raise GameError("Unknown player")
+        if self.phase != LOBBY:
+            raise GameError("Settings can only change in the lobby")
+        if player_id != self.host_id:
+            raise GameError("Only the host can change the settings")
+        if "expellers" not in message:
+            raise GameError("Missing setting: expellers")
+        value = message["expellers"]
+        # type() instead of isinstance(): True/False are ints in Python and must be rejected.
+        if not (value is None or (type(value) is int and value in EXAMINER_SETTINGS)):
+            raise GameError("Examiners must be automatic, 1 or 2")
+        self.examiner_setting = value
+
     # --- Starting and roles -----------------------------------------------------
 
     def start(self, player_id):
@@ -422,15 +456,20 @@ class Game:
             raise GameError("Only the host can start the game")
         if len(self.players) < MIN_PLAYERS:
             raise GameError(f"Need at least {MIN_PLAYERS} players")
-        examiners = self.rng.sample(list(self.players), examiner_count(len(self.players)))
+        wanted = self.examiner_setting or examiner_count(len(self.players))
+        if wanted == 2 and len(self.players) < MIN_PLAYERS_FOR_TWO_EXAMINERS:
+            raise GameError(
+                f"2 examiners need at least {MIN_PLAYERS_FOR_TWO_EXAMINERS} players"
+            )
+        examiners = self.rng.sample(list(self.players), wanted)
+        tasks_each = min(tasks_per_player(len(self.players)), len(self.tasks))
         for player in self.players.values():
             player.role = EXAMINER if player.id in examiners else STUDENT
             player.next_expel_tick = self.tick + EXPEL_COOLDOWN_TICKS  # first cooldown
             # Different tasks for each player; a map with fewer tasks deals what it has.
             # Examiners get the same count from the same pool as fake tasks (spec 012,
             # part 3), which never count towards the task win (see _task_progress).
-            count = min(TASKS_PER_STUDENT, len(self.tasks))
-            player.tasks = self.rng.sample(list(self.tasks), count)
+            player.tasks = self.rng.sample(list(self.tasks), tasks_each)
         self.next_sabotage_tick = self.tick + SABOTAGE_COOLDOWN_TICKS  # first cooldown
         self._place_on_spawns()
         self.phase = PLAYING
@@ -1317,6 +1356,7 @@ class Game:
             "tick": self.tick,
             "phase": self.phase,
             "host": self.host_id,
+            "settings": {"expellers": self.examiner_setting},
             "players": [
                 {"id": p.id, "name": p.name, "x": round(p.x, 1), "y": round(p.y, 1)}
                 for p in players
@@ -1356,6 +1396,10 @@ class Game:
         state["meeting_used"] = me.meeting_used
         if self.phase == MEETING:
             state["meeting"] = self._meeting_for(me)
+            if self.meeting.result is not None:
+                # Spec 018: once counted, who voted for whom ("skip" or a player id); only
+                # votes actually cast. Never sent while the vote is still running.
+                state["ballots"] = dict(self.meeting.votes)
         if self.phase != LOBBY:
             state["lights_on"] = self.lights_on
             state["vision_radius"] = self._vision_radius_for(me)
