@@ -74,6 +74,11 @@ const Render = (() => {
 
   // --- Colours -----------------------------------------------------------------------
 
+  // Spec 036: is the tile inside the area (its rectangle or one of its "extra" ones)?
+  function inArea(area, col, row) {
+    return [area, ...(area.extra || [])].some((b) => col >= b.x && col < b.x + b.w && row >= b.y && row < b.y + b.h);
+  }
+
   function colorOf(number) {
     return PLAYER_COLORS[number] ?? UNKNOWN_COLOR;
   }
@@ -240,6 +245,7 @@ const Render = (() => {
   const FURNITURE_ORDER = [
     "beanbag", "steps", "counter", "shelf", "desk", "studytable", "table", "cafetable", "woodtable",
     "shopshelf", "foodcounter", "piano", "picnic", "tree", "surfboard",
+    "pokecounter", "pizzacounter", // spec 036: the Cafeteria's two food counters
   ];
   const OUTDOOR_FLOOR = { paving: [0xd2c4aa, 0xcabb9f], grass: [0x86b45a, 0x86b45a], terrace: [0xe9e6df, 0xe1ddd4] };
   const BEANBAG_COLORS = [0xd9412e, 0xf2b632, 0x4caf50, 0xd9412e, 0x2f80c3];
@@ -281,8 +287,7 @@ const Render = (() => {
     const g = scene.add.graphics();
     const u = t / 52; // the shapes below were designed on a 52 px tile
 
-    const areaAt = (col, row) =>
-      map.areas.find((a) => col >= a.x && col < a.x + a.w && row >= a.y && row < a.y + a.h);
+    const areaAt = (col, row) => map.areas.find((a) => inArea(a, col, row));
 
     // Which decor kinds lie on each tile ("col,row" -> [kinds]).
     const kinds = new Map();
@@ -540,6 +545,27 @@ const Render = (() => {
         for (let i = 0; i < 5; i++) {
           for (let j = 0; j < 2; j++) g.fillStyle(pick(PRODUCT_COLORS)).fillRect(x + (6 + i * 9) * u, y + (12 + j * 14) * u, 6 * u, 10 * u);
         }
+      } else if (kind === "pokecounter" || kind === "pizzacounter") {
+        // Spec 036: a counter seen from above, its food on top: bowls at Poke House,
+        // pizza and pasta at The Cut.
+        g.fillStyle(0x7a5a3a).fillRect(x, y + 34 * u, t, 18 * u); // the front
+        g.fillStyle(kind === "pokecounter" ? 0xe9dcc3 : 0xc9ccd2).fillRect(x, y + 4 * u, t, 30 * u); // the top
+        const cx = x + t / 2;
+        const cy = y + 19 * u;
+        if (kind === "pokecounter") {
+          g.fillStyle(0xffffff).fillCircle(cx, cy, 12 * u); // a bowl
+          g.fillStyle(0x7cb342).fillCircle(cx - 3 * u, cy - 2 * u, 6 * u);
+          g.fillStyle(0xf08a6a).fillCircle(cx + 4 * u, cy + 1 * u, 4.5 * u); // salmon
+          g.fillStyle(0xf2c94c).fillCircle(cx - 1 * u, cy + 5 * u, 2.5 * u);
+        } else if ((col + row) % 2 === 0) {
+          g.fillStyle(0xd9a441).fillCircle(cx, cy, 12 * u); // a pizza
+          g.fillStyle(0xd84a2a).fillCircle(cx, cy, 9.5 * u);
+          g.fillStyle(0xf5e6a8).fillCircle(cx - 3 * u, cy - 3 * u, 2.2 * u).fillCircle(cx + 4 * u, cy + 1 * u, 2.2 * u).fillCircle(cx - 1 * u, cy + 4 * u, 2.2 * u);
+        } else {
+          g.fillStyle(0xffffff).fillCircle(cx, cy, 12 * u); // a plate of pasta
+          g.fillStyle(0xf2c94c).fillCircle(cx, cy, 8 * u);
+          g.fillStyle(0xd84a2a).fillCircle(cx + 1 * u, cy - 1 * u, 3.5 * u);
+        }
       } else if (kind === "foodcounter") {
         g.fillStyle(0xd8c49a).fillRect(x + 6 * u, y, t - 6 * u, t);
         g.fillStyle(0xa88c5c).fillRect(x + 6 * u, y, 6 * u, t);
@@ -688,8 +714,11 @@ const Render = (() => {
       resolution: TEXT_RESOLUTION,
     });
     for (const area of map.areas) {
+      // Bottom edge (furniture stands at the top), or "name_at" where the bottom edge has
+      // something on it (spec 036: the gate at the Main Entrance).
+      const [nameX, nameY] = area.name_at || [area.x + area.w / 2, area.y + area.h - 0.8];
       scene.add
-        .text((area.x + area.w / 2) * t, (area.y + area.h - 0.8) * t, area.name.toUpperCase(), nameStyle("12px")) // bottom edge: furniture stands at the top
+        .text(nameX * t, nameY * t, area.name.toUpperCase(), nameStyle("12px"))
         .setLetterSpacing(1)
         .setOrigin(0.5, 0)
         .setAlpha(0.9);
@@ -786,28 +815,20 @@ const Render = (() => {
   // --- The NOVA sign (spec 035) -----------------------------------------------------------
   // Big standing letters in the Main Entrance, as on the real campus, right of the welcome
   // desk. Found through the "Welcome desk" label, so the map needs no new data.
+  // Spec 036: the big white NOVA letters standing in the Main Entrance, as on campus:
+  // plain white blocks with a grey side and a soft shadow, at the map's "nova_sign" spot
+  // (chosen so it covers no tree, task or name).
   function makeNovaSign(scene, map) {
+    if (!map.nova_sign) return null;
     const t = map.tile_size;
-    const desk = (map.labels || []).find((l) => l.text === "Welcome desk");
-    if (!desk || !desk.room) return null;
-    const x = (desk.room.x + desk.room.w + 2.5) * t;
-    const y = (desk.room.y + 0.9) * t;
-    const shadow = scene.add
-      .text(x + 3, y + 4, "NOVA", { fontFamily: FONT, fontSize: "54px", fontStyle: "900", color: "#0b1d3a", resolution: TEXT_RESOLUTION })
-      .setOrigin(0.5)
-      .setAlpha(0.55);
-    const letters = scene.add
-      .text(x, y, "NOVA", {
-        fontFamily: FONT,
-        fontSize: "54px",
-        fontStyle: "900",
-        color: "#ffffff",
-        stroke: "#0b3d91",
-        strokeThickness: 6,
-        resolution: TEXT_RESOLUTION,
-      })
-      .setOrigin(0.5);
-    return scene.add.container(0, 0, [shadow, letters]).setDepth(0.35);
+    const [x, y] = [map.nova_sign[0] * t, map.nova_sign[1] * t];
+    const style = (color) => ({ fontFamily: FONT, fontSize: "44px", fontStyle: "900", color, resolution: TEXT_RESOLUTION });
+    const parts = [scene.add.text(x + 7, y + 9, "NOVA", style("#000000")).setOrigin(0.5).setAlpha(0.22)];
+    for (let depth = 5; depth >= 1; depth--) {
+      parts.push(scene.add.text(x + depth, y + depth, "NOVA", style("#a9adb5")).setOrigin(0.5)); // the block's side
+    }
+    parts.push(scene.add.text(x, y, "NOVA", { ...style("#ffffff"), stroke: "#d4d7dc", strokeThickness: 2 }).setOrigin(0.5));
+    return scene.add.container(0, 0, parts).setDepth(0.35);
   }
 
   // --- Sabotage places (spec 023) ---------------------------------------------------------
@@ -1120,13 +1141,21 @@ const Render = (() => {
   // its task's story, drawn on the floor under the characters. Which object is chosen by the
   // station's mini-game kind, so the map needs no extra data. Everyone sees the objects;
   // only a player's own open ones glow (see makeTaskGlow).
+  // Spec 036: one object per mini-game, so no task is a plain clipboard on the floor (the
+  // mini-games were renamed after this list was made, which turned most into clipboards).
   const TASK_OBJECTS = {
-    paper_jam: drawPrinter, // "Print ..." in the Library
+    cert_file: drawPrinter, // "Print a copy of your certificate" in the Library
+    print_file: drawPrinter, // "Print your assignment" in the Library
     ticket: drawTicketMachine, // "Submit your Bachelor certificate" at Student Services
-    translate: drawHelpdeskSign, // "Ask the Helpdesk for help"
+    chat: drawHelpdeskSign, // "Ask the Helpdesk for help"
     cable: drawProjector, // "Get your slides on the projector"
     card: drawCardGate, // "Tap your student card at the gate"
-    seagull: drawNataPlate, // "Eat your pastel de nata in the sun"
+    nata: drawNataPlate, // "Eat your pastel de nata in the sun"
+    tray: drawTrayStack, // "Fill your tray at the Cafeteria"
+    surf: drawSurfboard, // "Catch a wave at Carcavelos"
+    beer: drawBeerStand, // "Chug a beer at Carcavelos"
+    frisbee: drawFrisbee, // "Catch the frisbee in the Little Courtyard"
+    seat: drawChair, // "Find a free seat in Lecture hall B"
   };
 
   // Every station of the map's tasks as {x, y, minigame} in tiles (a task without "steps"
@@ -1226,6 +1255,54 @@ const Render = (() => {
     g.fillStyle(0xb9793a).fillCircle(0, 0, 7); // the pastry
     g.fillStyle(0xe8a33d).fillCircle(0, 0, 5.4); // the custard
     g.fillStyle(0x7a4a16, 0.7).fillCircle(-1.6, -1.2, 1.5).fillCircle(1.8, 1.4, 1.2); // burnt spots
+  }
+
+  function drawTrayStack(g) {
+    g.fillStyle(0x000000, 0.2).fillRoundedRect(-11, -5, 26, 18, 3);
+    for (const dy of [4, 0, -4]) {
+      g.fillStyle(OUTLINE).fillRoundedRect(-13, dy - 8, 26, 16, 3);
+      g.fillStyle(0xe0a43a).fillRoundedRect(-11.5, dy - 6.5, 23, 13, 2); // a stack of trays
+    }
+    g.fillStyle(0xffffff).fillCircle(-4, -4, 3.5);
+    g.fillStyle(0x8fcf6b).fillRect(3, -7, 6, 5); // a napkin and a cup on top
+  }
+
+  function drawSurfboard(g) {
+    g.fillStyle(0x000000, 0.2).fillEllipse(3, 3, 14, 30);
+    g.fillStyle(OUTLINE).fillEllipse(0, 0, 13, 30);
+    g.fillStyle(0xfbfbf3).fillEllipse(0, 0, 10.5, 27.5);
+    g.fillStyle(0x2f9bd6).fillRect(-5, -2, 10, 3); // the stripe
+    g.fillStyle(0x2f9bd6).fillTriangle(0, 9, -3, 14, 3, 14); // the fin
+  }
+
+  function drawBeerStand(g, text) {
+    g.fillStyle(0x000000, 0.22).fillRoundedRect(-11, -4, 26, 18, 3);
+    g.fillStyle(OUTLINE).fillRoundedRect(-13, -14, 26, 26, 3);
+    g.fillStyle(0xd9412e).fillRect(-11.5, -12.5, 23, 6); // the awning
+    g.fillStyle(0xffffff).fillRect(-6, -12.5, 4, 6).fillRect(2, -12.5, 4, 6);
+    g.fillStyle(0x9b6b3d).fillRect(-11.5, -6.5, 23, 17); // the wooden bar
+    for (const x of [-6, 4]) {
+      g.fillStyle(0xf2b632).fillRect(x - 2.5, -3, 5, 8); // two beers
+      g.fillStyle(0xffffff).fillRect(x - 2.5, -5, 5, 2.5);
+    }
+    text("BAR", 0, 7, "6px", "#fff3d6");
+  }
+
+  function drawFrisbee(g) {
+    g.fillStyle(0x000000, 0.2).fillEllipse(3, 3, 24, 22);
+    g.fillStyle(OUTLINE).fillCircle(0, 0, 11.5);
+    g.fillStyle(0xff7a1a).fillCircle(0, 0, 10);
+    g.lineStyle(1.5, 0xffb070).strokeCircle(0, 0, 6.5);
+    g.fillStyle(0xffffff, 0.35).fillEllipse(-3, -4, 8, 4);
+  }
+
+  function drawChair(g) {
+    g.fillStyle(0x000000, 0.2).fillRoundedRect(-8, -6, 20, 20, 3);
+    g.fillStyle(OUTLINE).fillRoundedRect(-10, -12, 20, 6, 2);
+    g.fillStyle(0x2f80c3).fillRoundedRect(-8.5, -10.5, 17, 3, 1.5); // the backrest
+    g.fillStyle(OUTLINE).fillRoundedRect(-10, -5, 20, 16, 3);
+    g.fillStyle(0x3d93d8).fillRoundedRect(-8.5, -3.5, 17, 13, 2); // the free seat
+    g.fillStyle(0x6b7280).fillRect(-9, 10, 2, 3).fillRect(7, 10, 2, 3);
   }
 
   // A station without a mini-game (only the small test maps): a clipboard.
@@ -1677,6 +1754,7 @@ const Render = (() => {
   return {
     BACKDROP,
     makeNovaSign,
+    inArea, // spec 036
     makeRouterMark,
     makeSabotagePlaces,
     makeGym,

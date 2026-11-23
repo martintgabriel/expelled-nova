@@ -573,7 +573,7 @@ def restart_during_meeting():
         (move_during_voting, "Meeting in progress"),
         (move_during_result, "Meeting in progress"),
         (expel_during_meeting, "Meeting in progress"),
-        (join_during_meeting, "already running"),
+        (join_during_meeting, "meeting is running"),  # spec 036
         (start_during_meeting, "already running"),
         (restart_during_meeting, "not over"),
     ],

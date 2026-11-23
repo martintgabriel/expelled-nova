@@ -154,6 +154,12 @@ async def websocket_endpoint(ws: WebSocket):
                         message.get("name"), message.get("hat", 0), message.get("color")
                     )
                     player_id = player.id
+                    # Spec 036: coming back into a running round replaces an old connection
+                    # of the same player (e.g. a phone that switched networks).
+                    old = connections.get(player_id)
+                    if old is not None and old is not ws:
+                        with contextlib.suppress(Exception):
+                            await old.close()
                     await ws.send_json(
                         {
                             "type": "welcome",
@@ -212,6 +218,8 @@ async def websocket_endpoint(ws: WebSocket):
                     game.vote(player_id, message.get("target"))
                 elif message["type"] == "restart":
                     game.restart(player_id)
+                elif message["type"] == "end_round":
+                    game.end_round(player_id)  # spec 036: any player
                 else:
                     game.set_input(player_id, message)
             except GameError as error:
@@ -219,9 +227,11 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         pass
     finally:
-        if player_id is not None:
+        # Spec 036: only if this connection is still the player's own (a rejoin may have
+        # replaced it); during a round the player stays, marked away, and may come back.
+        if player_id is not None and connections.get(player_id) is ws:
             connections.pop(player_id, None)
-            game.leave(player_id)
+            game.disconnect(player_id)
 
 
 class FreshStaticFiles(StaticFiles):

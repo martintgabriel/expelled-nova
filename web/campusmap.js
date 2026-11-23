@@ -87,6 +87,11 @@ const CampusMap = (() => {
 
   function drawAreas(svg, areas) {
     for (const area of areas) {
+      // Spec 036: an area's "extra" rectangles (the Upper Courtyard reaching down to the
+      // Lower Courtyard) in the same colour, so the two look like one place.
+      for (const box of area.extra || []) {
+        svg.append(node("rect", { x: box.x, y: box.y, width: box.w, height: box.h, fill: area.color, "fill-opacity": AREA_OPACITY }));
+      }
       svg.append(
         node("rect", {
           x: area.x,

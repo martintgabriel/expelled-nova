@@ -122,7 +122,7 @@ def test_the_food_court_is_called_cafeteria_with_two_counters():
     names = {a["name"] for a in campus["areas"]}
     assert "Cafeteria" in names and "Food Court" not in names
     texts = {label["text"] for label in campus["labels"]}
-    assert {"Pokehaus", "The Cut", "Little Courtyard"} <= texts
+    assert {"Poke House", "The Cut", "Little Courtyard"} <= texts  # spec 036: "Poke House"
     assert "Shop" not in texts
     game = Game(campus)
     assert game.area_at(*centre(41, 12)) == "Cafeteria"
@@ -284,10 +284,10 @@ def test_the_campus_places():
     campus = load_map()
     tasks = {t["id"]: t for t in campus["tasks"]}
     expected = {
-        "surf": ("Beach", 3, 10, "surf"),
+        "surf": ("Beach", 3, 17, "surf"),
         "beer": ("Beach", 3, 33, "beer"),
         "frisbee": ("Little Courtyard", 10, 34, "frisbee"),
-        "seat": ("Hall B", 16, 10, "seat"),
+        "seat": ("Lecture hall B", 9, 10, "seat"),  # playtest: the chair stands in Lecture hall B
     }
     for task_id, (area, x, y, kind) in expected.items():
         task = tasks[task_id]

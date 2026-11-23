@@ -147,8 +147,7 @@ def test_host_starts_and_each_client_gets_only_its_own_role():
 
             with client.websocket_connect("/ws") as late:
                 reply = join(late, "Late")
-                assert reply["type"] == "error"
-                assert "already running" in reply["reason"]
+                assert reply["type"] == "welcome"  # spec 036: joins as a ghost
 
 
 def test_start_is_rejected_from_non_host_and_with_too_few_players():

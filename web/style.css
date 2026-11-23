@@ -1368,3 +1368,16 @@ body.fire-alarm::after { content: ""; position: fixed; inset: 0; z-index: 24; po
 .seat-board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .seat { width: 52px; height: 46px; padding: 0; font-size: 24px; background: var(--paper-shade); }
 .seat.free { background: #c8f2c2; outline: 2px solid var(--stamp-green); }
+
+/* Spec 036: ending a stuck round, and why a chat message was not sent. */
+.secondary-button { margin-top: 8px; background: var(--paper-shade); color: var(--ink); border: 2px solid var(--ink); }
+.chat-status { margin: 4px 0 0; min-height: 1em; font-size: 12px; color: #b3261e; text-align: left; }
+
+/* Playtest: "End this round for everyone" sits at the bottom of the handbook. */
+.help-card .end-round-bottom {
+  display: block;
+  margin: 22px auto 0;
+}
+.help-card .end-round-bottom[hidden] {
+  display: none;
+}

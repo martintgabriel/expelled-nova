@@ -76,10 +76,10 @@ SPEC_TASKS = {
     "gate": [("Main Entrance", 28, 6, "card")],
     "nata": [("Lower Courtyard", 23, 23, "nata")],  # spec 031: was seagull  # spec 018: the courtyards are named apart
     "tray": [("Cafeteria", 41, 12, "tray")],  # spec 021
-    "surf": [("Beach", 3, 10, "surf")],  # spec 021 (spec 035: moved up the beach)
+    "surf": [("Beach", 3, 17, "surf")],  # spec 021 (playtest: the middle of the beach)
     "beer": [("Beach", 3, 33, "beer")],  # spec 035
     "frisbee": [("Little Courtyard", 10, 34, "frisbee")],  # spec 035
-    "seat": [("Hall B", 16, 10, "seat")],  # spec 035
+    "seat": [("Lecture hall B", 9, 10, "seat")],  # spec 035 (playtest: in Lecture hall B)
 }
 
 

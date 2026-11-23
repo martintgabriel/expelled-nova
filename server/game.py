@@ -22,6 +22,7 @@ from server import guard, minigames
 TICK_RATE = 20  # server updates per second
 SPEED = 160.0  # pixels per second
 STEP = SPEED / TICK_RATE  # pixels per tick (8)
+SETTLE_DISTANCE = 2 * STEP  # spec 036: px a stop may move the player to the browser's spot
 PLAYER_HALF = 10  # a player is a 20 x 20 px square; this is half its side
 # How far a straight walk slides sideways round the corner of a wall (spec 011): half a
 # player, so whoever is at least half in front of a gap slips into it.
@@ -38,6 +39,7 @@ MESSAGE_TYPES |= {"task_input", "task_cancel"}  # answering or closing a task's 
 MESSAGE_TYPES |= {"sabotage", "fix"}  # the lights
 MESSAGE_TYPES |= {"chat"}  # spec 029: the meeting chat
 MESSAGE_TYPES |= {"settings"}  # the host's lobby settings (spec 019)
+MESSAGE_TYPES |= {"end_round"}  # spec 036: anyone in the game may end a running round
 EXPEL_RANGE = 48  # px between centres, about 1.5 tiles
 EXPEL_COOLDOWN = 30  # seconds between two expels by the same examiner (spec 019: was 20)
 EXPEL_COOLDOWN_TICKS = EXPEL_COOLDOWN * TICK_RATE  # 600
@@ -144,6 +146,7 @@ class Player:
     challenge: dict | None = None  # the running mini-game's state (spec 012), or None
     task_note: str | None = None  # the latest wrong-answer/cancel/time-out message, or None
     fix_done_tick: int | None = None  # while fixing the lights: the tick at which they go on
+    away: bool = False  # spec 036: lost the connection during a round; may come back
 
 
 @dataclass
@@ -179,6 +182,7 @@ GROUND_DECOR = {"sand", "paving", "grass", "terrace", "pergola", "glassroof", "s
 FURNITURE_DECOR = {
     "beanbag", "counter", "shelf", "desk", "studytable", "table", "cafetable", "woodtable",
     "shopshelf", "foodcounter", "piano", "steps", "picnic", "tree", "surfboard",
+    "pokecounter", "pizzacounter",  # spec 036: the two food counters in the Cafeteria
 }
 FLOOR_DECOR = GROUND_DECOR | FURNITURE_DECOR
 # The solid kinds that also block sight (spec 010, part 2), like every plain wall tile:
@@ -419,7 +423,7 @@ class Game:
         """Spec 022: `hat` 0-9 and `color` 0-9 (or None for any free colour) are chosen on
         the ID card. Checks everything before changing anything."""
         if self.phase != LOBBY:
-            raise GameError("Game already running")
+            return self._rejoin(raw_name, hat, color)  # spec 036
         if len(self.players) >= MAX_PLAYERS:
             raise GameError(f"Game is full ({MAX_PLAYERS} players)")
         name = validate_nickname(raw_name)
@@ -440,6 +444,70 @@ class Game:
         if self.host_id is None:
             self.host_id = player.id  # the first player in an empty game
         return player
+
+    def _rejoin(self, raw_name, hat=0, color=None):
+        """Spec 036: during a round, whoever joins with the nickname of a player in the round
+        becomes that player again (same role, tasks, ghost or not). Friends play this game
+        together, so the nickname is enough: there is no password. Anyone else comes in as a
+        ghost (a student without tasks, so they change no win), while there is room; from
+        there they can watch and end the round like everyone else."""
+        name = validate_nickname(raw_name)
+        player = next((p for p in self.players.values() if p.name.casefold() == name.casefold()), None)
+        if player is None:
+            if self.phase == MEETING:
+                raise GameError("A meeting is running. Try again in a moment.")
+            self.phase, phase = LOBBY, self.phase  # join's own checks, then the round again
+            try:
+                player = self.join(raw_name, hat, color)
+            finally:
+                self.phase = phase
+            player.role = STUDENT
+            player.alive = False
+            return player
+        player.away = False
+        if self.host_id is None or self.players[self.host_id].away:
+            self.host_id = player.id
+        return player
+
+    def disconnect(self, player_id):
+        """Spec 036: a player's connection is gone. In the lobby they leave as before. During
+        a round they stay, standing still and marked away, so they can come back (_rejoin);
+        the host role moves to the first player still connected. If nobody is connected any
+        more, an empty lobby opens: nobody can ever be locked out."""
+        player = self.players.get(player_id)
+        if player is None:
+            return
+        if self.phase == LOBBY:
+            self.leave(player_id)
+            return
+        player.away = True
+        player.dx = player.dy = 0
+        present = [p.id for p in self.players.values() if not p.away]
+        if not present:
+            self.players.clear()
+            self.host_id = None
+            self.examiner_setting = None
+            self._reset_round()
+            return
+        if player_id == self.host_id:
+            self.host_id = present[0]
+
+    def end_round(self, player_id):
+        """Spec 036: any player in the game (a late ghost too) ends a running or finished
+        round. Everyone connected goes back to the lobby; players
+        who are away leave. Nobody has to wait for the host any more."""
+        if player_id not in self.players:
+            raise GameError("Unknown player")
+        if self.phase == LOBBY:
+            raise GameError("No round is running")
+        for gone in [p.id for p in self.players.values() if p.away]:
+            self.players.pop(gone)
+        if not self.players:
+            self.host_id = None
+            self.examiner_setting = None
+        elif self.host_id not in self.players:
+            self.host_id = next(iter(self.players))
+        self._reset_round()
 
     def leave(self, player_id):
         """Remove a player. If it was the host, the player who has been in the game longest
@@ -964,7 +1032,7 @@ class Game:
             raise GameError("The round is not over yet")
         if player_id != self.host_id:
             raise GameError("Only the host can start a new round")
-        self._reset_round()
+        self.end_round(player_id)  # spec 036: players who are away leave
 
     def _reset_round(self):
         """Back to the lobby: no roles, no tasks, no failed exams, no meeting, everyone
@@ -1420,7 +1488,30 @@ class Game:
             raise GameError("dx and dy must each be -1, 0 or 1")
         if player.vent is not None and (dx, dy) != (0, 0):
             raise GameError(INSIDE_VENT)  # stopping is always accepted
+        at = message.get("at")
+        if at is not None and not (
+            (dx, dy) == (0, 0)
+            and isinstance(at, dict)
+            and all(type(at.get(k)) in (int, float) and math.isfinite(at[k]) for k in ("x", "y"))
+        ):
+            raise GameError("at must be {x, y} and only comes with a stop")
         player.dx, player.dy = dx, dy
+        if at is not None and player.vent is None:
+            self._settle(player, at["x"], at["y"])
+
+    def _settle(self, player, x, y):
+        """Spec 036: when a player stops, the browser sends where it drew them standing.
+        Browser and server can be a step or two apart (the stop arrives a tick early or
+        late), and moving the character back afterwards looked like a jump. The server
+        takes the browser's spot if it is at most SETTLE_DISTANCE away and reachable by
+        the walking rules (no wall in between); otherwise the server's own spot stays."""
+        if math.hypot(x - player.x, y - player.y) > SETTLE_DISTANCE:
+            return
+        before = (player.x, player.y)
+        self._move_axis(player, x - player.x, 0)
+        self._move_axis(player, 0, y - player.y)
+        if math.hypot(x - player.x, y - player.y) > 0.5:
+            player.x, player.y = before
 
     def step(self):
         """Advance the game by one tick: move every player in their direction, then let
@@ -1533,10 +1624,10 @@ class Game:
         """Name of the campus area whose rectangle contains the point, or None (a corridor)."""
         col, row = math.floor(x / self.tile), math.floor(y / self.tile)
         for area in self.campus["areas"]:
-            in_columns = area["x"] <= col < area["x"] + area["w"]
-            in_rows = area["y"] <= row < area["y"] + area["h"]
-            if in_columns and in_rows:
-                return area["name"]
+            # Spec 036: an area may have "extra" rectangles (the Upper Courtyard's green).
+            for box in [area, *area.get("extra", [])]:
+                if box["x"] <= col < box["x"] + box["w"] and box["y"] <= row < box["y"] + box["h"]:
+                    return area["name"]
         return None
 
     def _in_sight(self, viewer, x, y):
@@ -1633,6 +1724,7 @@ class Game:
             "hats": {p.id: p.hat for p in players},  # spec 022
             "failed_exams": [{"id": e.id, "x": round(e.x, 1), "y": round(e.y, 1)} for e in exams],
             "open_vents": open_vents,
+            "away": [p.id for p in self.players.values() if p.away],  # spec 036
         }
         # Spec 027: present only when the guard exists and, for a living player while
         # playing, only when that player's own sight (their own radius, their own line of
