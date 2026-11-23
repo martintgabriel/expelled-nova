@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from server.game import (
     CORNER_SLIDE,
     EXPEL_RANGE,
+    GUARD_CONE_DEGREES,
     MEETING_RANGE,
     MEETING_TABLE_RADIUS,
     PLAYER_HALF,
@@ -121,6 +122,19 @@ def qr_svg(request: Request):
     return Response(content=buffer.getvalue(), media_type="image/svg+xml")
 
 
+@app.get("/taken-colors")
+def taken_colors(response: Response):
+    """Spec 028: the colours players already have, for the colour picker on the join screen.
+
+    Takes no input and changes nothing. The answer is {"taken": {"<colour>": "<nickname>"}}:
+    only what the lobby shows anyway. Joining with a taken colour is still rejected by
+    Game.join; this only lets the page show it before someone tries. "no-store": the page
+    asks again every moment, and an old answer must never be shown.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return {"taken": game.taken_colors()}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
@@ -159,6 +173,8 @@ async def websocket_endpoint(ws: WebSocket):
                             "switch_range": SWITCH_RANGE,
                             "lights_out_radius": game.lights_out_radius,
                             "vision_radius": game.vision_radius,
+                            "guard_vision_radius": game.guard_vision_radius,
+                            "guard_cone_degrees": GUARD_CONE_DEGREES,
                         }
                     )
                     connections[player_id] = ws

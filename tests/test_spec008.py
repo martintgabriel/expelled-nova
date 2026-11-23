@@ -39,7 +39,8 @@ def test_welcome_carries_the_servers_movement_constants_and_map(fresh_game):
     assert welcome["tick_rate"] == TICK_RATE
     assert welcome["step"] == STEP == SPEED / TICK_RATE
     assert welcome["player_half"] == PLAYER_HALF
-    assert welcome["map"] == fresh_game.campus == load_map()
+    # Spec 027: the guard's own guard_route never reaches a browser, so it is missing here.
+    assert welcome["map"] == fresh_game.campus == {k: v for k, v in load_map().items() if k != "guard_route"}
 
 
 def test_next_tick_is_one_tick_length_after_the_scheduled_time():

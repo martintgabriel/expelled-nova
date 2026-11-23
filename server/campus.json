@@ -186,5 +186,32 @@
     {"text": "Welcome desk", "x": 24, "y": 2.2, "room": {"x": 20, "y": 1, "w": 8, "h": 2}},
     {"text": "Meeting point", "x": 27.5, "y": 23.5, "room": {"x": 25, "y": 22, "w": 5, "h": 3}, "only_on_map": true},
     {"text": "Light switch", "x": 39, "y": 6, "room": {"x": 35, "y": 5, "w": 8, "h": 2}, "only_on_map": true}
-  ]
+  ],
+  "guard_route": {
+    "waypoints": [
+      {"id": "entrance", "x": 27, "y": 4, "connections": ["services", "spine-north"]},
+      {"id": "services", "x": 39, "y": 4, "connections": ["entrance", "services-vent"]},
+      {"id": "services-vent", "x": 41, "y": 2, "connections": ["services"]},
+      {"id": "spine-north", "x": 28, "y": 11, "connections": ["entrance", "west-vent", "foodcourt", "spine-mid"]},
+      {"id": "west-vent", "x": 9, "y": 11, "connections": ["spine-north", "beach-north", "upper-courtyard"]},
+      {"id": "foodcourt", "x": 37, "y": 12, "connections": ["spine-north"]},
+      {"id": "beach-north", "x": 3, "y": 11, "connections": ["west-vent"]},
+      {"id": "upper-courtyard", "x": 9, "y": 15, "connections": ["west-vent", "west-mid"]},
+      {"id": "west-mid", "x": 9, "y": 19, "connections": ["upper-courtyard", "lower-courtyard"]},
+      {"id": "lower-courtyard", "x": 9, "y": 23, "connections": ["west-mid", "west-south", "beach-mid"]},
+      {"id": "beach-mid", "x": 3, "y": 23, "connections": ["lower-courtyard", "beach-south"]},
+      {"id": "west-south", "x": 9, "y": 27, "connections": ["lower-courtyard", "beach-south", "spine-south"]},
+      {"id": "beach-south", "x": 3, "y": 27, "connections": ["beach-mid", "west-south", "beach-lawn"]},
+      {"id": "beach-lawn", "x": 3, "y": 34, "connections": ["beach-south", "south-lawn"]},
+      {"id": "spine-mid", "x": 28, "y": 21, "connections": ["spine-north", "spine-south", "library"]},
+      {"id": "library", "x": 37, "y": 22, "connections": ["spine-mid"]},
+      {"id": "spine-south", "x": 28, "y": 27, "connections": ["spine-mid", "spine-lawn", "west-south"]},
+      {"id": "south-lawn", "x": 9, "y": 35, "connections": ["beach-lawn", "spine-lawn"]},
+      {"id": "spine-lawn", "x": 28, "y": 34, "connections": ["spine-south", "south-lawn", "edp-plaza", "spine-auditorium"]},
+      {"id": "edp-plaza", "x": 37, "y": 34, "connections": ["spine-lawn", "plaza-vent"]},
+      {"id": "plaza-vent", "x": 42, "y": 34, "connections": ["edp-plaza"]},
+      {"id": "spine-auditorium", "x": 28, "y": 39, "connections": ["spine-lawn", "auditorium"]},
+      {"id": "auditorium", "x": 33, "y": 39, "connections": ["spine-auditorium"]}
+    ]
+  }
 }
